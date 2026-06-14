@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: llmedu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: llmedu
+      POSTGRES_PASSWORD: llmedu
+      POSTGRES_DB: llmedu
+    ports:
+      - "15432:5432"
+    volumes:
+      - llmedu_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmedu -d llmedu"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+volumes:
+  llmedu_pg_data:

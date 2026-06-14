@@ -1,0 +1,11 @@
+node_modules/
+.npm-cache/
+.arts
+.codeartsdoer
+design.md
+dist/
+build/
+.turbo/
+.next/
+coverage/
+*.log
