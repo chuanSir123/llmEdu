@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ActionDsl, FieldDsl, PageDsl } from "../dsl/types";
+import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
@@ -17,7 +18,23 @@ function formatValue(value: unknown, type?: string) {
   if (value === null || value === undefined || value === "") return "-";
   if (type === "datetime") return new Date(String(value)).toLocaleString();
   if (type === "date") return String(value).slice(0, 10);
+  if (typeof value === "object") return typeof value === "string" ? value : JSON.stringify(value);
   return String(value);
+}
+
+function isVisibleAction(action: ActionDsl, row: Record<string, unknown>): boolean {
+  if (!action.visibleWhen) return true;
+  if (action.visibleWhen.always === false) return false;
+  for (const [key, val] of Object.entries(action.visibleWhen)) {
+    if (key === "always" || key === "permission") continue;
+    const rowValue = String(row[key] ?? "");
+    if (Array.isArray(val)) {
+      if (!val.map(String).includes(rowValue)) return false;
+      continue;
+    }
+    if (String(row[key] ?? "") !== String(val)) return false;
+  }
+  return true;
 }
 
 function alignClass(align?: string) {
@@ -27,7 +44,10 @@ function alignClass(align?: string) {
 }
 
 function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation?: Presentation) {
-  const text = formatValue(row[column.key], column.type);
+  const rawValue = column.displayKey && row[column.displayKey] !== undefined && row[column.displayKey] !== null && row[column.displayKey] !== ""
+    ? row[column.displayKey]
+    : row[column.key];
+  const text = formatValue(rawValue, column.type);
   const displayText = text === "-" ? text : (presentation?.valueLabels?.[column.key]?.[text] ?? text);
   if (!column.badge || text === "-") return displayText;
   const tone = (presentation?.statusMap?.[column.key]?.[text] ?? "gray") as BadgeTone;
@@ -37,16 +57,17 @@ function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation
 export function GenericTableRenderer({
   columns,
   rows,
-  rowActions,
+  rowActions = [],
   onAction,
   presentation
 }: {
   columns: FieldDsl[];
   rows: Record<string, unknown>[];
-  rowActions: ActionDsl[];
+  rowActions?: ActionDsl[];
   onAction: (action: ActionDsl, row: Record<string, unknown>) => void;
   presentation?: PageDsl["presentation"];
 }) {
+  const sortedColumns = sortWithOrder(columns);
   const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
   const stickyHeader = presentation?.table?.stickyHeader ?? true;
   const density = presentation?.density ?? "compact";
@@ -60,7 +81,7 @@ export function GenericTableRenderer({
       <table className="min-w-full border-collapse">
         <thead className={stickyHeader ? "sticky top-0 z-10" : undefined}>
           <tr>
-            {columns.map((column) => (
+            {sortedColumns.map((column) => (
               <th
                 key={column.key}
                 className={`${token.th} ${alignClass(column.align)} whitespace-nowrap`}
@@ -75,7 +96,7 @@ export function GenericTableRenderer({
         <tbody>
           {rows.map((row) => (
             <tr key={String(row.id)} className="hover:bg-[#f2fbfe]">
-              {columns.map((column) => (
+              {sortedColumns.map((column) => (
                 <td
                   key={column.key}
                   className={`${token.td} ${tdDensity} ${alignClass(column.align)} max-w-[300px] truncate`}
@@ -89,10 +110,11 @@ export function GenericTableRenderer({
                   {actionStyle === "linkGroup" ? (
                     <div className="relative flex flex-nowrap items-center justify-center gap-3 text-sm">
                       {(() => {
-                        const preferred = rowActions.filter((action) => primaryRowActions.has(action.actionCode));
-                        const fallback = rowActions.filter((action) => !action.actionCode.endsWith(".delete")).slice(0, 2);
+                        const filteredActions = rowActions.filter((action) => isVisibleAction(action, row));
+                        const preferred = filteredActions.filter((action) => primaryRowActions.has(action.actionCode));
+                        const fallback = filteredActions.filter((action) => !action.actionCode.endsWith(".delete")).slice(0, 2);
                         const visibleActions = preferred.length ? preferred : fallback;
-                        const moreActions = rowActions.filter((action) => !visibleActions.some((visible) => visible.actionCode === action.actionCode));
+                        const moreActions = filteredActions.filter((action) => !visibleActions.some((visible) => visible.actionCode === action.actionCode));
                         const rowId = String(row.id);
                         return (
                           <>
@@ -141,7 +163,7 @@ export function GenericTableRenderer({
                     </div>
                   ) : (
                     <div className="flex flex-nowrap items-center justify-center gap-1.5">
-                      {rowActions.map((action) => (
+                      {rowActions.filter((action) => isVisibleAction(action, row)).map((action) => (
                         <button
                           key={action.actionCode}
                           className={`${token.button} ${action.actionCode.endsWith(".delete") ? token.dangerButton : token.defaultButton} h-7 px-2.5`}

@@ -11,6 +11,7 @@ export function AppRouter() {
         <Route path="/admin/app" element={<LayoutRenderer scope="admin" />} />
         <Route path="/:schemaName" element={<LoginPage kind="tenant" />} />
         <Route path="/:schemaName/app" element={<LayoutRenderer scope="tenant" />} />
+        <Route path="/:schemaName/app/page/:pageCode" element={<LayoutRenderer scope="tenant" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

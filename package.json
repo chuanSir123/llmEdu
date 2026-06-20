@@ -9,7 +9,8 @@
     "start": "node dist/main.js",
     "db:migrate": "tsx src/db/migrator.ts",
     "db:seed": "tsx src/seed/run.ts",
-    "check": "tsc -p tsconfig.json && tsc -p client/tsconfig.json"
+    "check": "tsc -p tsconfig.json && tsc -p client/tsconfig.json",
+    "check:harness": "tsx src/agent/harness-regression.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
@@ -25,6 +26,7 @@
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.1",
     "vite": "^6.0.7",
+    "xlsx": "^0.18.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {

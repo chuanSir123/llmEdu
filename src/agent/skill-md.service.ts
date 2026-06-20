@@ -1,0 +1,301 @@
+import { pool } from "../db/pool.js";
+
+type PageDslJson = {
+  title?: string;
+  filters?: Array<{ key?: string; label?: string; type?: string; placeholder?: string }>;
+  table?: {
+    columns?: Array<{ key?: string; label?: string; type?: string; width?: number; sortable?: boolean; badge?: boolean; align?: string }>;
+  };
+  toolbar?: Array<{ actionCode?: string; label?: string; variant?: string; type?: string }>;
+  modal?: {
+    fields?: Array<{ key?: string; label?: string; type?: string; required?: boolean; span?: string | number }>;
+  };
+};
+
+type ApiDslJson = {
+  table?: string;
+  joins?: Array<{ table?: string; alias?: string; on?: { left?: string; right?: string }; fields?: Array<{ source?: string; as?: string }> }>;
+  select?: Array<{ field?: string; as?: string }>;
+  sort?: string | Array<{ field?: string; direction?: string }>;
+  where?: Array<{ field?: string; op?: string; source?: string; value?: unknown }>;
+  filters?: string[];
+  operation?: string;
+};
+
+export type SkillMdMetadata = {
+  featureCode?: string;
+  featureName?: string;
+  featureDescription?: string;
+  primaryTable?: string;
+};
+
+export function extractSkillMdMetadata(content: string): SkillMdMetadata {
+  const metadata: SkillMdMetadata = {};
+  const lines = content.split(/\r?\n/);
+  let inStandardMetadata = false;
+
+  for (const line of lines) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) {
+      inStandardMetadata = heading[1].trim() === "标准元数据";
+      continue;
+    }
+    if (!inStandardMetadata) continue;
+    const match = line.match(/^[-*]\s*([^:：]+)\s*[:：]\s*(.*?)\s*$/);
+    if (!match) continue;
+    const key = match[1].trim();
+    const value = match[2].trim();
+    if (!value) continue;
+    if (key === "功能编码") metadata.featureCode = value.replace(/^skill_/, "");
+    if (key === "功能名称") metadata.featureName = value;
+    if (key === "功能描述") metadata.featureDescription = value;
+    if (key === "主数据表") metadata.primaryTable = value;
+  }
+
+  if (!metadata.featureName) {
+    const title = lines.find((line) => /^#\s+/.test(line));
+    if (title) metadata.featureName = title.replace(/^#\s+/, "").trim();
+  }
+  if (!metadata.featureDescription) {
+    const sectionText = extractSectionText(content, "功能描述");
+    if (sectionText) metadata.featureDescription = sectionText;
+  }
+  if (!metadata.primaryTable) {
+    const tableMatch = content.match(/[-•]\s*表[：:]\s*(\w+)/);
+    if (tableMatch) metadata.primaryTable = tableMatch[1];
+  }
+  return metadata;
+}
+
+export function hasStandardSkillMdMetadata(content: string): boolean {
+  const metadata = extractSkillMdMetadata(content);
+  return Boolean(metadata.featureCode && metadata.featureName && metadata.featureDescription);
+}
+
+export function formatSkillSummaryFromMd(input: {
+  skillCode?: string;
+  skillName?: string;
+  featureCode?: string;
+  content?: string;
+  fallbackChars?: number;
+}): string {
+  const content = input.content ?? "";
+  const metadata = extractSkillMdMetadata(content);
+  const featureCode = metadata.featureCode ?? input.featureCode ?? input.skillCode?.replace(/^skill_/, "");
+  const featureName = metadata.featureName ?? input.skillName ?? featureCode ?? input.skillCode ?? "";
+  const description = metadata.featureDescription ?? content.trim().replace(/\s+/g, " ").slice(0, input.fallbackChars ?? 200);
+  const table = metadata.primaryTable ? `；主数据表：${metadata.primaryTable}` : "";
+  const code = featureCode ? `功能编码：${featureCode}；` : "";
+  return `${code}功能名称：${featureName}；功能描述：${description}${table}`;
+}
+
+function extractSectionText(content: string, sectionTitle: string): string {
+  const lines = content.split(/\r?\n/);
+  const result: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) {
+      if (inSection) break;
+      inSection = heading[1].trim() === sectionTitle;
+      continue;
+    }
+    if (!inSection) continue;
+    const trimmed = line.trim();
+    if (trimmed) result.push(trimmed.replace(/^[-*]\s*/, ""));
+    if (result.join("").length > 240) break;
+  }
+  return result.join(" ").slice(0, 240);
+}
+
+export function generateSkillMd(input: {
+  pageDsl: PageDslJson | null;
+  apiDsls: Array<{ api_code: string; api_type: string; dsl_json: ApiDslJson | null }>;
+  actionDsls: Array<{ action_code: string; action_name?: string; action_type?: string; dsl_json?: Record<string, unknown> }>;
+  featureCode?: string;
+  featureName: string;
+  featureDescription?: string;
+}): string {
+  const primaryTables = [...new Set(input.apiDsls.flatMap((api) => [api.dsl_json?.table, ...((api.dsl_json?.joins ?? []).map((join) => join.table))]).filter((item): item is string => Boolean(item)))];
+  const lines: string[] = [];
+  lines.push(`# ${input.featureName}`);
+  lines.push("");
+  lines.push("## 标准元数据");
+  lines.push(`- 功能编码: ${input.featureCode ?? ""}`);
+  lines.push(`- 功能名称: ${input.featureName}`);
+  lines.push(`- 功能描述: ${input.featureDescription ?? input.pageDsl?.title ?? input.featureName}`);
+  lines.push(`- 主数据表: ${primaryTables[0] ?? ""}`);
+  lines.push("");
+
+  lines.push("## 功能描述");
+  lines.push(input.featureDescription ?? input.pageDsl?.title ?? input.featureName);
+  lines.push("");
+
+  lines.push("## 数据表");
+  if (primaryTables.length > 0) {
+    for (const table of primaryTables) lines.push(`- 表: ${table}`);
+  } else {
+    lines.push("（未识别到数据表）");
+  }
+  lines.push("");
+
+  lines.push("## 页面结构 (page_dsl)");
+  lines.push("");
+  lines.push("### 筛选条件 (filters)");
+  const filters = input.pageDsl?.filters ?? [];
+  if (filters.length > 0) {
+    lines.push("| key | label | type | placeholder |");
+    lines.push("|-----|-------|------|-------------|");
+    for (const f of filters) {
+      lines.push(`| ${f.key ?? ""} | ${f.label ?? ""} | ${f.type ?? ""} | ${f.placeholder ?? ""} |`);
+    }
+  } else {
+    lines.push("（无筛选条件）");
+  }
+  lines.push("");
+
+  lines.push("### 表格列 (table.columns)");
+  const columns = input.pageDsl?.table?.columns ?? [];
+  if (columns.length > 0) {
+    lines.push("| key | label | type | width | sortable | badge | align |");
+    lines.push("|-----|-------|------|-------|----------|-------|-------|");
+    for (const c of columns) {
+      lines.push(`| ${c.key ?? ""} | ${c.label ?? ""} | ${c.type ?? ""} | ${c.width ?? ""} | ${c.sortable ?? ""} | ${c.badge ?? ""} | ${c.align ?? ""} |`);
+    }
+  } else {
+    lines.push("（无表格列）");
+  }
+  lines.push("");
+
+  lines.push("### 工具栏 (toolbar)");
+  const toolbar = input.pageDsl?.toolbar ?? [];
+  if (toolbar.length > 0) {
+    lines.push("| actionCode | label | variant | type |");
+    lines.push("|------------|-------|---------|------|");
+    for (const t of toolbar) {
+      lines.push(`| ${t.actionCode ?? ""} | ${t.label ?? ""} | ${t.variant ?? ""} | ${t.type ?? ""} |`);
+    }
+  } else {
+    lines.push("（无工具栏）");
+  }
+  lines.push("");
+
+  lines.push("### 弹窗字段 (modal.fields)");
+  const modalFields = input.pageDsl?.modal?.fields ?? [];
+  if (modalFields.length > 0) {
+    lines.push("| key | label | type | required | span |");
+    lines.push("|-----|-------|------|----------|------|");
+    for (const f of modalFields) {
+      lines.push(`| ${f.key ?? ""} | ${f.label ?? ""} | ${f.type ?? ""} | ${f.required ?? ""} | ${f.span ?? ""} |`);
+    }
+  } else {
+    lines.push("（无弹窗字段）");
+  }
+  lines.push("");
+
+  lines.push("## API 定义 (api_dsl)");
+  lines.push("");
+  for (const api of input.apiDsls) {
+    const d = api.dsl_json;
+    lines.push(`### ${api.api_code} (${api.api_type})`);
+    if (d) {
+      if (d.table) lines.push(`- 表: ${d.table}`);
+      if (d.joins?.length) lines.push(`- 关联: ${d.joins.map((j) => `${j.table ?? ""} ${j.alias ?? ""} ON ${j.on ? `${j.on.left ?? ""} = ${j.on.right ?? ""}` : ""}`).join(", ")}`);
+      if (d.sort) {
+        const sortStr = typeof d.sort === "string" ? d.sort : (d.sort as Array<{ field?: string; direction?: string }>).map((o) => `${o.field ?? ""} ${o.direction ?? ""}`).join(", ");
+        lines.push(`- 排序: ${sortStr}`);
+      }
+      if (d.select?.length) lines.push(`- 选择字段: ${d.select.map((s) => s.as ? `${s.field ?? ""} AS ${s.as}` : s.field ?? "").join(", ")}`);
+      if (d.where?.length) lines.push(`- 条件: ${d.where.map((w) => `${w.field ?? ""} ${w.op ?? ""} (${w.source ?? ""})`).join(", ")}`);
+    } else {
+      lines.push("待补充");
+    }
+    lines.push("");
+  }
+
+  lines.push("## 操作定义 (action_dsl)");
+  lines.push("");
+  if (input.actionDsls.length > 0) {
+    lines.push("| actionCode | actionName | actionType |");
+    lines.push("|------------|-----------|------------|");
+    for (const a of input.actionDsls) {
+      lines.push(`| ${a.action_code} | ${a.action_name ?? ""} | ${a.action_type ?? ""} |`);
+    }
+  } else {
+    lines.push("（无操作定义）");
+  }
+
+  return lines.join("\n");
+}
+
+export async function syncSkillMd(schemaName: string, featureCode: string): Promise<void> {
+  const { rows: pageRows } = await pool.query(
+    `select dsl_json from admin.page_dsl where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default' or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' then 0 when schema_scope = 'tenant_default' then 1 else 2 end limit 1`,
+    [featureCode, schemaName]
+  );
+  const pageDsl = pageRows[0]?.dsl_json as PageDslJson | null ?? null;
+  if (!pageDsl && pageRows.length === 0) return;
+
+  const { rows: apiRows } = await pool.query(
+    `select api_code, api_type, dsl_json from admin.api_dsl where feature_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default' or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' then 0 when schema_scope = 'tenant_default' then 1 else 2 end`,
+    [featureCode, schemaName]
+  );
+  const apiDsls = apiRows.map((r: { api_code: string; api_type: string; dsl_json: unknown }) => ({
+    api_code: r.api_code,
+    api_type: r.api_type,
+    dsl_json: (typeof r.dsl_json === "string" ? JSON.parse(r.dsl_json) : r.dsl_json) as ApiDslJson | null,
+  }));
+
+  const { rows: actionRows } = await pool.query(
+    `select action_code, action_name, action_type, dsl_json from admin.action_dsl where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default' or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' then 0 when schema_scope = 'tenant_default' then 1 else 2 end`,
+    [featureCode, schemaName]
+  );
+
+  const skillCode = `skill_${featureCode}`;
+  const { rows: skillRows } = await pool.query(
+    `select skill_name from admin.skill_registry where skill_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default' or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' then 0 when schema_scope = 'tenant_default' then 1 else 2 end limit 1`,
+    [skillCode, schemaName]
+  );
+  const skillName = skillRows[0]?.skill_name ?? featureCode;
+
+  const content = generateSkillMd({
+    pageDsl,
+    apiDsls,
+    actionDsls: actionRows.map((r: Record<string, unknown>) => ({
+      action_code: String(r.action_code ?? ""),
+      action_name: String(r.action_name ?? ""),
+      action_type: String(r.action_type ?? ""),
+      dsl_json: r.dsl_json as Record<string, unknown>,
+    })),
+    featureCode,
+    featureName: skillName,
+    featureDescription: pageDsl?.title,
+  });
+
+  await pool.query(
+    `update admin.skill_registry set skill_md_content = $1, updated_at = now() where skill_code = $2 and status = 'active' and deleted = false`,
+    [content, skillCode]
+  ).catch((err) => {
+    console.warn("[SKILL.md] sync failed for %s: %s", featureCode, err instanceof Error ? err.message : String(err));
+  });
+}
+
+export async function fillEmptySkillMd(schemaName: string): Promise<number> {
+  const { rows } = await pool.query(
+    `select skill_code, feature_code, schema_scope, skill_md_content from admin.skill_registry where status = 'active' and deleted = false`,
+    []
+  );
+  let count = 0;
+  for (const row of rows) {
+    const content = String(row.skill_md_content ?? "");
+    if (content.length >= 200 && hasStandardSkillMdMetadata(content)) continue;
+    const featureCode = row.feature_code ?? row.skill_code.replace(/^skill_/, "");
+    try {
+      await syncSkillMd(schemaName, featureCode);
+      count++;
+    } catch {
+      // skip failed
+    }
+  }
+  return count;
+}

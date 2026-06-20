@@ -4,7 +4,15 @@ import { qIdent } from "../db/schema-resolver.js";
 
 type CommandDsl = {
   operation: "command";
-  command: "contract.create" | "funds.create" | "course.create" | "chargeRecord.create" | "refund.create";
+  command: "contract.create" | "funds.create" | "funds.delete" | "course.create" | "chargeRecord.create" | "refund.create"
+    | "contract.refund" | "refund.delete" | "course.delete"
+    | "attendance.checkIn" | "attendance.cancel"
+    | "miniClass.addStudent" | "miniClass.removeStudent" | "oneOnNGroup.addStudent" | "oneOnNGroup.removeStudent"
+    | "chargeRecord.reverse" | "chargeRecord.preview" | "course.cancel" | "course.student.save"
+    | "moneyArrange.save" | "promotionArrange.save" | "performanceArrange.save"
+    | "student.assignManager" | "product.grant.save" | "product.promotion.save"
+    | "role.permission.save" | "user.create" | "user.update" | "user.softDelete" | "user.resetPassword"
+    | "audit.list" | "report.student" | "report.finance" | "report.course";
   ruleCode: string;
 };
 
@@ -119,6 +127,11 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
     ]
   );
 
+  await client.query(
+    `update ${table(schemaName, "student")} set student_status = 'FORMAL', updated_at = now() where id = $1 and coalesce(student_status,'') = 'LEAD'`,
+    [input.student_id]
+  );
+
   if (promotionAmount > 0 || promotion) {
     await client.query(
       `insert into ${table(schemaName, "contract_promotion_history")}
@@ -136,11 +149,13 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
     const planRealHour = num(item.plan_real_hour ?? item.default_course_hour ?? product?.default_course_hour);
     const planRealAmount = num(item.plan_real_amount ?? item.total_amount ?? product?.total_amount);
     const planPromotionAmount =
-      allocationMode === "first_product"
-        ? index === 0 ? promotionAmount : 0
-        : index === productInputs.length - 1
-          ? roundMoney(remainingPromotion)
-          : totalAmount > 0 ? roundMoney(promotionAmount * (planRealAmount / totalAmount)) : 0;
+      num(item.plan_promotion_amount) > 0
+        ? num(item.plan_promotion_amount)
+        : allocationMode === "first_product"
+          ? index === 0 ? promotionAmount : 0
+          : index === productInputs.length - 1
+            ? roundMoney(remainingPromotion)
+            : totalAmount > 0 ? roundMoney(promotionAmount * (planRealAmount / totalAmount)) : 0;
     remainingPromotion -= planPromotionAmount;
     const cpId = str(item.id, await nextTextId(client, schemaName, "contract_product"));
     const cp = await one(client,
@@ -202,6 +217,65 @@ async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId
   }
 }
 
+async function arrangePromotion(client: pg.PoolClient, schemaName: string, fundsId: string, contractId: string, amount: number) {
+  if (!contractId || amount <= 0) return;
+  const { rows: cpRows } = await client.query(
+    `select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false order by created_at asc`,
+    [contractId]
+  );
+  const contract = await one(client, `select promotion_amount from ${table(schemaName, "contract")} where id = $1 and deleted = false`, [contractId]);
+  const totalPromotion = num(contract?.promotion_amount);
+  if (totalPromotion <= 0) return;
+  const totalPlanAmount = cpRows.reduce((sum, row) => sum + num(row.plan_real_amount), 0);
+  let remainingPromotion = totalPromotion;
+  for (let index = 0; index < cpRows.length; index += 1) {
+    const cp = cpRows[index];
+    const planAmount = num(cp.plan_real_amount);
+    const arrangePromotionAmount = index === cpRows.length - 1
+      ? roundMoney(remainingPromotion)
+      : totalPlanAmount > 0 ? roundMoney(totalPromotion * (planAmount / totalPlanAmount)) : 0;
+    if (arrangePromotionAmount <= 0) continue;
+    const arrangePromotionHour = num(cp.plan_promotion_hour);
+    await client.query(
+      `insert into ${table(schemaName, "promotion_arrange_log")}
+        (id, contract_product_id, arrange_promotion_hour, arrange_promotion_amount, funds_change_history_id, organization_id)
+       values ($1,$2,$3,$4,$5,$6)`,
+      [await nextTextId(client, schemaName, "promotion_arrange_log"), cp.id, arrangePromotionHour, arrangePromotionAmount, fundsId, cp.organization_id]
+    );
+    await client.query(
+      `update ${table(schemaName, "contract_product")}
+       set paid_promotion_hour = coalesce(paid_promotion_hour,0) + $1,
+           paid_promotion_amount = coalesce(paid_promotion_amount,0) + $2,
+           updated_at = now()
+       where id = $3`,
+      [arrangePromotionHour, arrangePromotionAmount, cp.id]
+    );
+    remainingPromotion -= arrangePromotionAmount;
+  }
+}
+
+async function arrangePerformance(client: pg.PoolClient, schemaName: string, fundsId: string, contractId: string, amount: number) {
+  if (!contractId || amount <= 0) return;
+  const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false`, [contractId]);
+  if (!contract) return;
+  const { rows: cpRows } = await client.query(
+    `select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false order by created_at asc`,
+    [contractId]
+  );
+  for (const cp of cpRows) {
+    const orgId = str(cp.organization_id, str(contract.organization_id));
+    const signStaffId = str(contract.sign_staff_id);
+    const perfAmount = roundMoney(amount * (num(cp.plan_real_amount) / Math.max(num(contract.total_amount), 1)));
+    if (perfAmount <= 0) continue;
+    await client.query(
+      `insert into ${table(schemaName, "performance_arrange_log")}
+        (id, contract_product_id, funds_change_history_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id)
+       values ($1,$2,$3,'SALES',$4,$5,$6,$7,$8)`,
+      [await nextTextId(client, schemaName, "performance_arrange_log"), cp.id, fundsId, orgId, perfAmount, signStaffId || null, signStaffId ? roundMoney(perfAmount * 0.5) : 0, orgId]
+    );
+  }
+}
+
 async function createFunds(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
   const input = dataOf(params);
   const fundsId = str(params.id, await nextTextId(client, schemaName, "funds_change_history"));
@@ -258,6 +332,8 @@ async function createFunds(client: pg.PoolClient, schemaName: string, params: Re
 
   if (input.contract_id) {
     await arrangePayment(client, schemaName, fundsId, String(input.contract_id), amount, rule);
+    await arrangePromotion(client, schemaName, fundsId, String(input.contract_id), amount);
+    await arrangePerformance(client, schemaName, fundsId, String(input.contract_id), amount);
     const nextPaid = num(contract?.paid_amount) + amount;
     const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
     const status = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
@@ -269,10 +345,89 @@ async function createFunds(client: pg.PoolClient, schemaName: string, params: Re
   return row;
 }
 
+async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const fundsId = str(params.id ?? dataOf(params).id);
+  if (!fundsId) throw new Error("缺少收款记录 ID");
+  const funds = await one(client, `select * from ${table(schemaName, "funds_change_history")} where id = $1 and deleted = false for update`, [fundsId]);
+  if (!funds) throw new Error("收款记录不存在或已删除");
+
+  const { rows: moneyRows } = await client.query(
+    `select * from ${table(schemaName, "money_arrange_log")} where funds_change_history_id = $1 and deleted = false`,
+    [fundsId]
+  );
+  for (const row of moneyRows) {
+    await client.query(
+      `update ${table(schemaName, "contract_product")}
+       set paid_real_amount = greatest(coalesce(paid_real_amount,0) - $1, 0),
+           paid_real_hour = greatest(coalesce(paid_real_hour,0) - $2, 0),
+           updated_at = now()
+       where id = $3`,
+      [num(row.arrange_real_amount), num(row.arrange_real_hour), row.contract_product_id]
+    );
+  }
+
+  const { rows: promotionRows } = await client.query(
+    `select * from ${table(schemaName, "promotion_arrange_log")} where funds_change_history_id = $1 and deleted = false`,
+    [fundsId]
+  );
+  for (const row of promotionRows) {
+    await client.query(
+      `update ${table(schemaName, "contract_product")}
+       set paid_promotion_amount = greatest(coalesce(paid_promotion_amount,0) - $1, 0),
+           paid_promotion_hour = greatest(coalesce(paid_promotion_hour,0) - $2, 0),
+           updated_at = now()
+       where id = $3`,
+      [num(row.arrange_promotion_amount), num(row.arrange_promotion_hour), row.contract_product_id]
+    );
+  }
+
+  await client.query(`update ${table(schemaName, "money_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = $1 and deleted = false`, [fundsId]);
+  await client.query(`update ${table(schemaName, "promotion_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = $1 and deleted = false`, [fundsId]);
+  await client.query(`update ${table(schemaName, "performance_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = $1 and deleted = false`, [fundsId]);
+
+  const contractId = str(funds.contract_id);
+  const amount = num(funds.transaction_amount);
+  if (contractId) {
+    const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [contractId]);
+    const nextPaid = Math.max(num(contract?.paid_amount) - amount, 0);
+    const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
+    const status = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+    await client.query(
+      `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, updated_at = now() where id = $3`,
+      [nextPaid, status, contractId]
+    );
+  }
+
+  const payWay = funds.pay_way_config_id
+    ? await one(client, `select pay_way_type from ${table(schemaName, "pay_way_config")} where id = $1 and deleted = false`, [funds.pay_way_config_id])
+    : undefined;
+  if (str(funds.funds_type) === "PRE_STORE") {
+    await changeStudentEleAccount(client, schemaName, {
+      studentId: str(funds.student_id),
+      amount: -amount,
+      changeType: "PRESTORE_DELETE",
+      sourceFundsId: fundsId,
+      remark: "删除预存收款回滚电子账户"
+    });
+  } else if (str(payWay?.pay_way_type) === "ELE_ACCOUNT") {
+    await changeStudentEleAccount(client, schemaName, {
+      studentId: str(funds.student_id),
+      amount,
+      changeType: "CONTRACT_PAY_DELETE",
+      sourceFundsId: fundsId,
+      contractId,
+      remark: "删除电子账户合同收款回滚余额"
+    });
+  }
+
+  await client.query(`update ${table(schemaName, "funds_change_history")} set deleted = true, updated_at = now() where id = $1`, [fundsId]);
+  return { deleted: true, fundsId, rolledBackMoney: moneyRows.length, rolledBackPromotion: promotionRows.length };
+}
+
 async function changeStudentEleAccount(
   client: pg.PoolClient,
   schemaName: string,
-  input: { studentId: string; amount: number; changeType: string; sourceFundsId?: string; contractId?: string; remark?: string }
+  input: { studentId: string; amount: number; changeType: string; sourceFundsId?: string; sourceRefundId?: string; contractId?: string; remark?: string }
 ) {
   let account = await one(client, `select * from ${table(schemaName, "student_ele_account")} where student_id = $1 and deleted = false for update`, [input.studentId]);
   if (!account) {
@@ -290,9 +445,9 @@ async function changeStudentEleAccount(
   );
   await client.query(
     `insert into ${table(schemaName, "student_ele_account_record")}
-      (id, student_id, account_id, change_type, change_amount, balance_after, source_funds_id, contract_id, remark)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [await nextTextId(client, schemaName, "student_ele_account_record"), input.studentId, account?.id, input.changeType, input.amount, nextBalance, input.sourceFundsId, input.contractId, input.remark]
+      (id, student_id, account_id, change_type, change_amount, balance_after, source_funds_id, source_refund_id, contract_id, remark)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [await nextTextId(client, schemaName, "student_ele_account_record"), input.studentId, account?.id, input.changeType, input.amount, nextBalance, input.sourceFundsId, input.sourceRefundId, input.contractId, input.remark]
   );
   return nextBalance;
 }
@@ -340,15 +495,72 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
     ]
   );
   const studentIds = Array.isArray(input.student_ids) ? input.student_ids : input.student_id ? [input.student_id] : [];
-  for (const studentId of studentIds) {
+  const studentsWithCp = Array.isArray(input.students) ? input.students as Record<string, unknown>[] : [];
+
+  const miniClassId = str(input.mini_class_id);
+  const oneOnNGroupId = str(input.one_on_n_group_id);
+
+  if (miniClassId) {
+    const { rows: classStudents } = await client.query(
+      `select mcs.student_id, mcs.mini_class_id from ${table(schemaName, "mini_class_student")} mcs where mcs.mini_class_id = $1 and mcs.deleted = false`,
+      [miniClassId]
+    );
+    for (const cs of classStudents) {
+      const matched = studentsWithCp.find((s) => str(s.student_id) === str(cs.student_id));
+      const cpId = matched ? str(matched.contract_product_id) : await autoSelectCp(client, schemaName, str(cs.student_id), input.product_id);
+      await client.query(
+        `insert into ${table(schemaName, "generic_course_student")}
+          (id, course_id, student_id, attendance_status, contract_product_id, mini_class_id)
+         values ($1,$2,$3,'PENDING',$4,$5)`,
+        [await nextTextId(client, schemaName, "generic_course_student"), courseId, cs.student_id, cpId, miniClassId]
+      );
+    }
+    return { course, studentCount: classStudents.length, autoLinked: true, source: "mini_class" };
+  }
+
+  if (oneOnNGroupId) {
+    const { rows: groupStudents } = await client.query(
+      `select ogs.student_id, ogs.one_on_n_group_id from ${table(schemaName, "one_on_n_group_student")} ogs where ogs.one_on_n_group_id = $1 and ogs.deleted = false`,
+      [oneOnNGroupId]
+    );
+    for (const gs of groupStudents) {
+      const matched = studentsWithCp.find((s) => str(s.student_id) === str(gs.student_id));
+      const cpId = matched ? str(matched.contract_product_id) : await autoSelectCp(client, schemaName, str(gs.student_id), input.product_id);
+      await client.query(
+        `insert into ${table(schemaName, "generic_course_student")}
+          (id, course_id, student_id, attendance_status, contract_product_id, one_on_n_group_id)
+         values ($1,$2,$3,'PENDING',$4,$5)`,
+        [await nextTextId(client, schemaName, "generic_course_student"), courseId, gs.student_id, cpId, oneOnNGroupId]
+      );
+    }
+    return { course, studentCount: groupStudents.length, autoLinked: true, source: "one_on_n_group" };
+  }
+
+  for (const stu of studentsWithCp.length ? studentsWithCp : studentIds.map((sid) => ({ student_id: sid }))) {
+    const sid = str(stu.student_id);
+    const cpId = str((stu as Record<string, unknown>).contract_product_id) || str(input.contract_product_id);
     await client.query(
       `insert into ${table(schemaName, "generic_course_student")}
         (id, course_id, student_id, attendance_status, contract_product_id)
        values ($1,$2,$3,'PENDING',$4)`,
-      [await nextTextId(client, schemaName, "generic_course_student"), courseId, studentId, input.contract_product_id]
+      [await nextTextId(client, schemaName, "generic_course_student"), courseId, sid, cpId]
     );
   }
-  return { course, studentCount: studentIds.length };
+  return { course, studentCount: studentsWithCp.length || studentIds.length };
+}
+
+async function autoSelectCp(client: pg.PoolClient, schemaName: string, studentId: string, productId?: unknown): Promise<string | null> {
+  const pid = productId ? str(productId) : null;
+  const cp = await one(client,
+    `select cp.id from ${table(schemaName, "contract_product")} cp
+     join ${table(schemaName, "contract")} c on cp.contract_id = c.id
+     where c.student_id = $1 and cp.deleted = false and c.deleted = false and c.contract_status = 'ACTIVE'
+       and coalesce(cp.remaining_real_hour,0) > 0
+       ${pid ? "and cp.product_id = $2" : ""}
+     order by cp.created_at asc limit 1`,
+    pid ? [studentId, pid] : [studentId]
+  );
+  return cp ? str(cp.id) : null;
 }
 
 async function createCharge(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
@@ -442,13 +654,17 @@ async function createRefund(client: pg.PoolClient, schemaName: string, params: R
   );
   await client.query(
     `update ${table(schemaName, "contract_product")}
-     set remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
+     set consumed_real_hour = coalesce(consumed_real_hour,0) - $1,
+         consumed_real_amount = coalesce(consumed_real_amount,0) - $2,
+         consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $3,
+         consumed_promotion_amount = coalesce(consumed_promotion_amount,0) - $4,
+         remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
          remaining_real_amount = coalesce(remaining_real_amount,0) - $2,
-         remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $3,
-         remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $4,
+         remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $3,
+         remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $4,
          updated_at = now()
      where id = $5`,
-    [refundHour, refundAmount, refundPromotionAmount, refundPromotionHour, cpId]
+    [refundHour, refundAmount, refundPromotionHour, refundPromotionAmount, cpId]
   );
   const contractId = str(cp.contract_id);
   if (contractId && refundAmount > 0) {
@@ -458,10 +674,724 @@ async function createRefund(client: pg.PoolClient, schemaName: string, params: R
     const status = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
     await client.query(`update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, updated_at = now() where id = $3`, [nextPaid, status, contractId]);
   }
+  if (contractId) {
+    const { rows: allCps } = await client.query(`select coalesce(remaining_real_hour,0) as rh, coalesce(remaining_real_amount,0) as ra, coalesce(remaining_promotion_hour,0) as ph, coalesce(remaining_promotion_amount,0) as pa from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false`, [contractId]);
+    const allZero = allCps.every((r) => num(r.rh) <= 0 && num(r.ra) <= 0 && num(r.ph) <= 0 && num(r.pa) <= 0);
+    if (allZero) await client.query(`update ${table(schemaName, "contract")} set contract_status = 'REFUNDED', updated_at = now() where id = $1`, [contractId]);
+  }
   return refund;
 }
 
+async function reverseCharge(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const chargeId = str(params.id ?? (dataOf(params)).charge_id);
+  if (!chargeId) throw new Error("缺少扣费记录 ID");
+  const charge = await one(client, `select * from ${table(schemaName, "account_charge_records")} where id = $1 and deleted = false for update`, [chargeId]);
+  if (!charge) throw new Error("扣费记录不存在");
+  if (str(charge.charge_status) === "REVERSED") throw new Error("该扣费记录已撤销");
+  const cpId = str(charge.contract_product_id);
+  const reverseId = await nextTextId(client, schemaName, "account_charge_records");
+  await client.query(
+    `insert into ${table(schemaName, "account_charge_records")}
+      (id, course_id, charge_type, charge_hour, charge_amount, contract_product_id, organization_id, student_id, charge_status, reversed_record_id, ext_json)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,'REVERSED',$9,$10)`,
+    [reverseId, charge.course_id, charge.charge_type, -num(charge.charge_hour), -num(charge.charge_amount), cpId, charge.organization_id, charge.student_id, chargeId, JSON.stringify({ reversedFrom: chargeId })]
+  );
+  await client.query(`update ${table(schemaName, "account_charge_records")} set charge_status = 'REVERSED', updated_at = now() where id = $1`, [chargeId]);
+  if (cpId) {
+    const chargeType = str(charge.charge_type);
+    const hour = num(charge.charge_hour);
+    const amount = num(charge.charge_amount);
+    if (chargeType === "NORMAL") {
+      await client.query(`update ${table(schemaName, "contract_product")} set consumed_real_hour = coalesce(consumed_real_hour,0) - $1, consumed_real_amount = coalesce(consumed_real_amount,0) - $2, remaining_real_hour = coalesce(remaining_real_hour,0) + $1, remaining_real_amount = coalesce(remaining_real_amount,0) + $2, updated_at = now() where id = $3`, [hour, amount, cpId]);
+    } else if (chargeType === "PROMOTION") {
+      await client.query(`update ${table(schemaName, "contract_product")} set consumed_promotion_amount = coalesce(consumed_promotion_amount,0) - $1, remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $1, updated_at = now() where id = $2`, [amount, cpId]);
+    } else if (chargeType === "PROMOTION_HOUR") {
+      await client.query(`update ${table(schemaName, "contract_product")} set consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $1, remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $1, updated_at = now() where id = $2`, [hour, cpId]);
+    }
+  }
+  return { reversed: true, originalChargeId: chargeId, reverseRecordId: reverseId };
+}
+
+async function previewCharge(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const cpId = str(input.contract_product_id);
+  if (!cpId) throw new Error("缺少 contract_product_id");
+  const cp = await one(client, `select * from ${table(schemaName, "contract_product")} where id = $1 and deleted = false`, [cpId]);
+  if (!cp) throw new Error("合同产品不存在");
+  return {
+    contractProductId: cpId,
+    chargeType: str(input.charge_type, "NORMAL"),
+    availableRealHour: num(cp.remaining_real_hour),
+    availableRealAmount: num(cp.remaining_real_amount),
+    availablePromotionHour: num(cp.remaining_promotion_hour),
+    availablePromotionAmount: num(cp.remaining_promotion_amount),
+    suggestedChargeHour: Math.min(num(input.charge_hour, 1), num(cp.remaining_real_hour)),
+    suggestedChargeAmount: Math.min(num(input.charge_amount), num(cp.remaining_real_amount))
+  };
+}
+
+async function contract_refund(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
+  const input = dataOf(params);
+  const contractId = str(input.contract_id);
+  if (!contractId) throw new Error("合同退费必须选择合同");
+  const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [contractId]);
+  if (!contract) throw new Error("合同不存在");
+  if (str(contract.contract_status) === "REFUNDED") throw new Error("合同已退费");
+  if (str(contract.contract_status) === "CLOSED") throw new Error("合同已关闭，不可退费");
+
+  const { rows: cpRows } = await client.query(
+    `select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false for update`,
+    [contractId]
+  );
+  if (!cpRows.length) throw new Error("合同下无有效合同产品");
+
+  const totalRefundAmount = num(input.refund_real_amount);
+  const totalRefundPromotionAmount = num(input.refund_promotion_amount);
+  const totalRefundHour = num(input.refund_real_hour);
+  const totalRefundPromotionHour = num(input.refund_promotion_hour);
+
+  const totalRemainingReal = cpRows.reduce((s, r) => s + num(r.remaining_real_amount), 0);
+  const totalRemainingPromotion = cpRows.reduce((s, r) => s + num(r.remaining_promotion_amount), 0);
+  const totalRemainingRealHour = cpRows.reduce((s, r) => s + num(r.remaining_real_hour), 0);
+  const totalRemainingPromotionHour = cpRows.reduce((s, r) => s + num(r.remaining_promotion_hour), 0);
+
+  const targetRefundAmount = totalRefundAmount > 0 ? totalRefundAmount : totalRemainingReal;
+  const targetRefundPromotionAmount = totalRefundPromotionAmount > 0 ? totalRefundPromotionAmount : totalRemainingPromotion;
+  const targetRefundHour = totalRefundHour > 0 ? totalRefundHour : totalRemainingRealHour;
+  const targetRefundPromotionHour = totalRefundPromotionHour > 0 ? totalRefundPromotionHour : totalRemainingPromotionHour;
+
+  if (rule.allowRefundOverBalance !== true) {
+    if (targetRefundAmount > totalRemainingReal) throw new Error("退费金额超过合同实收剩余");
+    if (targetRefundPromotionAmount > totalRemainingPromotion) throw new Error("退费优惠金额超过合同优惠剩余");
+    if (targetRefundHour > totalRemainingRealHour) throw new Error("退费课时超过合同实收剩余课时");
+    if (targetRefundPromotionHour > totalRemainingPromotionHour) throw new Error("退费赠送课时超过合同优惠剩余课时");
+  }
+
+  const refundRecords = [];
+  let remainRefundAmount = targetRefundAmount;
+  let remainRefundPromotionAmount = targetRefundPromotionAmount;
+  let remainRefundHour = targetRefundHour;
+  let remainRefundPromotionHour = targetRefundPromotionHour;
+
+  for (let index = 0; index < cpRows.length; index += 1) {
+    const cp = cpRows[index];
+    const isLast = index === cpRows.length - 1;
+    const cpRemainingReal = num(cp.remaining_real_amount);
+    const cpRemainingPromotion = num(cp.remaining_promotion_amount);
+    const cpRemainingRealHour = num(cp.remaining_real_hour);
+    const cpRemainingPromotionHour = num(cp.remaining_promotion_hour);
+
+    const proportion = totalRemainingReal > 0 ? cpRemainingReal / totalRemainingReal : (1 / cpRows.length);
+    const cpRefundHour = isLast ? roundMoney(remainRefundHour) : roundMoney(targetRefundHour * proportion);
+    const cpRefundAmount = isLast ? roundMoney(remainRefundAmount) : roundMoney(targetRefundAmount * proportion);
+    const cpRefundPromotionHour = isLast ? roundMoney(remainRefundPromotionHour) : roundMoney(targetRefundPromotionHour * proportion);
+    const cpRefundPromotionAmount = isLast ? roundMoney(remainRefundPromotionAmount) : roundMoney(targetRefundPromotionAmount * proportion);
+
+    remainRefundHour -= cpRefundHour;
+    remainRefundAmount -= cpRefundAmount;
+    remainRefundPromotionHour -= cpRefundPromotionHour;
+    remainRefundPromotionAmount -= cpRefundPromotionAmount;
+
+    if (cpRefundHour <= 0 && cpRefundAmount <= 0 && cpRefundPromotionHour <= 0 && cpRefundPromotionAmount <= 0) continue;
+
+    const refund = await one(client,
+      `insert into ${table(schemaName, "refund_record")}
+        (id, student_id, contract_product_id, contract_id, refund_type, proportion, refund_real_hour, refund_real_amount, refund_promotion_amount, refund_promotion_hour, refund_way_config_id, refund_time, remark, ext_json)
+       values ($1,$2,$3,$4,'CONTRACT',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       returning *`,
+      [
+        await nextTextId(client, schemaName, "refund_record"),
+        contract.student_id,
+        cp.id,
+        contractId,
+        roundMoney(proportion),
+        cpRefundHour,
+        cpRefundAmount,
+        cpRefundPromotionAmount,
+        cpRefundPromotionHour,
+        input.refund_way_config_id,
+        str(input.refund_time, new Date().toISOString()),
+        input.remark,
+        JSON.stringify({ ruleCode: "contract_refund_rule", rule })
+      ]
+    );
+    refundRecords.push(refund);
+
+    await client.query(
+      `update ${table(schemaName, "contract_product")}
+       set consumed_real_hour = coalesce(consumed_real_hour,0) - $1,
+           consumed_real_amount = coalesce(consumed_real_amount,0) - $2,
+           consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $3,
+           consumed_promotion_amount = coalesce(consumed_promotion_amount,0) - $4,
+           remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
+           remaining_real_amount = coalesce(remaining_real_amount,0) - $2,
+           remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $3,
+           remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $4,
+           updated_at = now()
+       where id = $5`,
+      [cpRefundHour, cpRefundAmount, cpRefundPromotionHour, cpRefundPromotionAmount, cp.id]
+    );
+  }
+
+  const nextPaid = Math.max(num(contract.paid_amount) - targetRefundAmount, 0);
+  const payable = Math.max(num(contract.total_amount) - num(contract.promotion_amount), 0);
+  const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+
+  const { rows: updatedCps } = await client.query(`select coalesce(remaining_real_hour,0) as rh, coalesce(remaining_real_amount,0) as ra, coalesce(remaining_promotion_hour,0) as ph, coalesce(remaining_promotion_amount,0) as pa from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false`, [contractId]);
+  const allZero = updatedCps.every((r) => num(r.rh) <= 0 && num(r.ra) <= 0 && num(r.ph) <= 0 && num(r.pa) <= 0);
+  const contractStatus = allZero ? "REFUNDED" : str(contract.contract_status);
+
+  await client.query(
+    `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
+    [nextPaid, paidStatus, contractStatus, contractId]
+  );
+
+  if (str(input.refund_way_config_id)) {
+    const payWay = await one(client, `select pay_way_type from ${table(schemaName, "pay_way_config")} where id = $1 and deleted = false`, [input.refund_way_config_id]);
+    if (str(payWay?.pay_way_type) === "ELE_ACCOUNT") {
+      await changeStudentEleAccount(client, schemaName, {
+        studentId: str(contract.student_id),
+        amount: targetRefundAmount,
+        changeType: "REFUND_IN",
+        sourceRefundId: str(refundRecords[0]?.id),
+        contractId,
+        remark: str(input.remark, "合同退费入电子账户")
+      });
+    }
+  }
+
+  return { contractId, refundRecords, totalRefundAmount: targetRefundAmount, contractStatus };
+}
+
+async function refund_delete(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const refundId = str(params.id ?? dataOf(params).id);
+  if (!refundId) throw new Error("缺少退费记录 ID");
+  const refund = await one(client, `select * from ${table(schemaName, "refund_record")} where id = $1 and deleted = false for update`, [refundId]);
+  if (!refund) throw new Error("退费记录不存在或已删除");
+
+  const cpId = str(refund.contract_product_id);
+  if (cpId) {
+    const refundHour = num(refund.refund_real_hour);
+    const refundAmount = num(refund.refund_real_amount);
+    const refundPromotionHour = num(refund.refund_promotion_hour);
+    const refundPromotionAmount = num(refund.refund_promotion_amount);
+
+    await client.query(
+      `update ${table(schemaName, "contract_product")}
+       set consumed_real_hour = coalesce(consumed_real_hour,0) + $1,
+           consumed_real_amount = coalesce(consumed_real_amount,0) + $2,
+           consumed_promotion_hour = coalesce(consumed_promotion_hour,0) + $3,
+           consumed_promotion_amount = coalesce(consumed_promotion_amount,0) + $4,
+           remaining_real_hour = coalesce(remaining_real_hour,0) + $1,
+           remaining_real_amount = coalesce(remaining_real_amount,0) + $2,
+           remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $3,
+           remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $4,
+           updated_at = now()
+       where id = $5`,
+      [refundHour, refundAmount, refundPromotionHour, refundPromotionAmount, cpId]
+    );
+  }
+
+  const contractId = str(refund.contract_id);
+  if (contractId) {
+    const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [contractId]);
+    const refundAmount = num(refund.refund_real_amount);
+    const nextPaid = num(contract?.paid_amount) + refundAmount;
+    const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
+    const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+    const contractStatus = str(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
+    await client.query(
+      `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
+      [nextPaid, paidStatus, contractStatus, contractId]
+    );
+  } else if (cpId) {
+    const cp = await one(client, `select contract_id from ${table(schemaName, "contract_product")} where id = $1 and deleted = false`, [cpId]);
+    const cpContractId = str(cp?.contract_id);
+    if (cpContractId && num(refund.refund_real_amount) > 0) {
+      const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [cpContractId]);
+      const nextPaid = num(contract?.paid_amount) + num(refund.refund_real_amount);
+      const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
+      const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+      const contractStatus = str(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
+      await client.query(
+        `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
+        [nextPaid, paidStatus, contractStatus, cpContractId]
+      );
+    }
+  }
+
+  const eleAccountRecord = await one(client,
+    `select id from ${table(schemaName, "student_ele_account_record")} where source_refund_id = $1 and change_type = 'REFUND_IN' and deleted = false`,
+    [refundId]
+  );
+  if (eleAccountRecord) {
+    await changeStudentEleAccount(client, schemaName, {
+      studentId: str(refund.student_id),
+      amount: -num(refund.refund_real_amount),
+      changeType: "REFUND_DELETE",
+      sourceRefundId: refundId,
+      remark: "删除退费记录回滚电子账户"
+    });
+  }
+
+  await client.query(`update ${table(schemaName, "refund_record")} set deleted = true, updated_at = now() where id = $1`, [refundId]);
+  return { deleted: true, refundId };
+}
+
+async function course_delete(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const courseId = str(params.id ?? (dataOf(params)).course_id);
+  if (!courseId) throw new Error("缺少课程 ID");
+  const course = await one(client, `select * from ${table(schemaName, "generic_course")} where id = $1 and deleted = false for update`, [courseId]);
+  if (!course) throw new Error("课程不存在");
+  if (str(course.course_status) === "CANCELLED") return { deleted: true, courseId, note: "already_cancelled" };
+
+  const { rows: charges } = await client.query(
+    `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and charge_status = 'CONFIRMED' and deleted = false for update`,
+    [courseId]
+  );
+  for (const charge of charges) {
+    await reverseCharge(client, schemaName, { id: charge.id });
+  }
+
+  const { rows: students } = await client.query(
+    `select * from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false`,
+    [courseId]
+  );
+  for (const student of students) {
+    if (str(student.attendance_status) === "PRESENT") {
+      await client.query(
+        `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`,
+        [student.id]
+      );
+    }
+  }
+
+  await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where course_id = $1 and deleted = false`, [courseId]);
+  await client.query(`update ${table(schemaName, "generic_course")} set course_status = 'CANCELLED', deleted = true, updated_at = now() where id = $1`, [courseId]);
+
+  return { deleted: true, courseId, reversedCharges: charges.length, resetAttendance: students.filter((s) => str(s.attendance_status) === "PRESENT").length };
+}
+
+async function attendance_check_in(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
+  const input = dataOf(params);
+  const courseId = str(input.course_id);
+  if (!courseId) throw new Error("考勤必须选择课程");
+  const course = await one(client, `select * from ${table(schemaName, "generic_course")} where id = $1 and deleted = false for update`, [courseId]);
+  if (!course) throw new Error("课程不存在");
+  if (str(course.course_status) === "CANCELLED") throw new Error("课程已取消");
+
+  const courseHour = num(course.course_hour, 1);
+  const students = Array.isArray(input.students) ? input.students as Record<string, unknown>[] : [];
+
+  const succeeded: Record<string, unknown>[] = [];
+  const failed: Record<string, unknown>[] = [];
+
+  for (const stu of students) {
+    const studentId = str(stu.student_id);
+    const cpId = str(stu.contract_product_id);
+    if (!studentId) continue;
+
+    const courseStudent = await one(client,
+      `select * from ${table(schemaName, "generic_course_student")} where course_id = $1 and student_id = $2 and deleted = false for update`,
+      [courseId, studentId]
+    );
+    if (!courseStudent) { failed.push({ studentId, reason: "学员不在课程中" }); continue; }
+    if (str(courseStudent.attendance_status) === "PRESENT") { succeeded.push({ studentId, skipped: true }); continue; }
+    if (!cpId) { failed.push({ studentId, reason: "未选择合同产品" }); continue; }
+
+    const cp = await one(client, `select * from ${table(schemaName, "contract_product")} where id = $1 and deleted = false for update`, [cpId]);
+    if (!cp) { failed.push({ studentId, reason: "合同产品不存在" }); continue; }
+
+    const cpContract = await one(client, `select student_id from ${table(schemaName, "contract")} where id = $1 and deleted = false`, [cp.contract_id]);
+    if (str(cpContract?.student_id) !== studentId) { failed.push({ studentId, reason: "合同产品不属于该学员" }); continue; }
+
+    const chargeAmount = num(cp.plan_real_amount) > 0 && num(cp.plan_real_hour) > 0
+      ? roundMoney(courseHour * (num(cp.plan_real_amount) / num(cp.plan_real_hour)))
+      : roundMoney(courseHour * num(cp.unit_price ?? 0));
+
+    if (rule.allowNegativeBalance !== true && (num(cp.remaining_real_hour) < courseHour || num(cp.remaining_real_amount) < chargeAmount)) {
+      failed.push({ studentId, reason: "合同产品余额不足" }); continue;
+    }
+
+    await client.query(
+      `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PRESENT', attendance_time = now(), contract_product_id = $1, updated_at = now() where id = $2`,
+      [cpId, courseStudent.id]
+    );
+
+    await createCharge(client, schemaName, {
+      course_id: courseId,
+      charge_type: "NORMAL",
+      charge_hour: courseHour,
+      charge_amount: chargeAmount,
+      contract_product_id: cpId,
+      student_id: studentId,
+      organization_id: course.organization_id
+    }, rule);
+
+    succeeded.push({ studentId, contractProductId: cpId, chargeHour: courseHour, chargeAmount });
+  }
+
+  return { courseId, succeeded, failed };
+}
+
+async function attendance_cancel(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const courseId = str(input.course_id);
+  const studentId = str(input.student_id);
+  if (!courseId || !studentId) throw new Error("取消考勤必须提供课程ID和学员ID");
+
+  const courseStudent = await one(client,
+    `select * from ${table(schemaName, "generic_course_student")} where course_id = $1 and student_id = $2 and deleted = false for update`,
+    [courseId, studentId]
+  );
+  if (!courseStudent) throw new Error("学员不在课程中");
+  if (str(courseStudent.attendance_status) !== "PRESENT") throw new Error("学员未签到，无法取消考勤");
+
+  const { rows: charges } = await client.query(
+    `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false for update`,
+    [courseId, studentId]
+  );
+  for (const charge of charges) {
+    await reverseCharge(client, schemaName, { id: charge.id });
+  }
+
+  await client.query(
+    `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`,
+    [courseStudent.id]
+  );
+
+  return { cancelled: true, courseId, studentId, reversedCharges: charges.length };
+}
+
+async function mini_class_add_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const miniClassId = str(input.mini_class_id);
+  if (!miniClassId) throw new Error("缺少班级 ID");
+  const miniClass = await one(client, `select * from ${table(schemaName, "mini_class")} where id = $1 and deleted = false for update`, [miniClassId]);
+  if (!miniClass) throw new Error("班级不存在");
+
+  const studentIds = (Array.isArray(input.student_ids) ? input.student_ids : []).map(String).filter(Boolean);
+  if (!studentIds.length) throw new Error("至少选择一个学员");
+
+  const { rows: existing } = await client.query(`select student_id from ${table(schemaName, "mini_class_student")} where mini_class_id = $1 and deleted = false`, [miniClassId]);
+  const existingSet = new Set(existing.map((r) => String(r.student_id)));
+  if (existingSet.size + studentIds.length > num(miniClass.capacity, 999)) throw new Error("超出班级容量");
+
+  const added: string[] = [];
+  for (const studentId of studentIds) {
+    if (existingSet.has(studentId)) continue;
+    await client.query(
+      `insert into ${table(schemaName, "mini_class_student")} (id, mini_class_id, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`,
+      [await nextTextId(client, schemaName, "mini_class_student"), miniClassId, studentId]
+    );
+    added.push(studentId);
+  }
+  return { miniClassId, added: added.length };
+}
+
+async function mini_class_remove_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const miniClassId = str(input.mini_class_id);
+  const studentId = str(input.student_id);
+  if (!miniClassId || !studentId) throw new Error("缺少班级ID或学员ID");
+
+  const record = await one(client, `select * from ${table(schemaName, "mini_class_student")} where mini_class_id = $1 and student_id = $2 and deleted = false`, [miniClassId, studentId]);
+  if (!record) throw new Error("学员不在该班级中");
+
+  const { rows: attendance } = await client.query(
+    `select gcs.id from ${table(schemaName, "generic_course_student")} gcs
+     join ${table(schemaName, "generic_course")} gc on gcs.course_id = gc.id
+     where gc.mini_class_id = $1 and gcs.student_id = $2 and gcs.attendance_status = 'PRESENT' and gcs.deleted = false and gc.deleted = false`,
+    [miniClassId, studentId]
+  );
+  if (attendance.length > 0) throw new Error("该学员存在未完成考勤，不可移除");
+
+  await client.query(`update ${table(schemaName, "mini_class_student")} set deleted = true, updated_at = now() where id = $1`, [record.id]);
+  return { removed: true, miniClassId, studentId };
+}
+
+async function one_on_n_group_add_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const groupId = str(input.one_on_n_group_id);
+  if (!groupId) throw new Error("缺少1对N小组 ID");
+  const group = await one(client, `select * from ${table(schemaName, "one_on_n_group")} where id = $1 and deleted = false for update`, [groupId]);
+  if (!group) throw new Error("1对N小组不存在");
+
+  const studentIds = (Array.isArray(input.student_ids) ? input.student_ids : []).map(String).filter(Boolean);
+  if (!studentIds.length) throw new Error("至少选择一个学员");
+
+  const { rows: existing } = await client.query(`select student_id from ${table(schemaName, "one_on_n_group_student")} where one_on_n_group_id = $1 and deleted = false`, [groupId]);
+  const existingSet = new Set(existing.map((r) => String(r.student_id)));
+  if (existingSet.size + studentIds.length > num(group.capacity, 999)) throw new Error("超出小组容量");
+
+  const added: string[] = [];
+  for (const studentId of studentIds) {
+    if (existingSet.has(studentId)) continue;
+    await client.query(
+      `insert into ${table(schemaName, "one_on_n_group_student")} (id, one_on_n_group_id, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`,
+      [await nextTextId(client, schemaName, "one_on_n_group_student"), groupId, studentId]
+    );
+    added.push(studentId);
+  }
+  return { oneOnNGroupId: groupId, added: added.length };
+}
+
+async function one_on_n_group_remove_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const groupId = str(input.one_on_n_group_id);
+  const studentId = str(input.student_id);
+  if (!groupId || !studentId) throw new Error("缺少1对N小组ID或学员ID");
+
+  const record = await one(client, `select * from ${table(schemaName, "one_on_n_group_student")} where one_on_n_group_id = $1 and student_id = $2 and deleted = false`, [groupId, studentId]);
+  if (!record) throw new Error("学员不在该小组中");
+
+  const { rows: attendance } = await client.query(
+    `select gcs.id from ${table(schemaName, "generic_course_student")} gcs
+     join ${table(schemaName, "generic_course")} gc on gcs.course_id = gc.id
+     where gc.one_on_n_group_id = $1 and gcs.student_id = $2 and gcs.attendance_status = 'PRESENT' and gcs.deleted = false and gc.deleted = false`,
+    [groupId, studentId]
+  );
+  if (attendance.length > 0) throw new Error("该学员存在未完成考勤，不可移除");
+
+  await client.query(`update ${table(schemaName, "one_on_n_group_student")} set deleted = true, updated_at = now() where id = $1`, [record.id]);
+  return { removed: true, oneOnNGroupId: groupId, studentId };
+}
+
+async function cancelCourse(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const courseId = str(params.id ?? (dataOf(params)).course_id);
+  if (!courseId) throw new Error("缺少课程 ID");
+  const { rowCount } = await client.query(`update ${table(schemaName, "generic_course")} set course_status = 'CANCELLED', updated_at = now() where id = $1 and deleted = false`, [courseId]);
+  if (!rowCount) throw new Error("课程不存在");
+  return { cancelled: true, courseId };
+}
+
+async function saveCourseStudents(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const courseId = str(input.course_id ?? input.generic_course_id);
+  if (!courseId) throw new Error("缺少课程 ID");
+  const newStudentIds = (Array.isArray(input.student_ids) ? input.student_ids : []).map(String);
+  const { rows: existing } = await client.query(`select student_id from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false`, [courseId]);
+  const existingSet = new Set(existing.map((r) => String(r.student_id)));
+  const toAdd = newStudentIds.filter((id: string) => !existingSet.has(id));
+  const toRemove = [...existingSet].filter((id) => !newStudentIds.includes(id));
+  for (const studentId of toAdd) {
+    await client.query(`insert into ${table(schemaName, "generic_course_student")} (id, course_id, student_id, attendance_status, contract_product_id) values ($1,$2,$3,'PENDING',$4)`, [await nextTextId(client, schemaName, "generic_course_student"), courseId, studentId, input.contract_product_id]);
+  }
+  for (const studentId of toRemove) {
+    await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where course_id = $1 and student_id = $2`, [courseId, studentId]);
+  }
+  return { added: toAdd.length, removed: toRemove.length };
+}
+
+async function saveMoneyArrange(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
+  for (const item of items) {
+    await client.query(`insert into ${table(schemaName, "money_arrange_log")} (id, contract_product_id, arrange_real_hour, arrange_real_amount, funds_change_history_id, organization_id) values ($1,$2,$3,$4,$5,$6)`, [await nextTextId(client, schemaName, "money_arrange_log"), item.contract_product_id, num(item.arrange_real_hour), num(item.arrange_real_amount), item.funds_change_history_id, item.organization_id]);
+  }
+  return { saved: items.length };
+}
+
+async function savePromotionArrange(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
+  for (const item of items) {
+    await client.query(`insert into ${table(schemaName, "promotion_arrange_log")} (id, contract_product_id, arrange_promotion_hour, arrange_promotion_amount, funds_change_history_id, organization_id) values ($1,$2,$3,$4,$5,$6)`, [await nextTextId(client, schemaName, "promotion_arrange_log"), item.contract_product_id, num(item.arrange_promotion_hour), num(item.arrange_promotion_amount), item.funds_change_history_id, item.organization_id]);
+  }
+  return { saved: items.length };
+}
+
+async function savePerformanceArrange(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
+  for (const item of items) {
+    await client.query(`insert into ${table(schemaName, "performance_arrange_log")} (id, contract_product_id, funds_change_history_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [await nextTextId(client, schemaName, "performance_arrange_log"), item.contract_product_id, item.funds_change_history_id, item.performance_type, item.organization_performance_organization_id, num(item.organization_performance_amount), item.personal_performance_user_id, num(item.personal_performance_amount), item.organization_id]);
+  }
+  return { saved: items.length };
+}
+
+async function assignManager(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const studentIds = (Array.isArray(input.student_ids) ? input.student_ids : [input.student_id]).map(String).filter(Boolean);
+  const managerId = str(input.manager_id ?? input.study_manager_id);
+  if (!studentIds.length || !managerId) throw new Error("缺少学员或学管师 ID");
+  await client.query(`update ${table(schemaName, "student")} set study_manager_id = $1, updated_at = now() where id = any($2::text[]) and deleted = false`, [managerId, studentIds]);
+  return { updated: studentIds.length, managerId };
+}
+
+async function saveProductGrant(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const productId = str(input.product_id);
+  const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
+  await client.query(`update ${table(schemaName, "product_grant")} set deleted = true, updated_at = now() where product_id = $1 and deleted = false`, [productId]);
+  for (const item of items) {
+    await client.query(`insert into ${table(schemaName, "product_grant")} (id, product_id, organization_id) values ($1,$2,$3) on conflict (id) do update set deleted = false, updated_at = now()`, [await nextTextId(client, schemaName, "product_grant"), productId, item.organization_id]);
+  }
+  return { saved: items.length };
+}
+
+async function saveProductPromotion(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const productId = str(input.product_id);
+  const promoIds = (Array.isArray(input.promotion_ids) ? input.promotion_ids : []).map(String);
+  await client.query(`update ${table(schemaName, "product_ref_promotion")} set deleted = true where product_id = $1 and deleted = false`, [productId]);
+  for (const promotionId of promoIds) {
+    await client.query(`insert into ${table(schemaName, "product_ref_promotion")} (id, product_id, promotion_id) values ($1,$2,$3)`, [await nextTextId(client, schemaName, "product_ref_promotion"), productId, promotionId]);
+  }
+  return { saved: promoIds.length };
+}
+
+async function saveRolePermission(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const roleId = str(input.role_id ?? input.id, params.id ? String(params.id) : await nextTextId(client, schemaName, "role"));
+  if (!roleId) throw new Error("缺少角色 ID");
+  const name = str(input.name);
+  const roleCode = str(input.role_code, `CUSTOM_ROLE_${Date.now()}`);
+  if (!name) throw new Error("缺少角色名称");
+  const existing = await one(client, `select id from ${table(schemaName, "role")} where id = $1 and deleted = false`, [roleId]);
+  if (existing) {
+    await client.query(
+      `update ${table(schemaName, "role")} set name = $1, role_code = $2, organization_id = $3, updated_at = now() where id = $4 and deleted = false`,
+      [name, roleCode, input.organization_id ?? null, roleId]
+    );
+  } else {
+    await client.query(
+      `insert into ${table(schemaName, "role")} (id, name, role_code, organization_id) values ($1,$2,$3,$4)`,
+      [roleId, name, roleCode, input.organization_id ?? null]
+    );
+  }
+  const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
+  await client.query(`update ${table(schemaName, "role_resource")} set deleted = true, updated_at = now() where role_id = $1 and deleted = false`, [roleId]);
+  for (const item of items) {
+    await client.query(`insert into ${table(schemaName, "role_resource")} (id, role_id, resource_code, resource_type, page_code, action_code, page_permission, button_permission, data_permission, field_permission) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [await nextTextId(client, schemaName, "role_resource"), roleId, item.resource_code ?? null, item.resource_type ?? "page", item.page_code, item.action_code ?? null, item.page_permission ?? "read", JSON.stringify(item.button_permission ?? []), item.data_permission ?? "all", JSON.stringify(item.field_permission ?? {})]);
+  }
+  return { saved: items.length, roleId };
+}
+
+async function createUser(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const bcrypt = (await import("bcryptjs")).default;
+  const userId = str(params.id, await nextTextId(client, schemaName, "user"));
+  const psw = await bcrypt.hash(str(input.psw, "123456"), 10);
+  const row = await one(client, `insert into ${table(schemaName, "user")} (id, name, contact, email, psw, organization_id, staff_type, status) values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`, [userId, input.name, input.contact, input.email, psw, input.organization_id, input.staff_type, str(input.status, "ACTIVE")]);
+  return row;
+}
+
+async function updateUser(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const userId = str(params.id ?? input.id);
+  if (!userId) throw new Error("缺少用户 ID");
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, val] of Object.entries(input)) {
+    if (["id", "psw"].includes(key)) continue;
+    sets.push(`${qIdent(key)} = $${sets.length + 1}`);
+    values.push(val);
+  }
+  if (!sets.length) return { updated: false };
+  sets.push("updated_at = now()");
+  values.push(userId);
+  await client.query(`update ${table(schemaName, "user")} set ${sets.join(", ")} where id = $${values.length} and deleted = false`, values);
+  return { updated: true, userId };
+}
+
+async function softDeleteUser(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const userId = str(params.id ?? (dataOf(params)).id);
+  if (!userId) throw new Error("缺少用户 ID");
+  await client.query(`update ${table(schemaName, "user")} set deleted = true, updated_at = now() where id = $1`, [userId]);
+  return { deleted: true, userId };
+}
+
+async function resetPassword(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const userId = str(params.id ?? input.id);
+  if (!userId) throw new Error("缺少用户 ID");
+  const bcrypt = (await import("bcryptjs")).default;
+  const newPsw = await bcrypt.hash(str(input.new_psw, "123456"), 10);
+  await client.query(`update ${table(schemaName, "user")} set psw = $1, updated_at = now() where id = $2`, [newPsw, userId]);
+  return { reset: true, userId };
+}
+
+async function listAudit(client: pg.PoolClient, _schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const conditions = ["1=1"];
+  const values: unknown[] = [];
+  let idx = 1;
+  if (input.schema_name) { conditions.push(`schema_name = $${idx++}`); values.push(input.schema_name); }
+  if (input.user_id) { conditions.push(`user_id = $${idx++}`); values.push(input.user_id); }
+  if (input.operation_type) { conditions.push(`operation_type = $${idx++}`); values.push(input.operation_type); }
+  const page = Math.max(Number(input.page ?? 1), 1);
+  const pageSize = Math.min(Number(input.pageSize ?? 20), 100);
+  values.push(pageSize, (page - 1) * pageSize);
+  const { rows } = await client.query(`select * from admin.audit_log where ${conditions.join(" and ")} order by created_at desc limit $${idx++} offset $${idx}`, values);
+  return rows;
+}
+
+async function reportStudent(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const { rows } = await client.query(`select organization_id, student_status, count(*) as cnt from ${table(schemaName, "student")} where deleted = false group by organization_id, student_status order by organization_id`, []);
+  return { data: rows };
+}
+
+async function reportFinance(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const { rows } = await client.query(`select organization_id, funds_type, sum(transaction_amount) as total_amount from ${table(schemaName, "funds_change_history")} where deleted = false group by organization_id, funds_type order by organization_id`, []);
+  return { data: rows };
+}
+
+async function reportCourse(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const { rows } = await client.query(`select organization_id, course_status, count(*) as cnt from ${table(schemaName, "generic_course")} where deleted = false group by organization_id, course_status order by organization_id`, []);
+  return { data: rows };
+}
+
 export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, params: Record<string, unknown>) {
+  const simpleCommands: Partial<Record<CommandDsl["command"], (c: pg.PoolClient, s: string, p: Record<string, unknown>) => Promise<unknown>>> = {
+    "chargeRecord.reverse": reverseCharge,
+    "funds.delete": deleteFunds,
+    "refund.delete": refund_delete,
+    "course.delete": course_delete,
+
+    "attendance.cancel": attendance_cancel,
+    "miniClass.addStudent": mini_class_add_student,
+    "miniClass.removeStudent": mini_class_remove_student,
+    "oneOnNGroup.addStudent": one_on_n_group_add_student,
+    "oneOnNGroup.removeStudent": one_on_n_group_remove_student,
+    "chargeRecord.preview": previewCharge,
+    "course.cancel": cancelCourse,
+    "course.student.save": saveCourseStudents,
+    "moneyArrange.save": saveMoneyArrange,
+    "promotionArrange.save": savePromotionArrange,
+    "performanceArrange.save": savePerformanceArrange,
+    "student.assignManager": assignManager,
+    "product.grant.save": saveProductGrant,
+    "product.promotion.save": saveProductPromotion,
+    "role.permission.save": saveRolePermission,
+    "user.create": createUser,
+    "user.update": updateUser,
+    "user.softDelete": softDeleteUser,
+    "user.resetPassword": resetPassword,
+    "audit.list": listAudit,
+    "report.student": reportStudent,
+    "report.finance": reportFinance,
+    "report.course": reportCourse,
+  };
+
+  const simpleFn = simpleCommands[dsl.command];
+  if (simpleFn) {
+    if (["chargeRecord.reverse", "funds.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "student.assignManager", "product.grant.save", "product.promotion.save", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
+      return withClient(async (client) => {
+        await client.query("begin");
+        try {
+          const result = await simpleFn(client, schemaName, params);
+          await client.query("commit");
+          return result;
+        } catch (error) {
+          await client.query("rollback");
+          throw error;
+        }
+      });
+    }
+    return withClient(async (client) => simpleFn(client, schemaName, params));
+  }
+
   return withClient(async (client) => {
     await client.query("begin");
     try {
@@ -475,7 +1405,11 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
               ? await createCourse(client, schemaName, params, rule)
               : dsl.command === "chargeRecord.create"
                 ? await createCharge(client, schemaName, params, rule)
-                : await createRefund(client, schemaName, params, rule);
+                : dsl.command === "contract.refund"
+                  ? await contract_refund(client, schemaName, params, rule)
+                  : dsl.command === "attendance.checkIn"
+                    ? await attendance_check_in(client, schemaName, params, rule)
+                    : await createRefund(client, schemaName, params, rule);
       await client.query("commit");
       return result;
     } catch (error) {

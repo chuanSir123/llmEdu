@@ -1,11 +1,16 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { GatewayClient } from "../api/GatewayClient";
 import type { ActionDsl, PageDsl, PageTargetDsl } from "../dsl/types";
+import { sortWithOrder } from "../dsl/sortWithOrder";
+import { useToast } from "../context/ToastContext";
 import { token } from "../styles/designTokens";
 import { ActionRenderer } from "./ActionRenderer";
 import { GenericTableRenderer } from "./GenericTableRenderer";
 import { ModalRenderer } from "./ModalRenderer";
 import { GenericFormRenderer } from "./GenericFormRenderer";
+import { ImportHandler } from "./ImportHandler";
+import { exportToExcel } from "./ExportHandler";
+import { CustomizationRecordDetail } from "./CustomizationRecordDetail";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type MetricDsl = {
@@ -36,21 +41,106 @@ export function GenericPageRenderer({
   schemaName,
   dsl,
   initialFilters,
-  onOpenPage
+  refreshKey,
+  onOpenPage,
+  onOpenAiCustomization,
+  onContinueAiCustomization
 }: {
   scope: "admin" | "tenant";
   schemaName?: string;
   dsl: PageDsl;
   initialFilters?: Record<string, unknown>;
+  refreshKey?: number;
   onOpenPage?: (pageCode: string, title: string, initialFilters?: Record<string, unknown>) => void;
+  onOpenAiCustomization?: () => void;
+  onContinueAiCustomization?: (sessionId?: string) => void;
 }) {
+  const filtersDsl = dsl.filters ?? [];
+  const toolbarDsl = dsl.toolbar ?? [];
+  const tableDsl = dsl.table ?? { columns: [], rowActions: [] };
+  const modalDsl = dsl.modal ?? { fields: [] };
+  const toast = useToast();
   const [filters, setFilters] = useState<Record<string, unknown>>(initialFilters ?? {});
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
+  const [customizationRecordId, setCustomizationRecordId] = useState("");
+  const [importConfig, setImportConfig] = useState<Record<string, unknown> | null>(null);
   const [rightRailItems, setRightRailItems] = useState<Record<string, RightRailItem[]>>({});
+  const [enrollmentValue, setEnrollmentValue] = useState<Record<string, unknown>>({});
+  const remoteProductOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
+  const remotePromotionOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
+
+  const createAction = toolbarDsl.find((action) => action.actionCode.endsWith(".create") || action.actionCode.endsWith(".enroll"));
+  const enrollmentFields = dsl.layout === "enrollment" ? (createAction?.fields ?? modalDsl.fields) : [];
+  const enrollmentValueWithDefaults = dsl.layout === "enrollment" ? { ...(createAction?.defaultValues ?? {}), ...enrollmentValue } : {};
+
+  const selectedProductIds = useMemo(() => {
+    if (dsl.layout !== "enrollment") return [] as string[];
+    return (Array.isArray(enrollmentValueWithDefaults.product_ids) ? enrollmentValueWithDefaults.product_ids : []) as string[];
+  }, [dsl.layout, dsl.pageCode, enrollmentValueWithDefaults.product_ids]);
+
+  const productRows = useMemo(() => {
+    if (dsl.layout !== "enrollment" || !selectedProductIds.length) return [] as Record<string, unknown>[];
+    return selectedProductIds.map((pid) => {
+      const opt = (remoteProductOptionsRef.current ?? []).find((o) => o.value === String(pid));
+      return opt?.row ?? {};
+    });
+  }, [dsl.layout, selectedProductIds]);
+
+  const contractProducts = useMemo(() => {
+    if (dsl.layout !== "enrollment") return [] as Array<{ productId: string; productName: string; productType: string; courseHour: number; unitPrice: number; totalAmount: number; promotionAmount: number }>;
+    return selectedProductIds.map((pid, idx) => {
+      const productRow = productRows[idx] ?? {};
+      const cpKey = `cp_${pid}`;
+      const existing = enrollmentValueWithDefaults[cpKey] as Record<string, unknown> | undefined;
+      const defaultHour = Number(productRow.default_course_hour ?? 0);
+      const unitPrice = Number(productRow.unit_price ?? 0);
+      const defaultTotal = Number(productRow.total_amount ?? 0);
+      const courseHour = existing && "course_hour" in existing ? Number(existing.course_hour ?? 0) : defaultHour;
+      const cpUnitPrice = existing && "unit_price" in existing ? Number(existing.unit_price ?? 0) : unitPrice;
+      const cpTotal = existing && "total_amount" in existing ? Number(existing.total_amount ?? 0) : defaultTotal;
+      const cpPromotionAmount = existing && "promotion_amount" in existing ? Number(existing.promotion_amount ?? 0) : 0;
+      return {
+        productId: pid,
+        productName: String(productRow.name ?? ""),
+        productType: String(productRow.product_type ?? ""),
+        courseHour: Math.round(courseHour * 100) / 100,
+        unitPrice: Math.round(cpUnitPrice * 100) / 100,
+        totalAmount: Math.round(cpTotal * 100) / 100,
+        promotionAmount: Math.round(cpPromotionAmount * 100) / 100
+      };
+    });
+  }, [dsl.layout, selectedProductIds, productRows, enrollmentValueWithDefaults]);
+
+  const promotionId = dsl.layout === "enrollment" ? String(enrollmentValueWithDefaults.promotion_id ?? "") : "";
+
+  const promotionRow = useMemo(() => {
+    if (dsl.layout !== "enrollment" || !promotionId) return null as Record<string, unknown> | null;
+    const opt = (remotePromotionOptionsRef.current ?? []).find((o) => o.value === promotionId);
+    return opt?.row ?? null;
+  }, [dsl.layout, promotionId]);
+
+  const computedTotals = useMemo(() => {
+    if (dsl.layout !== "enrollment") return { totalProductAmount: 0, contractPromotionAmount: 0, productPromotionTotal: 0, allPromotion: 0, receivable: 0 };
+    const totalProductAmount = contractProducts.reduce((sum, cp) => sum + cp.totalAmount, 0);
+    let contractPromotionAmount = 0;
+    if (promotionRow) {
+      const promoType = String(promotionRow.type ?? "");
+      const promoValue = Number(promotionRow.value ?? 0);
+      if (promoType === "REDUCE") {
+        contractPromotionAmount = promoValue;
+      } else if (promoType === "DISCOUNT") {
+        contractPromotionAmount = Math.round(totalProductAmount * (1 - promoValue / 10) * 100) / 100;
+      }
+    }
+    const productPromotionTotal = contractProducts.reduce((sum, cp) => sum + cp.promotionAmount, 0);
+    const allPromotion = contractPromotionAmount + productPromotionTotal;
+    const receivable = totalProductAmount - allPromotion;
+    return { totalProductAmount, contractPromotionAmount, productPromotionTotal, allPromotion, receivable };
+  }, [dsl.layout, contractProducts, promotionRow]);
 
   const modalTitle = useMemo(() => {
     if (!modal) return "";
@@ -69,7 +159,7 @@ export function GenericPageRenderer({
         schemaName,
         pageCode: dsl.pageCode,
         apiCode: dsl.dataApi,
-        params: { filters: nextFilters, page: 1, pageSize: 20 }
+        params: { filters: nextFilters, page: 1, pageSize: 20, schemaName }
       });
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
@@ -84,21 +174,81 @@ export function GenericPageRenderer({
   useEffect(() => {
     const nextFilters = initialFilters ?? {};
     setFilters(nextFilters);
+    setEnrollmentValue({});
+    setImportConfig(null);
     void load(nextFilters);
-  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {})]);
+  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey]);
 
   async function submitModal() {
     if (!modal) return;
     const apiCode = "action" in modal && modal.action?.apiCode ? modal.action.apiCode : modal.type === "create" ? dsl.createApi : dsl.updateApi;
-    await GatewayClient.executeApi({
-      scope,
-      schemaName,
-      pageCode: dsl.pageCode,
-      apiCode,
-      params: { id: modal.value.id, data: modal.value }
-    });
-    setModal(null);
-    await load();
+    const actionLabel = "action" in modal && modal.action?.label ? modal.action.label : modal.type === "create" ? `新增${dsl.title}` : modal.type === "edit" ? `编辑${dsl.title}` : dsl.title;
+    try {
+      await GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: dsl.pageCode,
+        apiCode,
+        params: { id: modal.value.id, data: modal.value }
+      });
+      toast.success(`${actionLabel}成功`);
+      setModal(null);
+      await load();
+    } catch (err) {
+      toast.error(`${actionLabel}失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  async function submitEnrollment() {
+    if (!createAction) return;
+    const apiCode = createAction.apiCode ?? dsl.createApi;
+    const submitData: Record<string, unknown> = { ...(createAction.defaultValues ?? {}), ...enrollmentValue };
+    const productIds = (Array.isArray(submitData.product_ids) ? submitData.product_ids : []) as string[];
+    if (productIds.length) {
+      const contractProducts = productIds.map((pid) => {
+        const cpKey = `cp_${pid}`;
+        const cpData = (submitData[cpKey] ?? {}) as Record<string, unknown>;
+        return {
+          product_id: pid,
+          plan_real_hour: cpData.course_hour,
+          plan_real_amount: cpData.total_amount,
+          plan_promotion_amount: cpData.promotion_amount,
+          unit_price: cpData.unit_price
+        };
+      });
+      submitData.contract_products = contractProducts;
+      for (const pid of productIds) {
+        delete submitData[`cp_${pid}`];
+      }
+      if (!submitData.total_amount) {
+        submitData.total_amount = contractProducts.reduce((sum: number, cp: Record<string, unknown>) => sum + Number(cp.plan_real_amount ?? 0), 0);
+      }
+      if (!submitData.promotion_amount) {
+        submitData.promotion_amount = contractProducts.reduce((sum: number, cp: Record<string, unknown>) => sum + Number(cp.plan_promotion_amount ?? 0), 0);
+      }
+    }
+    try {
+      await GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: dsl.pageCode,
+        apiCode,
+        params: { data: submitData }
+      });
+      toast.success(`${createAction.label ?? "保存"}成功`);
+      setEnrollmentValue({});
+      await load();
+    } catch (err) {
+      toast.error(`${createAction.label ?? "保存"}失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  function isImportToolbarAction(action: ActionDsl) {
+    return (
+      action.type === "import" ||
+      action.actionType === "import" ||
+      (action.actionCode.endsWith(".import") && Boolean(action.importConfig))
+    );
   }
 
   async function onToolbar(action: ActionDsl) {
@@ -106,16 +256,37 @@ export function GenericPageRenderer({
       setModal({ type: "create", value: action.defaultValues ?? {}, action });
       return;
     }
+    if (action.actionCode === "customization_record_list.new_customization" || action.type === "open_ai_customization") {
+      if (!onOpenAiCustomization) return;
+      onOpenAiCustomization?.();
+      return;
+    }
+    if (isImportToolbarAction(action)) {
+      setImportConfig((action.importConfig as Record<string, unknown> | undefined) ?? { apiCode: dsl.createApi });
+      return;
+    }
+    if (action.type === "export" || action.actionType === "export" || action.actionCode.endsWith(".export")) {
+      await exportToExcel(dsl, rows);
+      return;
+    }
     await load();
   }
 
   async function onRowAction(action: ActionDsl, row: Record<string, unknown>) {
-    if (action.confirm && !window.confirm(action.confirm)) return;
+    if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
     if (action.actionCode.endsWith(".detail")) {
+      if (dsl.pageCode === "customization_record_list") {
+        setCustomizationRecordId(String(row.id ?? ""));
+        return;
+      }
       setModal({ type: "detail", value: row });
       return;
     }
     if (action.actionCode.endsWith(".edit")) {
+      if (dsl.pageCode === "customization_record_list") {
+        onContinueAiCustomization?.(String(row.session_id ?? ""));
+        return;
+      }
       setModal({ type: "edit", value: row });
       return;
     }
@@ -124,15 +295,36 @@ export function GenericPageRenderer({
       setModal({ type: "create", value: { ...(action.defaultValues ?? {}), ...mapped }, action });
       return;
     }
+    if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
+      try {
+        await GatewayClient.executeApi({
+          scope,
+          schemaName,
+          pageCode: dsl.pageCode,
+          apiCode: action.apiCode ?? action.actionCode,
+          params: { ...(action.defaultValues ?? {}), ...row, id: row.id, versionId: row.id }
+        });
+        toast.success(`${action.label ?? "操作"}成功`);
+        await load();
+      } catch (err) {
+        toast.error(`${action.label ?? "操作"}失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
     if (action.actionCode.endsWith(".delete")) {
-      await GatewayClient.executeApi({
-        scope,
-        schemaName,
-        pageCode: dsl.pageCode,
-        apiCode: dsl.deleteApi,
-        params: { id: row.id }
-      });
-      await load();
+      try {
+        await GatewayClient.executeApi({
+          scope,
+          schemaName,
+          pageCode: dsl.pageCode,
+          apiCode: dsl.deleteApi,
+          params: { id: row.id }
+        });
+        toast.success("删除成功");
+        await load();
+      } catch (err) {
+        toast.error(`删除失败：${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -161,6 +353,50 @@ export function GenericPageRenderer({
     const text = String(value);
     if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return text.slice(5, 10);
     return text;
+  }
+
+  function renderFilterInput(field: typeof filtersDsl[number]) {
+    if (field.type === "date_range") {
+      const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : [];
+      const start = String(range[0] ?? "");
+      const end = String(range[1] ?? "");
+      return (
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            className={token.input}
+            value={start}
+            onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value, end] })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void load();
+            }}
+          />
+          <span className="text-[#8b95a7]">至</span>
+          <input
+            type="date"
+            className={token.input}
+            value={end}
+            onChange={(event) => setFilters({ ...filters, [field.key]: [start, event.target.value] })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void load();
+            }}
+          />
+        </div>
+      );
+    }
+    const inputType = field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text";
+    return (
+      <input
+        type={inputType}
+        className={token.input}
+        value={String(filters[field.key] ?? "")}
+        placeholder={field.placeholder}
+        onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") void load();
+        }}
+      />
+    );
   }
 
   function sectionFallbackItems(section: RightRailSectionDsl) {
@@ -194,8 +430,10 @@ export function GenericPageRenderer({
   const metrics = dsl.presentation?.header?.metrics ?? [];
   const dashboard = dsl.presentation?.dashboard;
   const dashboardRows = rows.slice(0, dashboard?.panels?.[0]?.limit ?? 6);
-  const createAction = dsl.toolbar.find((action) => action.actionCode.endsWith(".create") || action.actionCode.endsWith(".enroll"));
-  const visibleModalFields = (fields: typeof dsl.modal.fields) => fields.filter((field) => field.key !== "id" && !field.hidden);
+
+  const visibleModalFields = (fields: typeof modalDsl.fields = []) => fields.filter((field) => field.key !== "id" && !field.hidden);
+  const modalFields = (state: NonNullable<ModalState>) =>
+    visibleModalFields(state.type === "detail" ? tableDsl.columns : "action" in state && state.action?.fields?.length ? state.action.fields : modalDsl.fields);
 
   useEffect(() => {
     const sections = dashboard?.rightRail?.sections ?? [];
@@ -229,6 +467,48 @@ export function GenericPageRenderer({
       cancelled = true;
     };
   }, [dsl.pageCode, JSON.stringify(dashboard?.rightRail?.sections ?? [])]);
+
+  useEffect(() => {
+    if (dsl.layout !== "enrollment") return;
+    let cancelled = false;
+    const productField = (createAction?.fields ?? modalDsl.fields).find((f) => f.key === "product_ids");
+    const promoField = (createAction?.fields ?? modalDsl.fields).find((f) => f.key === "promotion_id");
+    const loads: Promise<void>[] = [];
+    if (productField?.optionSource) {
+      loads.push(
+        GatewayClient.executeApi({
+          scope, schemaName,
+          pageCode: productField.optionSource.pageCode,
+          apiCode: productField.optionSource.apiCode,
+          params: { filters: productField.optionSource.filters ?? { status: "ACTIVE" }, page: 1, pageSize: 200 }
+        }).then((result) => {
+          if (cancelled) return;
+          const data = result.data as { rows: Record<string, unknown>[] };
+          const vf = productField.optionSource!.valueField ?? "id";
+          const lf = productField.optionSource!.labelField ?? "name";
+          remoteProductOptionsRef.current = data.rows.map((row) => ({ value: String(row[vf] ?? ""), label: String(row[lf] ?? ""), row }));
+        })
+      );
+    }
+    if (promoField?.optionSource) {
+      loads.push(
+        GatewayClient.executeApi({
+          scope, schemaName,
+          pageCode: promoField.optionSource.pageCode,
+          apiCode: promoField.optionSource.apiCode,
+          params: { filters: promoField.optionSource.filters ?? { status: "ACTIVE" }, page: 1, pageSize: 200 }
+        }).then((result) => {
+          if (cancelled) return;
+          const data = result.data as { rows: Record<string, unknown>[] };
+          const vf = promoField.optionSource!.valueField ?? "id";
+          const lf = promoField.optionSource!.labelField ?? "name";
+          remotePromotionOptionsRef.current = data.rows.map((row) => ({ value: String(row[vf] ?? ""), label: String(row[lf] ?? ""), row }));
+        })
+      );
+    }
+    if (loads.length) Promise.all(loads).catch(() => {});
+    return () => { cancelled = true; };
+  }, [dsl.pageCode, dsl.layout]);
 
   if (dsl.layout === "dashboard") {
     const quickGradients = [
@@ -293,7 +573,7 @@ export function GenericPageRenderer({
                   <button className="h-8 min-w-[86px] border border-[#dde3ee] px-3 text-xs text-[#526075]">统计指标</button>
                 </div>
                 <GenericTableRenderer
-                  columns={panel.columns ?? dsl.table.columns}
+                  columns={panel.columns ?? tableDsl.columns ?? []}
                   rows={dashboardRows}
                   rowActions={[]}
                   onAction={() => undefined}
@@ -338,7 +618,27 @@ export function GenericPageRenderer({
   }
 
   if (dsl.layout === "enrollment") {
-    const enrollmentFields = createAction?.fields ?? dsl.modal.fields;
+    const byKeys = (keys: string[]) => visibleModalFields(enrollmentFields).filter((field) => keys.includes(field.key));
+
+    function r2(v: number) { return Math.round(v * 100) / 100; }
+
+    function updateCpField(productId: string, field: string, rawValue: unknown) {
+      const cpKey = `cp_${productId}`;
+      const existing = (enrollmentValueWithDefaults[cpKey] ?? {}) as Record<string, unknown>;
+      const numVal = rawValue === "" ? 0 : r2(Number(rawValue));
+      let next = { ...existing, [field]: numVal };
+      if (field === "course_hour" || field === "unit_price") {
+        const hour = field === "course_hour" ? numVal : r2(Number(existing.course_hour ?? 0));
+        const price = field === "unit_price" ? numVal : r2(Number(existing.unit_price ?? 0));
+        next.total_amount = r2(hour * price);
+      }
+      if (field === "total_amount") {
+        const hour = r2(Number(existing.course_hour ?? 0));
+        if (hour > 0) next.unit_price = r2(numVal / hour);
+      }
+      setEnrollmentValue({ ...enrollmentValueWithDefaults, [cpKey]: next });
+    }
+
     const section = (title: string, children: ReactNode) => (
       <section className="border border-[#d9e3ed] bg-white">
         <div className="flex h-12 items-center justify-between border-b border-[#e8edf5] px-5">
@@ -347,6 +647,7 @@ export function GenericPageRenderer({
         <div className="p-5">{children}</div>
       </section>
     );
+
     return (
       <div className="h-full overflow-auto bg-[#eef0f8] p-4">
         <div className="mb-3 flex items-center justify-between">
@@ -354,12 +655,6 @@ export function GenericPageRenderer({
             <h1 className="text-base font-semibold text-[#172033]">{dsl.title}</h1>
             <p className="mt-1 text-xs text-[#607083]">{dsl.presentation?.header?.subtitle ?? dsl.subtitle}</p>
           </div>
-          <button
-            className={`${token.button} ${token.primaryButton}`}
-            onClick={() => setModal({ type: "create", value: createAction?.defaultValues ?? {}, action: createAction })}
-          >
-            保存合同
-          </button>
         </div>
         <div className="space-y-3">
           {section(
@@ -367,9 +662,9 @@ export function GenericPageRenderer({
             <GenericFormRenderer
               scope={scope}
               schemaName={schemaName}
-              fields={visibleModalFields(enrollmentFields).slice(0, 6)}
-              value={createAction?.defaultValues ?? {}}
-              onChange={() => undefined}
+              fields={byKeys(["student_id"])}
+              value={enrollmentValueWithDefaults}
+              onChange={(next) => setEnrollmentValue(next)}
               presentation={dsl.presentation}
               columns={3}
               labelAlign="left"
@@ -381,16 +676,76 @@ export function GenericPageRenderer({
               <GenericFormRenderer
                 scope={scope}
                 schemaName={schemaName}
-                fields={visibleModalFields(enrollmentFields).filter((field) => ["product_ids", "promotion_id", "total_amount", "promotion_amount"].includes(field.key))}
-                value={createAction?.defaultValues ?? {}}
-                onChange={() => undefined}
+                fields={byKeys(["product_ids"])}
+                value={enrollmentValueWithDefaults}
+                onChange={(next) => {
+                  const newIds = (Array.isArray(next.product_ids) ? next.product_ids : []) as string[];
+                  const oldIds = (Array.isArray(enrollmentValueWithDefaults.product_ids) ? enrollmentValueWithDefaults.product_ids : []) as string[];
+                  const added = newIds.filter((id: string) => !oldIds.includes(id));
+                  const merged = { ...enrollmentValueWithDefaults, ...next };
+                  for (const pid of added) {
+                    const productRow = productRows[selectedProductIds.length] ?? (remoteProductOptionsRef.current ?? []).find((o) => o.value === String(pid))?.row ?? {};
+                    const cpKey = `cp_${pid}`;
+                    if (!merged[cpKey]) {
+                      const hour = r2(Number(productRow.default_course_hour ?? 0));
+                      const price = r2(Number(productRow.unit_price ?? 0));
+                      const total = r2(Number(productRow.total_amount ?? hour * price));
+                      merged[cpKey] = { course_hour: hour, unit_price: price, total_amount: total, promotion_amount: 0 };
+                    }
+                  }
+                  for (const oldId of oldIds) {
+                    if (!newIds.includes(oldId)) delete merged[`cp_${oldId}`];
+                  }
+                  setEnrollmentValue(merged);
+                }}
                 presentation={dsl.presentation}
                 columns={3}
                 labelAlign="left"
               />
-              <div className="mt-4 min-h-[82px] border border-[#e8edf5] bg-[#f8fafc] px-4 py-7 text-center text-sm text-[#8b95a7]">
-                请选择要报读的课程
-              </div>
+              {contractProducts.length > 0 && (
+                <div className="mt-4 overflow-hidden rounded border border-[#e8edf5]">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-[#f8fafc] text-[#5f6b7a]">
+                        <th className="px-3 py-2 text-left font-medium">课程产品</th>
+                        <th className="px-3 py-2 text-center font-medium w-[100px]">课时</th>
+                        <th className="px-3 py-2 text-center font-medium w-[100px]">单价</th>
+                        <th className="px-3 py-2 text-center font-medium w-[110px]">总价</th>
+                        <th className="px-3 py-2 text-center font-medium w-[110px]">优惠金额</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contractProducts.map((cp) => (
+                        <tr key={cp.productId} className="border-t border-[#e8edf5]">
+                          <td className="px-3 py-2">
+                            <div className="font-medium text-[#263445]">{cp.productName}</div>
+                            <div className="text-xs text-[#8b95a7]">
+                              {dsl.presentation?.valueLabels?.product_type?.[cp.productType] ?? cp.productType}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" step="0.01" className={`${token.input} w-full text-center`} value={cp.courseHour || ""} onChange={(e) => updateCpField(cp.productId, "course_hour", e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" step="0.01" className={`${token.input} w-full text-center`} value={cp.unitPrice || ""} onChange={(e) => updateCpField(cp.productId, "unit_price", e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" step="0.01" className={`${token.input} w-full text-center`} value={cp.totalAmount || ""} onChange={(e) => updateCpField(cp.productId, "total_amount", e.target.value)} />
+                          </td>
+                          <td className="px-3 py-2">
+                            <input type="number" step="0.01" className={`${token.input} w-full text-center bg-[#f5f7fa]`} value={cp.promotionAmount || ""} readOnly />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!contractProducts.length && (
+                <div className="mt-4 min-h-[82px] border border-[#e8edf5] bg-[#f8fafc] px-4 py-7 text-center text-sm text-[#8b95a7]">
+                  请选择要报读的课程
+                </div>
+              )}
             </div>
           )}
           <div className="grid gap-3 xl:grid-cols-[1fr_360px]">
@@ -399,9 +754,47 @@ export function GenericPageRenderer({
               <GenericFormRenderer
                 scope={scope}
                 schemaName={schemaName}
-                fields={visibleModalFields(enrollmentFields).filter((field) => ["contract_type", "organization_id", "sign_staff_id", "sign_time", "remark"].includes(field.key))}
-                value={createAction?.defaultValues ?? {}}
-                onChange={() => undefined}
+                fields={byKeys(["contract_type", "organization_id", "sign_staff_id", "sign_time", "promotion_id", "remark"])}
+                value={enrollmentValueWithDefaults}
+                onChange={(next) => {
+                  const promoChanged = next.promotion_id !== enrollmentValueWithDefaults.promotion_id;
+                  if (promoChanged && next.promotion_id) {
+                    const promoOpt = (remotePromotionOptionsRef.current ?? []).find((o) => o.value === String(next.promotion_id));
+                    const promo = promoOpt?.row;
+                    if (promo && contractProducts.length) {
+                      const promoType = String(promo.type ?? "");
+                      const promoValue = Number(promo.value ?? 0);
+                      const totalProductAmount = contractProducts.reduce((sum, cp) => sum + cp.totalAmount, 0);
+                      let totalPromotion = 0;
+                      if (promoType === "REDUCE") totalPromotion = promoValue;
+                      else if (promoType === "DISCOUNT") totalPromotion = r2(totalProductAmount * (1 - promoValue / 10));
+                      let remaining = totalPromotion;
+                      const merged = { ...enrollmentValueWithDefaults, ...next };
+                      contractProducts.forEach((cp, idx) => {
+                        const cpKey = `cp_${cp.productId}`;
+                        const existing = (merged[cpKey] ?? {}) as Record<string, unknown>;
+                        const share = idx === contractProducts.length - 1
+                          ? r2(remaining)
+                          : totalProductAmount > 0 ? r2(totalPromotion * (cp.totalAmount / totalProductAmount)) : 0;
+                        remaining -= share;
+                        merged[cpKey] = { ...existing, promotion_amount: r2(share) };
+                      });
+                      setEnrollmentValue(merged);
+                      return;
+                    }
+                  }
+                  if (promoChanged && !next.promotion_id) {
+                    const merged = { ...enrollmentValueWithDefaults, ...next };
+                    for (const cp of contractProducts) {
+                      const cpKey = `cp_${cp.productId}`;
+                      const existing = (merged[cpKey] ?? {}) as Record<string, unknown>;
+                      merged[cpKey] = { ...existing, promotion_amount: 0 };
+                    }
+                    setEnrollmentValue(merged);
+                    return;
+                  }
+                  setEnrollmentValue(next);
+                }}
                 presentation={dsl.presentation}
                 columns={2}
                 labelAlign="left"
@@ -410,12 +803,17 @@ export function GenericPageRenderer({
             {section(
               "结算",
               <div className="space-y-4 text-sm">
-                <div className="flex justify-between text-[#607083]"><span>共 0 个课程，总金额</span><span>0.00 元</span></div>
-                <div className="flex justify-between text-[#607083]"><span>课程优惠</span><span className="text-[#d92d20]">-0.00 元</span></div>
-                <div className="flex justify-between text-[#607083]"><span>合同优惠</span><span className="text-[#d92d20]">-0.00 元</span></div>
-                <div className="flex justify-between border-t border-[#e8edf5] pt-4 text-base font-semibold text-[#2f80ed]"><span>合同应收款</span><span>0.00 元</span></div>
+                <div className="flex justify-between text-[#607083]"><span>共 {contractProducts.length} 个课程，总金额</span><span>{computedTotals.totalProductAmount.toFixed(2)} 元</span></div>
+                <div className="flex justify-between text-[#607083]"><span>课程优惠</span><span className="text-[#d92d20]">-{computedTotals.productPromotionTotal.toFixed(2)} 元</span></div>
+                <div className="flex justify-between text-[#607083]"><span>合同优惠</span><span className="text-[#d92d20]">-{computedTotals.contractPromotionAmount.toFixed(2)} 元</span></div>
+                <div className="flex justify-between border-t border-[#e8edf5] pt-4 text-base font-semibold text-[#2f80ed]"><span>合同应收款</span><span>{computedTotals.receivable.toFixed(2)} 元</span></div>
               </div>
             )}
+          </div>
+          <div className="sticky bottom-0 flex justify-end border border-[#d9e3ed] bg-white px-5 py-4 shadow-[0_-8px_20px_rgba(24,36,56,0.06)]">
+            <button className={`${token.button} ${token.primaryButton} h-9 px-8`} onClick={() => void submitEnrollment()}>
+              保存合同
+            </button>
           </div>
         </div>
         {modal && (
@@ -423,7 +821,7 @@ export function GenericPageRenderer({
             scope={scope}
             schemaName={schemaName}
             title={modalTitle}
-            fields={visibleModalFields("action" in modal && modal.action?.fields?.length ? modal.action.fields : dsl.modal.fields)}
+            fields={modalFields(modal)}
             value={modal.value}
             readonly={modal.type === "detail"}
             onChange={(value) => setModal({ ...modal, value })}
@@ -466,18 +864,10 @@ export function GenericPageRenderer({
         </div>
       )}
       <div className={token.filterBar}>
-        {dsl.filters.map((field) => (
+        {sortWithOrder(filtersDsl).map((field) => (
           <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
             {field.label}
-            <input
-              className={token.input}
-              value={String(filters[field.key] ?? "")}
-              placeholder={field.placeholder}
-              onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void load();
-              }}
-            />
+            {renderFilterInput(field)}
           </label>
         ))}
         <button className={`${token.button} ${token.primaryButton}`} onClick={() => void load()}>
@@ -488,16 +878,35 @@ export function GenericPageRenderer({
         </button>
       </div>
       <div className="mb-3 flex flex-wrap gap-2">
-        {dsl.toolbar.map((action) => (
+        {sortWithOrder(toolbarDsl)
+          .filter((action) => !(action.actionCode === "customization_record_list.new_customization" || action.type === "open_ai_customization") || Boolean(onOpenAiCustomization))
+          .map((action) => (
           <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
         ))}
       </div>
       {error && <div className="mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {importConfig && (
+        <div className="mb-3 border border-[#d9e3ed] bg-white p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-sm font-semibold text-[#172033]">数据导入</div>
+            <button className="text-xs text-[#607083] hover:text-[#2f80ed]" onClick={() => setImportConfig(null)}>关闭</button>
+          </div>
+          <ImportHandler
+            dsl={dsl}
+            scope={scope}
+            schemaName={schemaName}
+            importConfig={importConfig}
+            onComplete={() => {
+              void load();
+            }}
+          />
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto">
         <GenericTableRenderer
-          columns={dsl.table.columns}
+          columns={tableDsl.columns ?? []}
           rows={rows}
-          rowActions={dsl.table.rowActions}
+          rowActions={tableDsl.rowActions}
           onAction={onRowAction}
           presentation={dsl.presentation}
         />
@@ -507,7 +916,7 @@ export function GenericPageRenderer({
           scope={scope}
           schemaName={schemaName}
           title={modalTitle}
-          fields={visibleModalFields("action" in modal && modal.action?.fields?.length ? modal.action.fields : dsl.modal.fields)}
+          fields={modalFields(modal)}
           value={modal.value}
           readonly={modal.type === "detail"}
           onChange={(value) => setModal({ ...modal, value })}
@@ -515,6 +924,16 @@ export function GenericPageRenderer({
           onSubmit={submitModal}
           presentation={dsl.presentation}
           size={"action" in modal ? modal.action?.modalSize : undefined}
+        />
+      )}
+      {customizationRecordId && (
+        <CustomizationRecordDetail
+          recordId={customizationRecordId}
+          onClose={() => setCustomizationRecordId("")}
+          onContinue={(_, sessionId) => {
+            setCustomizationRecordId("");
+            onContinueAiCustomization?.(sessionId);
+          }}
         />
       )}
     </div>

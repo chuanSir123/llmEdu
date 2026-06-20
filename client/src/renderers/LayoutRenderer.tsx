@@ -7,6 +7,7 @@ import { token } from "../styles/designTokens";
 import { GenericPageRenderer } from "./GenericPageRenderer";
 import { SidebarRenderer } from "./SidebarRenderer";
 import { TabManager, type Tab } from "./TabManager";
+import { AiCustomizationPanel } from "./AiCustomizationPanel";
 
 export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
   const params = useParams();
@@ -19,6 +20,11 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
   const [activeTab, setActiveTab] = useState<string>();
   const [pageDsl, setPageDsl] = useState<PageDsl | null>(null);
   const [error, setError] = useState("");
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [aiSessionId, setAiSessionId] = useState<string>();
+  const [refreshKey, setRefreshKey] = useState(0);
+  const isTestSchema = Boolean(schemaName?.endsWith("_test"));
+
 
   const defaultPage = useMemo(
     () => (scope === "admin" ? { pageCode: "tenant_manage", title: "租户管理" } : { pageCode: "frontdesk_home", title: "后台首页" }),
@@ -34,13 +40,15 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
       .then((res) => {
         const list = res.modules as MenuModule[];
         setModules(list);
-        setActiveModule(list[0]?.moduleCode);
+
         openPage(defaultPage.pageCode, defaultPage.title);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+
   }, [scope, schemaName, user?.userId]);
 
   async function openPage(pageCode: string, title: string, initialFilters?: Record<string, unknown>) {
+    setError("");
     setTabs((current) => {
       const nextTab = { pageCode, title, initialFilters };
       return current.some((tab) => tab.pageCode === pageCode)
@@ -48,13 +56,25 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
         : [...current, nextTab];
     });
     setActiveTab(pageCode);
-    const res = await GatewayClient.page(scope, pageCode, schemaName);
-    setPageDsl(res.page.dsl_json as PageDsl);
+    try {
+      const res = await GatewayClient.page(scope, pageCode, schemaName);
+      setPageDsl(res.page.dsl_json as PageDsl);
+    } catch (err) {
+      setPageDsl(null);
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function activate(pageCode: string) {
     const tab = tabs.find((item) => item.pageCode === pageCode);
     if (tab) await openPage(tab.pageCode, tab.title);
+  }
+
+  async function refreshActivePage() {
+    const tab = tabs.find((item) => item.pageCode === activeTab);
+    if (!tab) return;
+    await openPage(tab.pageCode, tab.title, tab.initialFilters);
+    setRefreshKey((current) => current + 1);
   }
 
   function close(pageCode: string) {
@@ -72,15 +92,17 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
     setActiveModule((current) => (current === moduleCode ? undefined : moduleCode));
   }
 
+  function openAiCustomization(sessionId?: string) {
+    setAiSessionId(sessionId);
+    setShowAiPanel(true);
+  }
+
   return (
     <div className={`${token.shell} flex`}>
       <SidebarRenderer modules={modules} activeModule={activeModule} onModule={toggleModule} onOpenPage={openPage} />
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-[40px] shrink-0 items-center justify-between border-b border-[#e8edf5] bg-white px-4">
-          <div className="flex items-center gap-3 text-sm text-[#7a8494]">
-            <span className="text-lg leading-none text-[#9aa4b5]">↻</span>
-            <span className="font-medium text-[#526075]">{scope === "admin" ? "Admin 控制台" : "首页"}</span>
-          </div>
+          <div />
           <div className="flex items-center gap-3 text-sm">
             <span className="text-[#2f80ed]">AI邦</span>
             <span className="text-[#7a8494]">在线帮助</span>
@@ -96,7 +118,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
             </button>
           </div>
         </header>
-        <TabManager tabs={tabs} active={activeTab} onActive={activate} onClose={close} />
+        <TabManager tabs={tabs} active={activeTab} onActive={activate} onClose={close} onRefresh={() => void refreshActivePage()} />
         <section className="min-h-0 flex-1 overflow-hidden">
           {error && <div className="m-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {pageDsl && (
@@ -105,11 +127,24 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
               schemaName={schemaName}
               dsl={pageDsl}
               initialFilters={tabs.find((tab) => tab.pageCode === activeTab)?.initialFilters}
+              refreshKey={refreshKey}
               onOpenPage={openPage}
+              onOpenAiCustomization={isTestSchema ? undefined : () => openAiCustomization()}
+              onContinueAiCustomization={isTestSchema ? undefined : openAiCustomization}
             />
           )}
         </section>
       </main>
+      {showAiPanel && schemaName && !isTestSchema && (
+        <AiCustomizationPanel
+          schemaName={schemaName}
+          initialSessionId={aiSessionId}
+          onClose={() => {
+            setShowAiPanel(false);
+            setAiSessionId(undefined);
+          }}
+        />
+      )}
     </div>
   );
 }
