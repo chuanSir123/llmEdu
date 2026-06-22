@@ -20,7 +20,7 @@ export async function loadPageDsl(scope: "admin" | "tenant_default" | "tenant", 
 
 export async function loadPageFullDsl(scope: "admin" | "tenant", pageCode: string, schemaName?: string, user?: SessionUser) {
   const page = await loadPageDsl(scope, pageCode, schemaName);
-  const pageKind = page.page_kind ?? (pageCode === "tenant_select" || pageCode === "admin_login" || pageCode === "tenant_login" ? "public" : "shtml");
+  const pageKind = page.page_kind ?? (pageCode === "admin_login" || pageCode === "tenant_login" ? "public" : "shtml");
 
   if (pageKind === "public") {
     return { page, pageKind, actions: [], apis: [], permissions: null, activeVersion: null, tenantInfo: null };

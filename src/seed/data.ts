@@ -971,28 +971,6 @@ export const pages: PageSeed[] = [
 
 export const extraPages: Array<{ pageCode: string; pageKind: string; module: string; feature: string; name: string; dsl: Record<string, unknown> }> = [
   {
-    pageCode: "tenant_select",
-    pageKind: "public",
-    module: "system",
-    feature: "tenant_select",
-    name: "租户选择",
-    dsl: {
-      pageCode: "tenant_select",
-      title: "选择机构",
-      subtitle: "请选择您要登录的机构",
-      pageKind: "public",
-      layout: "public_form",
-      presentation: { theme: "flatTech", density: "compact" },
-      form: {
-        fields: [
-          { key: "schema_name", label: "机构编码", type: "text", required: true, placeholder: "请输入机构编码" }
-        ],
-        submitLabel: "进入系统",
-        submitAction: { actionCode: "tenant_select.submit", actionType: "execute_api", apiCode: "tenant_select.submit" }
-      }
-    }
-  },
-  {
     pageCode: "admin_login",
     pageKind: "public",
     module: "system",

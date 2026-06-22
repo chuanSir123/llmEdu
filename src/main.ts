@@ -121,7 +121,7 @@ async function resolveAuthorizedTenantSchema(user: SessionUser | undefined, requ
 }
 
 export async function buildServer() {
-  await seed();
+  if (env.autoSeed) await seed();
 
   const app = Fastify({ logger: true, bodyLimit: 50 * 1024 * 1024 });
   await app.register(cors, { origin: true });
@@ -181,7 +181,7 @@ export async function buildServer() {
     const user = currentUser(request);
     const query = z.object({ schemaName: z.string().optional(), scope: z.enum(["admin", "tenant"]).default("tenant") }).parse(request.query);
     if (query.scope === "admin") return { modules: await loadAdminMenu() };
-    const schema = await resolveTenantSchema(query.schemaName ?? user?.schemaName ?? "");
+    const schema = await resolveAuthorizedTenantSchema(user, query.schemaName);
     return { modules: await loadTenantMenu(schema, user) };
   });
 
@@ -215,7 +215,7 @@ export async function buildServer() {
       params: z.record(z.unknown()).default({})
     }).parse(request.body);
     try {
-      const schema = body.scope === "admin" ? "admin" : await resolveTenantSchema(body.schemaName ?? user?.schemaName ?? "");
+      const schema = body.scope === "admin" ? "admin" : await resolveAuthorizedTenantSchema(user, body.schemaName);
       if (body.scope === "tenant" && body.pageCode && !(await canAccessPage(user, schema, body.pageCode))) {
         throw httpError(403, "无接口权限");
       }
@@ -237,7 +237,7 @@ export async function buildServer() {
       params: z.record(z.unknown()).default({})
     }).parse(request.body);
     const user = currentUser(request);
-    const schema = body.scope === "admin" ? "admin" : await resolveTenantSchema(body.schemaName ?? user?.schemaName ?? "");
+    const schema = body.scope === "admin" ? "admin" : await resolveAuthorizedTenantSchema(user, body.schemaName);
     try {
       const data = await executeAction(body.scope, schema, body.actionCode, body.params, user);
       await audit({ schemaName: schema, userId: user?.userId, actionCode: body.actionCode, inputSummary: body.params, outputSummary: { ok: true }, costMs: Date.now() - started });
@@ -294,13 +294,14 @@ export async function buildServer() {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), message: z.string(), sessionId: z.string().optional(), attachmentIds: z.array(z.string()).optional() }).parse(request.body);
-    assertNotTestCustomizationSchema(body.schemaName);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     try {
-      const result = await tenantAgentChat({ schemaName: body.schemaName, userId: user?.userId ?? "", message: body.message, sessionId: body.sessionId, attachmentIds: body.attachmentIds, user: user! });
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.chat", inputSummary: { schemaName: body.schemaName, sessionId: body.sessionId }, outputSummary: { sessionId: result.sessionId }, costMs: Date.now() - started });
+      const result = await tenantAgentChat({ schemaName: schema, userId: user?.userId ?? "", message: body.message, sessionId: body.sessionId, attachmentIds: body.attachmentIds, user: user! });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.chat", inputSummary: { schemaName: schema, sessionId: body.sessionId }, outputSummary: { sessionId: result.sessionId }, costMs: Date.now() - started });
       return result;
     } catch (error) {
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.chat", inputSummary: body, costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.chat", inputSummary: { ...body, schemaName: schema }, costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   });
@@ -309,7 +310,8 @@ export async function buildServer() {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), message: z.string(), sessionId: z.string().optional(), attachmentIds: z.array(z.string()).optional() }).parse(request.body);
-    assertNotTestCustomizationSchema(body.schemaName);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -324,7 +326,7 @@ export async function buildServer() {
 
     try {
       const result = await tenantAgentChat({
-        schemaName: body.schemaName,
+        schemaName: schema,
         userId: user?.userId ?? "",
         message: body.message,
         sessionId: body.sessionId,
@@ -333,11 +335,11 @@ export async function buildServer() {
         onProgress: (event) => sendEvent("progress", event),
         onSummary: (summary) => sendEvent("summary", { summary }),
       });
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.chat.stream", inputSummary: { schemaName: body.schemaName, sessionId: body.sessionId }, outputSummary: { sessionId: result.sessionId }, costMs: Date.now() - started });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.chat.stream", inputSummary: { schemaName: schema, sessionId: body.sessionId }, outputSummary: { sessionId: result.sessionId }, costMs: Date.now() - started });
       sendEvent("done", result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.chat.stream", inputSummary: body, costMs: Date.now() - started, error: message });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.chat.stream", inputSummary: { ...body, schemaName: schema }, costMs: Date.now() - started, error: message });
       sendEvent("error", { message });
     } finally {
       reply.raw.end();
@@ -387,13 +389,14 @@ export async function buildServer() {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), versionId: z.string() }).parse(request.body);
-    assertNotTestCustomizationSchema(body.schemaName);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     try {
-      const result = await tenantAgentPreview({ schemaName: body.schemaName, versionId: body.versionId, user: user! });
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.preview", inputSummary: body, outputSummary: result, costMs: Date.now() - started });
+      const result = await tenantAgentPreview({ schemaName: schema, versionId: body.versionId, user: user! });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.preview", inputSummary: { ...body, schemaName: schema }, outputSummary: result, costMs: Date.now() - started });
       return result;
     } catch (error) {
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.preview", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.preview", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   });
@@ -402,13 +405,14 @@ export async function buildServer() {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), versionId: z.string() }).parse(request.body);
-    assertNotTestCustomizationSchema(body.schemaName);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     try {
-      const result = await tenantAgentPublish({ schemaName: body.schemaName, versionId: body.versionId, user: user! });
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.publish", inputSummary: body, outputSummary: result, costMs: Date.now() - started });
+      const result = await tenantAgentPublish({ schemaName: schema, versionId: body.versionId, user: user! });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.publish", inputSummary: { ...body, schemaName: schema }, outputSummary: result, costMs: Date.now() - started });
       return result;
     } catch (error) {
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.publish", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.publish", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   });
@@ -417,13 +421,14 @@ export async function buildServer() {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), versionId: z.string(), reason: z.string().optional() }).parse(request.body);
-    assertNotTestCustomizationSchema(body.schemaName);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     try {
-      const result = await tenantAgentReject({ schemaName: body.schemaName, versionId: body.versionId, reason: body.reason, user: user! });
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.reject", inputSummary: body, outputSummary: result, costMs: Date.now() - started });
+      const result = await tenantAgentReject({ schemaName: schema, versionId: body.versionId, reason: body.reason, user: user! });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.reject", inputSummary: { ...body, schemaName: schema }, outputSummary: result, costMs: Date.now() - started });
       return result;
     } catch (error) {
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.reject", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.reject", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   });
@@ -431,15 +436,17 @@ export async function buildServer() {
   app.get("/api/tenant/agent/drafts", { preHandler: [app.authenticate as never] }, async (request) => {
     const user = currentUser(request);
     const query = z.object({ schemaName: z.string() }).parse(request.query);
-    assertNotTestCustomizationSchema(query.schemaName);
-    return listTenantDrafts(query.schemaName, user!);
+    const schema = await resolveAuthorizedTenantSchema(user, query.schemaName);
+    assertNotTestCustomizationSchema(schema);
+    return listTenantDrafts(schema, user!);
   });
 
   app.get("/api/tenant/agent/chat/session", { preHandler: [app.authenticate as never] }, async (request) => {
     const user = currentUser(request);
     const query = z.object({ schemaName: z.string(), sessionId: z.string().optional() }).parse(request.query);
-    assertNotTestCustomizationSchema(query.schemaName);
-    return getActiveChatSession(query.schemaName, user?.userId ?? "", query.sessionId);
+    const schema = await resolveAuthorizedTenantSchema(user, query.schemaName);
+    assertNotTestCustomizationSchema(schema);
+    return getActiveChatSession(schema, user?.userId ?? "", query.sessionId);
   });
 
   app.get("/api/tenant/agent/harness-log", { preHandler: [app.authenticate as never] }, async (request) => {
@@ -477,16 +484,17 @@ export async function buildServer() {
       mimeType: z.string(),
       contentBase64: z.string(),
     }).parse(request.body);
-    assertNotTestCustomizationSchema(body.schemaName);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     const attachment = await saveAgentAttachment({
-      schemaName: body.schemaName,
+      schemaName: schema,
       userId: user?.userId,
       sessionId: body.sessionId,
       fileName: body.fileName,
       mimeType: body.mimeType,
       contentBase64: body.contentBase64,
     });
-    await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.attachment.upload", inputSummary: { fileName: body.fileName, mimeType: body.mimeType }, outputSummary: { id: attachment.id }, costMs: 0 });
+    await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.attachment.upload", inputSummary: { fileName: body.fileName, mimeType: body.mimeType }, outputSummary: { id: attachment.id }, costMs: 0 });
     return { attachment };
   });
 
@@ -494,7 +502,7 @@ export async function buildServer() {
     const user = currentUser(request);
     const params = z.object({ id: z.string() }).parse(request.params);
     const query = z.object({ schemaName: z.string().optional() }).parse(request.query);
-    const schemaName = query.schemaName ?? user?.schemaName ?? "";
+    const schemaName = await resolveAuthorizedTenantSchema(user, query.schemaName);
     const attachment = await loadAttachment(params.id, schemaName);
     if (!attachment?.local_path) throw httpError(404, "附件不存在");
     reply.header("Content-Type", attachment.mime_type);

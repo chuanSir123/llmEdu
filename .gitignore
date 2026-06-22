@@ -9,3 +9,5 @@ build/
 .next/
 coverage/
 *.log
+data/uploads/*
+!data/uploads/.gitkeep
