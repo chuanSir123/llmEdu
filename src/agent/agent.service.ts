@@ -37,7 +37,7 @@ type GenerateResult = {
 
 async function callLlmApi(schemaName: string, messages: Array<{ role: string; content: string }>): Promise<string> {
   const { rows } = await pool.query(
-    `select base_url, api_key_cipher, model, temperature from admin.llm_config
+    `select base_url, api_key, model, temperature from admin.llm_config
      where status = 'ACTIVE' and deleted = false and (schema_name = $1 or schema_name is null)
      order by schema_name desc nulls last limit 1`,
     [schemaName]
@@ -45,7 +45,7 @@ async function callLlmApi(schemaName: string, messages: Array<{ role: string; co
   const config = rows[0];
   if (!config) throw new Error("LLM 配置不存在，请在 llm_config 表中为该租户配置 LLM");
 
-  const apiKey = config.api_key_cipher ? Buffer.from(config.api_key_cipher, "base64").toString() : "";
+  const apiKey = config.api_key ?? "";
   if (!config.base_url || !apiKey) throw new Error("LLM 配置不完整，缺少 base_url 或 api_key");
 
   const body = {

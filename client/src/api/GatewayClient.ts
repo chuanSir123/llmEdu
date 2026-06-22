@@ -7,6 +7,7 @@ export type LoginResult = {
 const TOKEN_KEY = "llmedu_token";
 const USER_KEY = "llmedu_user";
 const PERM_KEY = "llmedu_permissions";
+const MANAGEMENT_ORG_KEY = "llmedu_management_organization_id";
 
 export function saveAuth(result: LoginResult) {
   localStorage.setItem(TOKEN_KEY, result.token);
@@ -18,6 +19,7 @@ export function clearAuth() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   localStorage.removeItem(PERM_KEY);
+  localStorage.removeItem(MANAGEMENT_ORG_KEY);
 }
 
 export function getToken() {
@@ -34,11 +36,22 @@ export function getStoredPermissions(): LoginResult["permissions"] | null {
   return raw ? JSON.parse(raw) : null;
 }
 
+export function getStoredManagementOrganizationId() {
+  return localStorage.getItem(MANAGEMENT_ORG_KEY);
+}
+
+export function setStoredManagementOrganizationId(id: string) {
+  if (id) localStorage.setItem(MANAGEMENT_ORG_KEY, id);
+  else localStorage.removeItem(MANAGEMENT_ORG_KEY);
+}
+
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  const managementOrganizationId = getStoredManagementOrganizationId();
+  if (managementOrganizationId) headers.set("X-Management-Organization-Id", managementOrganizationId);
   const response = await fetch(url, { ...options, headers });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message ?? data.error ?? "请求失败");
@@ -68,6 +81,7 @@ async function streamRequest(
   handlers: {
     onProgress?: (event: AgentProgressEvent) => void;
     onSummary?: (summary: string) => void;
+    onDelta?: (text: string) => void;
     onDone?: (result: TenantAgentChatResult) => void;
   },
 ): Promise<TenantAgentChatResult> {
@@ -99,6 +113,7 @@ async function streamRequest(
     if (!data) return;
     const parsed = JSON.parse(data);
     if (currentEvent === "progress") handlers.onProgress?.(parsed as AgentProgressEvent);
+    if (currentEvent === "delta") handlers.onDelta?.(String((parsed as { text?: string }).text ?? ""));
     if (currentEvent === "summary") handlers.onSummary?.(String((parsed as { summary?: string }).summary ?? ""));
     if (currentEvent === "done") {
       doneResult = parsed as TenantAgentChatResult;
@@ -133,6 +148,10 @@ export const GatewayClient = {
     request<LoginResult>("/api/auth/tenant/login", { method: "POST", body: JSON.stringify({ schemaName, contact, password }) }),
   logout: () => request<{ success: boolean }>("/api/auth/logout", { method: "POST" }),
   getPermissions: () => request<LoginResult["permissions"]>("/api/auth/permissions"),
+  managementOrganizations: (schemaName?: string) =>
+    request<{ currentOrganizationId: string | null; organizations: Array<{ id: string; name: string; parent_id?: string | null; organization_type?: string; status?: string }> }>(
+      `/api/auth/management-organizations${schemaName ? `?schemaName=${encodeURIComponent(schemaName)}` : ""}`
+    ),
   menu: (scope: "admin" | "tenant", schemaName?: string) =>
     request<{ modules: unknown[] }>(`/api/gateway/menu?scope=${scope}${schemaName ? `&schemaName=${schemaName}` : ""}`),
   page: (scope: "admin" | "tenant", pageCode: string, schemaName?: string) =>
@@ -153,6 +172,8 @@ export const GatewayClient = {
     request<TenantAgentChatResult>("/api/tenant/agent/chat", { method: "POST", body: JSON.stringify({ schemaName, message, sessionId, attachmentIds }) }),
   tenantAgentChatStream: (schemaName: string, message: string, sessionId: string | undefined, attachmentIds: string[] | undefined, handlers: { onProgress?: (event: AgentProgressEvent) => void; onSummary?: (summary: string) => void; onDone?: (result: TenantAgentChatResult) => void }) =>
     streamRequest("/api/tenant/agent/chat/stream", { schemaName, message, sessionId, attachmentIds }, handlers),
+  tenantAssistantChatStream: (schemaName: string, message: string, sessionId: string | undefined, attachmentIds: string[] | undefined, handlers: { onProgress?: (event: AgentProgressEvent) => void; onSummary?: (summary: string) => void; onDelta?: (text: string) => void; onDone?: (result: TenantAgentChatResult) => void }) =>
+    streamRequest("/api/tenant/assistant/chat/stream", { schemaName, message, sessionId, attachmentIds }, handlers),
   tenantAgentPreview: (schemaName: string, versionId: string) =>
     request<{ previewId: string; previewedAt: string; testSchema: string; previewUrl: string }>("/api/tenant/agent/preview", { method: "POST", body: JSON.stringify({ schemaName, versionId }) }),
   tenantAgentPublish: (schemaName: string, versionId: string) =>
@@ -195,9 +216,9 @@ export const GatewayClient = {
     request<{ success: boolean; targetType: string; targetCode: string; versionNo: number; previewUrl: string }>("/api/tenant/version/rollback-preview", { method: "POST", body: JSON.stringify({ schemaName, versionId }) }),
   uploadAgentAttachment: (payload: { schemaName: string; sessionId?: string; fileName: string; mimeType: string; contentBase64: string }) =>
     request<{ attachment: { id: string; fileName: string; mimeType: string; fileSize: number; storageUrl: string; contentSummary: Record<string, unknown> } }>("/api/tenant/agent/attachments", { method: "POST", body: JSON.stringify(payload) }),
-  executeImport: (payload: { schemaName: string; pageCode: string; apiCode: string; fileName: string; contentBase64: string; fields: Array<Record<string, unknown>>; idResolutionStrategy: "first" | "error" }) =>
-    request<{ total: number; success: number; failed: number; resultFile: { id: string; storageUrl: string; fileName: string } }>("/api/tenant/import/execute", { method: "POST", body: JSON.stringify(payload) }),
-  downloadImportTemplate: async (payload: { schemaName: string; title?: string; fields: Array<Record<string, unknown>> }) => {
+  executeImport: (payload: { schemaName: string; pageCode: string; apiCode: string; fileName: string; contentBase64: string; fields: Array<Record<string, unknown>>; idResolutionStrategy: "first" | "error"; mode?: "import" | "validate" }) =>
+    request<{ mode: "import" | "validate"; total: number; success: number; failed: number; resultFile: { id: string; storageUrl: string; fileName: string } }>("/api/tenant/import/execute", { method: "POST", body: JSON.stringify(payload) }),
+  downloadImportTemplate: async (payload: { schemaName: string; title?: string; pageCode?: string; apiCode?: string; fields: Array<Record<string, unknown>> }) => {
     const headers = new Headers();
     headers.set("Content-Type", "application/json");
     const token = getToken();

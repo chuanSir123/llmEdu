@@ -57,17 +57,10 @@ export function CustomizationRecordDetail({
       <div className="flex h-[92vh] w-full max-w-[1180px] flex-col rounded-lg bg-white shadow-[0_18px_48px_rgba(15,23,42,0.28)]">
         <div className="flex h-12 items-center justify-between border-b border-[#e8edf5] px-5">
           <div>
-            <h3 className="text-base font-semibold text-[#263445]">AI 定制化对话记录</h3>
+            <h3 className="text-base font-semibold text-[#263445]">AI 对话记录</h3>
             {detail && <div className="text-xs text-[#8b95a7]">{detail.schemaName} / {detail.sessionId}</div>}
           </div>
           <div className="flex items-center gap-2">
-            <button
-              className="h-8 border border-[#2f80ed] bg-[#2f80ed] px-3 text-sm text-white disabled:cursor-not-allowed disabled:border-[#cfd8e6] disabled:bg-[#eef0f8] disabled:text-[#8b95a7]"
-              disabled={!detail?.sessionId}
-              onClick={() => detail && onContinue?.(detail.schemaName, detail.sessionId)}
-            >
-              编辑并继续对话
-            </button>
             <button className="text-xl leading-none text-[#9aa4b5] hover:text-[#526075]" onClick={onClose}>×</button>
           </div>
         </div>

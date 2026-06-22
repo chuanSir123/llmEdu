@@ -18,6 +18,8 @@ import { summarizeActionDsl, summarizeApiDsl, summarizePageDsl } from "./steps/c
 import { defaultTenantAgentPolicy } from "./tenant-policy.service.js";
 import type { DslDiff } from "./types.js";
 import { validateEduDomainGuardrails } from "./validators/edu-domain.validator.js";
+import { classifyHarnessError, classifyFeedback, needsContextRefresh, HarnessErrorCode } from "./harness-errors.js";
+import { EDU_RULES } from "./rules/edu-rules.js";
 
 type TestCase = {
   name: string;
@@ -168,6 +170,53 @@ const tests: TestCase[] = [
         op: "add_modal_field",
         fieldDef: { key: "remark", label: "备注" },
       }, existing), "表单字段已存在");
+    },
+  },
+  {
+    name: "removes existing page field additions during deterministic repair",
+    run: async () => {
+      const validation = await executeValidationRepair(
+        [
+          {
+            targetType: "page_dsl",
+            targetCode: "student_list",
+            op: "add_column",
+            fieldDef: { key: "name", label: "学员姓名" },
+          },
+          {
+            targetType: "page_dsl",
+            targetCode: "student_list",
+            op: "add_filter",
+            fieldDef: { key: "student_status", label: "状态" },
+          },
+          {
+            targetType: "page_dsl",
+            targetCode: "student_list",
+            op: "add_modal_field",
+            fieldDef: { key: "remark", label: "备注" },
+          },
+          {
+            targetType: "print_template",
+            targetCode: "student_field_dedupe_print_regression",
+            op: "create_print_template",
+            resourceDef: {
+              templateCode: "student_field_dedupe_print_regression",
+              templateName: "学员字段去重回归模板",
+              pageCode: "student_list",
+              fields: ["name", "phone", "student_status"],
+            },
+          },
+        ],
+        { featureCode: "student_list", action: "modify", reason: "字段去重回归" },
+        emptyContext,
+        "demo_school",
+        "给学员列表补充已有字段并新增打印模板",
+      );
+      expectEqual(validation.error, undefined, `unexpected validation error: ${validation.error}`);
+      expectEqual(validation.data.some((diff) => diff.targetType === "page_dsl" && diff.op === "add_column"), false, "duplicate column should be removed");
+      expectEqual(validation.data.some((diff) => diff.targetType === "page_dsl" && diff.op === "add_filter"), false, "duplicate filter should be removed");
+      expectEqual(validation.data.some((diff) => diff.targetType === "page_dsl" && diff.op === "add_modal_field"), false, "duplicate modal field should be removed");
+      expectEqual(validation.data.some((diff) => diff.targetType === "print_template" && diff.op === "create_print_template"), true, "valid print template should remain");
     },
   },
   {
@@ -1171,6 +1220,59 @@ const tests: TestCase[] = [
       const rowActions = Array.isArray(table.rowActions) ? table.rowActions : [];
       expectEqual(rowActions.length, 1, "unexpected row action count");
       expectEqual(isObject(rowActions[0]) ? rowActions[0].actionCode : "", "empty_page.charge", "unexpected row action code");
+    },
+  },
+  {
+    name: "context-refresh classifier preserves legacy shouldRefreshContext behavior",
+    run: () => {
+      // 旧 shouldRefreshContext 的全部触发文案都必须仍判定为需要刷新上下文
+      const legacyRefreshPhrases = [
+        "报表字段不存在: employee.performance_amount",
+        "API DSL 字段校验失败: x",
+        "missing filter foo",
+        "missing allowedField foo",
+        "missing select field foo",
+        "missing metric field foo",
+        "missing dimension field foo",
+        "missing table foo",
+        "筛选字段必须是物理列: student.parent_phone 不存在",
+      ];
+      for (const phrase of legacyRefreshPhrases) {
+        expectEqual(needsContextRefresh(phrase), true, `expected refresh for: ${phrase}`);
+      }
+      // 回显缺失、重复等不应触发上下文刷新
+      expectEqual(needsContextRefresh("列表查询回显缺失: student_list.query 未返回字段 parent_phone"), false, "echo-missing should not refresh");
+      expectEqual(needsContextRefresh("列表列已存在: student_list.parent_phone"), false, "duplicate should not refresh");
+    },
+  },
+  {
+    name: "classifyHarnessError maps known messages to stable codes",
+    run: () => {
+      expectEqual(classifyHarnessError("报表字段不存在: a.b"), HarnessErrorCode.REPORT_FIELD_MISSING, "report code");
+      expectEqual(classifyHarnessError("筛选字段必须是物理列: a.b 不存在"), HarnessErrorCode.FILTER_NOT_PHYSICAL, "filter code");
+      expectEqual(classifyHarnessError("详情接口回显缺失: x.detail 未包含字段 y"), HarnessErrorCode.FIELD_ECHO_MISSING, "echo code");
+      expectEqual(classifyHarnessError("student_list add_column 外键字段 organization_id 缺少 optionSource"), HarnessErrorCode.FK_OPTION_SOURCE_MISSING, "fk code");
+      expectEqual(classifyHarnessError("某种没人见过的错误"), HarnessErrorCode.OTHER, "fallback OTHER");
+      // 聚合反馈拆分去重
+      const codes = classifyFeedback("校验失败: 报表字段不存在: a.b; 列表列已存在: c.d");
+      expectIncludes(codes, HarnessErrorCode.REPORT_FIELD_MISSING);
+      expectIncludes(codes, HarnessErrorCode.DUPLICATE);
+    },
+  },
+  {
+    name: "edu rule registry codes are all valid harness error codes",
+    run: () => {
+      const valid = new Set(Object.values(HarnessErrorCode));
+      for (const rule of EDU_RULES) {
+        expectEqual(valid.has(rule.errorCode), true, `rule ${rule.code} has invalid errorCode ${rule.errorCode}`);
+        expectEqual(Boolean(rule.promptHint && rule.title && rule.triggers.length > 0), true, `rule ${rule.code} missing fields`);
+      }
+      // 规则码唯一
+      const seen = new Set<string>();
+      for (const rule of EDU_RULES) {
+        expectEqual(seen.has(rule.code), false, `duplicate rule code ${rule.code}`);
+        seen.add(rule.code);
+      }
     },
   },
 ];

@@ -319,6 +319,21 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
 
 async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>) {
   if (scope !== "tenant") return undefined;
+  const businessCommandMap: Record<string, { command: string; ruleCode: string }> = {
+    "course_list.create": { command: "course.create", ruleCode: "course_create_rule" },
+    "charge_record.create": { command: "chargeRecord.create", ruleCode: "charge_create_rule" },
+    "chargeRecord.reverse": { command: "chargeRecord.reverse", ruleCode: "charge_create_rule" },
+    "attendance.checkIn": { command: "attendance.checkIn", ruleCode: "attendance_check_in_rule" },
+    "attendance.cancel": { command: "attendance.cancel", ruleCode: "attendance_check_in_rule" },
+    "funds.delete": { command: "funds.delete", ruleCode: "funds_create_rule" },
+    "refund_record.create": { command: "refund.create", ruleCode: "refund_create_rule" },
+    "refund.delete": { command: "refund.delete", ruleCode: "refund_create_rule" },
+    "contract.refund": { command: "contract.refund", ruleCode: "contract_refund_rule" },
+  };
+  const businessCommand = businessCommandMap[apiCode];
+  if (businessCommand) {
+    return executeCommandDsl(schemaName, { operation: "command", ...businessCommand } as never, params);
+  }
   if (apiCode === "permission_config.meta") return listPermissionConfig(schemaName, String(params.roleId ?? params.id ?? ""));
   if (apiCode === "approval_flow_list.query") return queryApprovalFlows(schemaName, params);
   if (apiCode === "approval_flow_list.create" || apiCode === "approval_flow_list.update") return saveApprovalFlow(schemaName, params);

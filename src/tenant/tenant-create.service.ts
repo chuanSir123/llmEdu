@@ -242,7 +242,7 @@ export async function createTenantWithModules(input: {
 
     await client.query(
       `insert into admin.tenant_manage(id, schema_name, name, status, contact_phone, owner_name, enabled_modules, enabled_features, expire_time, created_by, agent_customization_enabled)
-       values($1,$2,$3,'ACTIVE',$4,$5,$6,$7,'2099-12-31T23:59:59Z',$8,$9)`,
+       values($1,$2,$3,'INITIALIZING',$4,$5,$6,$7,'2099-12-31T23:59:59Z',$8,$9)`,
       [
         tenantId,
         schemaName,
@@ -275,6 +275,11 @@ export async function createTenantWithModules(input: {
       pageCodes: unique(catalog.features.map((feature) => feature.pageCode)),
       operatorId: input.operatorId,
     });
+
+    await client.query(
+      `update admin.tenant_manage set status = 'ACTIVE', updated_at = now() where id = $1`,
+      [tenantId]
+    );
 
     return { schemaName, tenantId, initialVersionCount: versionResult.count, login };
   });

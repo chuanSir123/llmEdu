@@ -13,6 +13,7 @@ import { loadTenantAgentPolicy } from "./tenant-policy.service.js";
 import { evaluateHarnessRisk } from "./risk-evaluator.js";
 import { formatHarnessImpactMessage, summarizeHarnessImpact } from "./impact-summarizer.js";
 import { runWithLlmTraceContext } from "./llm.service.js";
+import { needsContextRefresh, classifyFeedback } from "./harness-errors.js";
 
 export async function harnessRun(input: {
   userMessage: string;
@@ -125,7 +126,7 @@ async function harnessRunInner(input: {
   const maxAttempts = 3;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (repairFeedback && contextRefreshCount < maxAttempts - 1 && shouldRefreshContext(repairFeedback)) {
+    if (repairFeedback && contextRefreshCount < maxAttempts - 1 && needsContextRefresh(repairFeedback)) {
       contextRefreshCount += 1;
       await emit("context_loading", "正在补充上下文", "上一次错误显示字段或筛选定义缺失，正在重新定位相关 skill 并读取完整表结构。");
       context = await runStep("context_injection", () =>
@@ -160,8 +161,10 @@ async function harnessRunInner(input: {
           executeChangePlanning(effectiveUserMessage, intent.data, context.data, input.schemaName)
         );
     } else {
+      // 增量修复：把上一轮生成的 diff 回传给模型，保留通过项只修报错项
+      const priorDiffs = planning.data;
       planning = await runStep("change_planning", () =>
-        executeChangePlanning(effectiveUserMessage, intent.data, context.data, input.schemaName, repairFeedback)
+        executeChangePlanning(effectiveUserMessage, intent.data, context.data, input.schemaName, repairFeedback, priorDiffs)
       );
     }
     persistedSteps.push({ ...planning, input_summary: `${planning.input_summary} attempt=${attempt}` });
@@ -356,20 +359,6 @@ function buildEmptyResult(
   };
 }
 
-function shouldRefreshContext(feedback: string) {
-  return [
-    "报表字段不存在",
-    "字段校验失败",
-    "missing filter",
-    "missing allowedField",
-    "missing select field",
-    "missing metric field",
-    "missing dimension field",
-    "missing table",
-    "筛选字段必须是物理列",
-  ].some((item) => feedback.includes(item));
-}
-
 function buildEffectiveUserMessage(
   userMessage: string,
   chatHistory?: Array<{ role: string; content: string }>,
@@ -443,9 +432,10 @@ async function writeStepLogs(
   try {
     for (const step of steps) {
       const id = randomUUID();
+      const errorCodes = step.error ? classifyFeedback(step.error) : [];
       await pool.query(
-        `INSERT INTO admin.agent_harness_step_log(id, session_id, step_name, input_summary, output_summary, duration_ms, llm_tokens_used)
-         VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        `INSERT INTO admin.agent_harness_step_log(id, session_id, step_name, input_summary, output_summary, duration_ms, llm_tokens_used, error_codes)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
         [
           id,
           sessionId,
@@ -454,6 +444,7 @@ async function writeStepLogs(
           [step.output_summary, step.error ? `error=${step.error}` : ""].filter(Boolean).join(" | ").substring(0, 4000),
           step.duration_ms,
           step.llm_tokens_used ?? null,
+          JSON.stringify(errorCodes),
         ]
       );
     }

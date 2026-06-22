@@ -25,8 +25,8 @@ type ResourceItem = {
 
 const dataPermissionOptions = [
   ["self_only", "本人创建"],
-  ["own_organization", "本组织"],
-  ["organization_or_sub", "本组织及下级"],
+  ["own_organization", "当前管理架构"],
+  ["organization_or_sub", "当前管理架构及下级"],
   ["own_students", "负责学员"],
   ["own_courses", "负责课程"],
   ["all", "全部数据"]

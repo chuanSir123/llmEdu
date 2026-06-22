@@ -63,6 +63,12 @@ export async function executeValidationRepair(
       break;
     }
 
+    const deterministic = await deterministicPreRepair(currentDiffs, schemaName);
+    if (deterministic.length !== currentDiffs.length) {
+      currentDiffs = deterministic;
+      continue;
+    }
+
     const repaired = await repair(currentDiffs, lastErrors, intent, context, schemaName, originalPrompt);
     if (repaired.length > 0) {
       currentDiffs = repaired;
@@ -77,6 +83,36 @@ export async function executeValidationRepair(
     data: currentDiffs,
     error: `校验失败: ${lastErrors.join("; ")}`,
   };
+}
+
+async function deterministicPreRepair(diffs: DslDiff[], schemaName: string) {
+  const cache = new Map<string, Promise<ExistingPageActions>>();
+  const getExisting = (pageCode: string) => {
+    if (!cache.has(pageCode)) cache.set(pageCode, loadExistingPageActions(schemaName, pageCode));
+    return cache.get(pageCode)!;
+  };
+  const result: DslDiff[] = [];
+  for (const diff of diffs) {
+    if (diff.targetType === "page_dsl" && (diff.op === "add_toolbar" || diff.op === "add_row_action")) {
+      const actionCode = String(diff.fieldDef?.actionCode ?? "");
+      if (actionCode) {
+        const existing = await getExisting(diff.targetCode);
+        if (diff.op === "add_toolbar" && existing.toolbar.has(actionCode)) continue;
+        if (diff.op === "add_row_action" && existing.rowActions.has(actionCode)) continue;
+      }
+    }
+    if (diff.targetType === "page_dsl" && (diff.op === "add_column" || diff.op === "add_filter" || diff.op === "add_modal_field")) {
+      const fieldKey = String(diff.fieldDef?.key ?? diff.fieldDef?.field ?? diff.field ?? "");
+      if (fieldKey) {
+        const existing = await getExisting(diff.targetCode);
+        if (diff.op === "add_column" && existing.columns.has(fieldKey)) continue;
+        if (diff.op === "add_filter" && existing.filters.has(fieldKey)) continue;
+        if (diff.op === "add_modal_field" && existing.modalFields.has(fieldKey)) continue;
+      }
+    }
+    result.push(diff);
+  }
+  return result;
 }
 
 async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: boolean; errors: string[]; normalizedDiffs: DslDiff[] }> {
@@ -566,7 +602,54 @@ async function loadExistingPageActions(schemaName: string, pageCode: string): Pr
       if (key) result.modalFields.add(key);
     }
   }
+  await collectExistingActionModalFields(schemaName, pageCode, result.modalFields);
   return result;
+}
+
+async function collectExistingActionModalFields(schemaName: string, pageCode: string, modalFields: Set<string>) {
+  const { rows: actionRows } = await pool.query(
+    `SELECT dsl_json FROM admin.action_dsl
+     WHERE page_code = $1
+       AND action_type = 'open_modal'
+       AND status = 'active' AND deleted = false
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR schema_scope = 'tenant_default')
+     ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
+    [pageCode, schemaName]
+  );
+  const modalCodes = new Set<string>();
+  for (const row of actionRows) {
+    const dsl = row.dsl_json as Record<string, unknown> | undefined;
+    const modalCode = String(dsl?.modalCode ?? "");
+    if (modalCode) modalCodes.add(modalCode);
+  }
+  if (modalCodes.size === 0) return;
+
+  const { rows: modalRows } = await pool.query(
+    `SELECT dsl_json FROM admin.action_dsl
+     WHERE action_code = ANY($1)
+       AND status = 'active' AND deleted = false
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR schema_scope = 'tenant_default')
+     ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
+    [[...modalCodes], schemaName]
+  );
+  for (const row of modalRows) {
+    collectFieldKeys(row.dsl_json, modalFields);
+  }
+}
+
+function collectFieldKeys(dsl: unknown, target: Set<string>) {
+  if (!dsl || typeof dsl !== "object" || Array.isArray(dsl)) return;
+  const obj = dsl as Record<string, unknown>;
+  for (const field of (obj.fields as unknown[] | undefined) ?? []) {
+    const key = fieldKeyOf(field);
+    if (key) target.add(key);
+  }
+  const modal = obj.modal;
+  if (!modal || typeof modal !== "object" || Array.isArray(modal)) return;
+  for (const field of ((modal as Record<string, unknown>).fields as unknown[] | undefined) ?? []) {
+    const key = fieldKeyOf(field);
+    if (key) target.add(key);
+  }
 }
 
 async function loadExistingApiShape(schemaName: string, apiCode: string): Promise<ExistingApiShape> {

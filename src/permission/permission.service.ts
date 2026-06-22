@@ -1,5 +1,4 @@
 import { pool } from "../db/pool.js";
-import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
 
 export async function canAccessPage(user: SessionUser | undefined, schemaName: string | undefined, pageCode: string) {
@@ -81,43 +80,100 @@ export async function fieldPermissions(user: SessionUser | undefined, schemaName
   return result;
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch {
+      return value.split(",").map((item) => item.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+async function organizationTreeIds(schemaName: string, rootIds: string[]) {
+  if (!rootIds.length) return [];
+  const { rows } = await pool.query(
+    `with recursive org_tree as (
+       select id from "${schemaName}".organization where id = any($1::text[]) and deleted = false
+       union all
+       select o.id from "${schemaName}".organization o join org_tree ot on o.parent_id = ot.id and o.deleted = false
+     ) select distinct id from org_tree`,
+    [rootIds]
+  );
+  return rows.map((row) => row.id as string);
+}
+
+async function resolveManagementContext(user: SessionUser, schemaName: string) {
+  const { rows } = await pool.query(
+    `select id, organization_id, management_organization_ids
+     from "${schemaName}"."user"
+     where id = $1 and deleted = false
+     limit 1`,
+    [user.userId]
+  );
+  const row = rows[0];
+  const homeOrganizationId = (row?.organization_id as string | null) ?? null;
+  const rootIds = normalizeStringArray(row?.management_organization_ids);
+  if (homeOrganizationId && !rootIds.includes(homeOrganizationId)) rootIds.unshift(homeOrganizationId);
+  const allowedOrganizationIds = await organizationTreeIds(schemaName, rootIds);
+  const requested = user.currentManagementOrganizationId;
+  const organizationId = requested && allowedOrganizationIds.includes(requested)
+    ? requested
+    : (rootIds.find((id) => allowedOrganizationIds.includes(id)) ?? homeOrganizationId);
+  const subOrganizationIds = organizationId ? await organizationTreeIds(schemaName, [organizationId]) : [];
+  return { organizationId, subOrganizationIds, allowedOrganizationIds };
+}
+
+export async function listManagementOrganizations(user: SessionUser | undefined, schemaName: string) {
+  if (!user) return { currentOrganizationId: null, organizations: [] };
+  if (user.kind === "admin") {
+    const { rows } = await pool.query(
+      `select id, name, parent_id, organization_type, status
+       from "${schemaName}".organization
+       where deleted = false
+       order by parent_id nulls first, name`
+    );
+    return { currentOrganizationId: rows[0]?.id ?? null, organizations: rows };
+  }
+  const context = await resolveManagementContext(user, schemaName);
+  if (!context.allowedOrganizationIds.length) return { currentOrganizationId: null, organizations: [] };
+  const { rows } = await pool.query(
+    `select id, name, parent_id, organization_type, status
+     from "${schemaName}".organization
+     where id = any($1::text[]) and deleted = false
+     order by parent_id nulls first, name`,
+    [context.allowedOrganizationIds]
+  );
+  return { currentOrganizationId: context.organizationId, organizations: rows };
+}
+
 export async function getDataPermissionScope(user: SessionUser | undefined, schemaName: string) {
   if (!user) return { dataPermission: "self_only", organizationId: null, subOrganizationIds: [] };
   if (user.kind === "admin") return { dataPermission: "all", organizationId: null, subOrganizationIds: [] };
 
   const { rows } = await pool.query(
-    `select ur.user_id, u.organization_id, rr.data_permission
+    `select ur.user_id, rr.data_permission
      from "${schemaName}".role_resource rr
      join "${schemaName}".user_role ur on ur.role_id = rr.role_id and ur.deleted = false
-     join "${schemaName}"."user" u on u.id = ur.user_id and u.deleted = false
      where ur.user_id = $1 and rr.deleted = false`,
     [user.userId]
   );
 
   const priority: Record<string, number> = { all: 6, own_organization: 5, organization_or_sub: 4, own_students: 3, own_courses: 2, self_only: 1 };
   let bestPermission = "self_only";
-  let organizationId: string | null = null;
 
   for (const row of rows) {
     const dp = row.data_permission as string;
     if ((priority[dp] ?? 0) > (priority[bestPermission] ?? 0)) bestPermission = dp;
-    if (row.organization_id && !organizationId) organizationId = row.organization_id;
   }
 
-  let subOrganizationIds: string[] = [];
-  if ((bestPermission === "own_organization" || bestPermission === "organization_or_sub") && organizationId) {
-    const { rows: orgRows } = await pool.query(
-      `with recursive org_tree as (
-        select id from "${schemaName}".organization where id = $1 and deleted = false
-        union all
-        select o.id from "${schemaName}".organization o join org_tree ot on o.parent_id = ot.id and o.deleted = false
-      ) select id from org_tree`,
-      [organizationId]
-    );
-    subOrganizationIds = orgRows.map((r) => r.id as string);
-  }
+  const management = await resolveManagementContext(user, schemaName);
+  const subOrganizationIds = bestPermission === "organization_or_sub" ? management.subOrganizationIds : management.organizationId ? [management.organizationId] : [];
 
-  return { dataPermission: bestPermission, organizationId, subOrganizationIds };
+  return { dataPermission: bestPermission, organizationId: management.organizationId, subOrganizationIds };
 }
 
 export async function getOrganizationScope(user: SessionUser | undefined, schemaName: string) {
@@ -132,29 +188,29 @@ export async function getOrganizationScope(user: SessionUser | undefined, schema
     case "organization_or_sub":
       if (scope.subOrganizationIds.length > 0) {
         const placeholders = scope.subOrganizationIds.map((_, i) => `$${i + 1}`);
-        conditions.push(`organization_id in (${placeholders.join(", ")})`);
+        conditions.push(`t.organization_id in (${placeholders.join(", ")})`);
         params.push(...scope.subOrganizationIds);
       } else if (scope.organizationId) {
-        conditions.push("organization_id = $1");
+        conditions.push("t.organization_id = $1");
         params.push(scope.organizationId);
       }
       break;
     case "own_students":
       if (user?.userId) {
-        conditions.push(`(owner_user_id = $1 or study_manager_id = $1)`);
+        conditions.push(`(t.owner_user_id = $1 or t.study_manager_id = $1)`);
         params.push(user.userId);
       }
       break;
     case "own_courses":
       if (user?.userId) {
-        conditions.push(`(teacher_id = $1 or study_manager_id = $1)`);
+        conditions.push(`(t.teacher_id = $1 or t.study_manager_id = $1)`);
         params.push(user.userId);
       }
       break;
     case "self_only":
     default:
       if (user?.userId) {
-        conditions.push("created_by = $1");
+        conditions.push("t.created_by = $1");
         params.push(user.userId);
       }
       break;

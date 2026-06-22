@@ -10,6 +10,7 @@ export type ForeignKeyMeta = {
 
 const explicitForeignKeys: Record<string, Omit<ForeignKeyMeta, "key" | "displayKey"> & { displayKey?: string }> = {
   organization_id: { table: "organization", pageCode: "organization_list", apiCode: "organization_list.query", valueField: "id", labelField: "name", displayKey: "organization_name" },
+  parent_id: { table: "organization", pageCode: "organization_list", apiCode: "organization_list.query", valueField: "id", labelField: "name", displayKey: "parent_name" },
   student_id: { table: "student", pageCode: "student_list", apiCode: "student_list.query", valueField: "id", labelField: "name", displayKey: "student_name" },
   contract_id: { table: "contract", pageCode: "contract_list", apiCode: "contract_list.query", valueField: "id", labelField: "contract_no", displayKey: "contract_no" },
   contract_product_id: { table: "contract_product", pageCode: "contract_product_list", apiCode: "contract_product_list.query", valueField: "id", labelField: "product_name", displayKey: "contract_product_name" },

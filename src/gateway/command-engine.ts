@@ -654,11 +654,7 @@ async function createRefund(client: pg.PoolClient, schemaName: string, params: R
   );
   await client.query(
     `update ${table(schemaName, "contract_product")}
-     set consumed_real_hour = coalesce(consumed_real_hour,0) - $1,
-         consumed_real_amount = coalesce(consumed_real_amount,0) - $2,
-         consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $3,
-         consumed_promotion_amount = coalesce(consumed_promotion_amount,0) - $4,
-         remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
+     set remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
          remaining_real_amount = coalesce(remaining_real_amount,0) - $2,
          remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $3,
          remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $4,
@@ -819,11 +815,7 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
 
     await client.query(
       `update ${table(schemaName, "contract_product")}
-       set consumed_real_hour = coalesce(consumed_real_hour,0) - $1,
-           consumed_real_amount = coalesce(consumed_real_amount,0) - $2,
-           consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $3,
-           consumed_promotion_amount = coalesce(consumed_promotion_amount,0) - $4,
-           remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
+       set remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
            remaining_real_amount = coalesce(remaining_real_amount,0) - $2,
            remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $3,
            remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $4,
@@ -878,11 +870,7 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
 
     await client.query(
       `update ${table(schemaName, "contract_product")}
-       set consumed_real_hour = coalesce(consumed_real_hour,0) + $1,
-           consumed_real_amount = coalesce(consumed_real_amount,0) + $2,
-           consumed_promotion_hour = coalesce(consumed_promotion_hour,0) + $3,
-           consumed_promotion_amount = coalesce(consumed_promotion_amount,0) + $4,
-           remaining_real_hour = coalesce(remaining_real_hour,0) + $1,
+       set remaining_real_hour = coalesce(remaining_real_hour,0) + $1,
            remaining_real_amount = coalesce(remaining_real_amount,0) + $2,
            remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $3,
            remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $4,

@@ -227,9 +227,20 @@ export type AgentRunEvent = {
 
 export type AgentProgressCallback = (event: AgentRunEvent) => void | Promise<void>;
 
+export type LlmToolCall = { id: string; name: string; arguments: string };
+
+export type LlmMessage = {
+  role: string;
+  content: string | null;
+  tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
+};
+
 export type LlmCallResult = {
   type: "tool_call" | "text";
   functionCall?: { name: string; arguments: string };
+  // 全部工具调用（支持模型一次返回多个并行 tool_calls）；functionCall 为其中第一个，保持向后兼容
+  functionCalls?: LlmToolCall[];
   content?: string;
   tokensUsed?: number;
 };
@@ -239,6 +250,7 @@ export type LlmConfig = {
   apiKey: string;
   model: string;
   temperature: number;
+  maxTokens: number;
   maxContextTokens: number;
   supportsToolCalling: boolean;
 };
@@ -251,7 +263,9 @@ export type SkillSummary = {
 
 export type LlmCallInput = {
   schemaName: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string | null; tool_calls?: LlmMessage["tool_calls"]; tool_call_id?: string }>;
   tools?: Array<Record<string, unknown>>;
   fallbackPrompt?: string;
+  // 提供时启用流式：纯文本增量通过 onDelta 实时回调（工具调用轮不产生增量）
+  onDelta?: (text: string) => void;
 };

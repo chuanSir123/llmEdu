@@ -1,6 +1,6 @@
 import { pool } from "../../db/pool.js";
 import { callWithToolCalling } from "../llm.service.js";
-import { CLASSIFY_INTENT_TOOL, INTENT_SYSTEM_PROMPT, FALLBACK_INTENT_PROMPT } from "../prompts.js";
+import { CLASSIFY_INTENT_TOOL, INTENT_SYSTEM_PROMPT_STATIC, INTENT_FEATURES_TEMPLATE, FALLBACK_INTENT_PROMPT } from "../prompts.js";
 import { formatSkillSummaryFromMd } from "../skill-md.service.js";
 import type { IntentResult, SkillSummary, HarnessStepResult } from "../types.js";
 
@@ -14,10 +14,12 @@ export async function executeIntentClassification(
 
   try {
     const summaries = await loadSkillSummaries(schemaName);
-    const systemPrompt = INTENT_SYSTEM_PROMPT.replace("{skillSummaries}", summaries.map((s) => `- ${s.skill_code}: ${s.skill_name} — ${s.skill_summary}`).join("\n"));
+    const featuresBlock = INTENT_FEATURES_TEMPLATE.replace("{skillSummaries}", summaries.map((s) => `- ${s.skill_code}: ${s.skill_name} — ${s.skill_summary}`).join("\n"));
 
+    // 静态规则在前（全局可缓存），动态功能列表在后
     const messages: Array<{ role: string; content: string }> = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: INTENT_SYSTEM_PROMPT_STATIC },
+      { role: "system", content: featuresBlock },
     ];
 
     if (chatHistory && chatHistory.length > 0) {

@@ -108,6 +108,10 @@ function extractSectionText(content: string, sectionTitle: string): string {
   return result.join(" ").slice(0, 240);
 }
 
+export function collectPrimaryTables(apiDsls: Array<{ dsl_json: ApiDslJson | null }>): string[] {
+  return [...new Set(apiDsls.flatMap((api) => [api.dsl_json?.table, ...((api.dsl_json?.joins ?? []).map((join) => join.table))]).filter((item): item is string => Boolean(item)))];
+}
+
 export function generateSkillMd(input: {
   pageDsl: PageDslJson | null;
   apiDsls: Array<{ api_code: string; api_type: string; dsl_json: ApiDslJson | null }>;
@@ -115,8 +119,10 @@ export function generateSkillMd(input: {
   featureCode?: string;
   featureName: string;
   featureDescription?: string;
+  // 主数据表的真实物理列（来自 information_schema），让 SKILL.md 自动包含表的全部已有字段
+  tableColumns?: Record<string, Array<{ column_name: string; data_type: string }>>;
 }): string {
-  const primaryTables = [...new Set(input.apiDsls.flatMap((api) => [api.dsl_json?.table, ...((api.dsl_json?.joins ?? []).map((join) => join.table))]).filter((item): item is string => Boolean(item)))];
+  const primaryTables = collectPrimaryTables(input.apiDsls);
   const lines: string[] = [];
   lines.push(`# ${input.featureName}`);
   lines.push("");
@@ -138,6 +144,23 @@ export function generateSkillMd(input: {
     lines.push("（未识别到数据表）");
   }
   lines.push("");
+
+  const tableColumns = input.tableColumns ?? {};
+  if (Object.keys(tableColumns).length > 0) {
+    lines.push("## 物理字段（数据库真实列）");
+    lines.push("");
+    for (const table of primaryTables) {
+      const columns = tableColumns[table];
+      if (!columns || columns.length === 0) continue;
+      lines.push(`### ${table}`);
+      lines.push("| 字段 | 类型 |");
+      lines.push("|------|------|");
+      for (const column of columns) {
+        lines.push(`| ${column.column_name} | ${column.data_type} |`);
+      }
+      lines.push("");
+    }
+  }
 
   lines.push("## 页面结构 (page_dsl)");
   lines.push("");
@@ -253,10 +276,18 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
 
   const skillCode = `skill_${featureCode}`;
   const { rows: skillRows } = await pool.query(
-    `select skill_name from admin.skill_registry where skill_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default' or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' then 0 when schema_scope = 'tenant_default' then 1 else 2 end limit 1`,
+    `select skill_name, module_code, feature_code from admin.skill_registry where skill_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default' or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' then 0 when schema_scope = 'tenant_default' then 1 else 2 end limit 1`,
     [skillCode, schemaName]
   );
   const skillName = skillRows[0]?.skill_name ?? featureCode;
+  const moduleCode = skillRows[0]?.module_code ?? null;
+  const skillFeatureCode = skillRows[0]?.feature_code ?? featureCode;
+
+  // 真实物理列：tenant_default 用模板库 demo_school，真实租户用自己的 schema
+  const tableColumns = await loadPhysicalTableColumns(
+    schemaName === "tenant_default" ? "demo_school" : schemaName,
+    collectPrimaryTables(apiDsls),
+  );
 
   const content = generateSkillMd({
     pageDsl,
@@ -270,14 +301,60 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
     featureCode,
     featureName: skillName,
     featureDescription: pageDsl?.title,
+    tableColumns,
   });
 
-  await pool.query(
-    `update admin.skill_registry set skill_md_content = $1, updated_at = now() where skill_code = $2 and status = 'active' and deleted = false`,
-    [content, skillCode]
-  ).catch((err) => {
+  try {
+    if (schemaName === "tenant_default") {
+      // 默认基线：只更新共享的 tenant_default 行
+      await pool.query(
+        `update admin.skill_registry set skill_md_content = $1, updated_at = now()
+         where skill_code = $2 and schema_scope = 'tenant_default' and status = 'active' and deleted = false`,
+        [content, skillCode]
+      );
+      return;
+    }
+    // 真实租户：写/建租户专属行，绝不污染共享 tenant_default
+    const { rows: tenantRows } = await pool.query(
+      `select id from admin.skill_registry where skill_code = $1 and schema_scope = 'tenant' and schema_name = $2 and deleted = false limit 1`,
+      [skillCode, schemaName]
+    );
+    if (tenantRows[0]) {
+      await pool.query(
+        `update admin.skill_registry set skill_md_content = $1, status = 'active', updated_at = now() where id = $2`,
+        [content, tenantRows[0].id]
+      );
+    } else {
+      await pool.query(
+        `insert into admin.skill_registry(id, schema_scope, schema_name, module_code, feature_code, skill_code, skill_name, skill_md_content, status, deleted)
+         values($1, 'tenant', $2, $3, $4, $5, $6, $7, 'active', false)`,
+        [`skill_${schemaName}_${featureCode}`.slice(0, 120), schemaName, moduleCode, skillFeatureCode, skillCode, skillName, content]
+      );
+    }
+  } catch (err) {
     console.warn("[SKILL.md] sync failed for %s: %s", featureCode, err instanceof Error ? err.message : String(err));
-  });
+  }
+}
+
+async function loadPhysicalTableColumns(
+  schemaName: string,
+  tables: string[],
+): Promise<Record<string, Array<{ column_name: string; data_type: string }>>> {
+  const safeSchema = /^[a-z][a-z0-9_]{0,62}$/.test(schemaName) ? schemaName : "";
+  const safeTables = tables.filter((table) => /^[a-z][a-z0-9_]{0,62}$/.test(table));
+  if (!safeSchema || safeTables.length === 0) return {};
+  const { rows } = await pool.query(
+    `select table_name, column_name, data_type from information_schema.columns
+     where table_schema = $1 and table_name = any($2)
+     order by table_name, ordinal_position`,
+    [safeSchema, safeTables]
+  );
+  const result: Record<string, Array<{ column_name: string; data_type: string }>> = {};
+  for (const row of rows) {
+    const table = String(row.table_name);
+    (result[table] ??= []).push({ column_name: String(row.column_name), data_type: String(row.data_type) });
+  }
+  return result;
 }
 
 export async function fillEmptySkillMd(schemaName: string): Promise<number> {

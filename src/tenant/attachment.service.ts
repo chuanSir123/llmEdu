@@ -32,16 +32,24 @@ function summarizeExcel(buffer: Buffer, fileName: string) {
     const workbook = lower.endsWith(".csv")
       ? XLSX.read(buffer.toString("utf8").replace(/^\uFEFF/, ""), { type: "string" })
       : XLSX.read(buffer, { type: "buffer" });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
-    if (!sheet) return {};
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false });
+    const sheets = workbook.SheetNames.map((sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
+      const rows = sheet ? XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: false }) : [];
+      return {
+        sheetName,
+        headers: rows[0] ? Object.keys(rows[0]) : [],
+        sampleRows: rows.slice(0, 5),
+        rowCount: rows.length,
+      };
+    });
+    const first = sheets[0];
     return {
       kind: "spreadsheet",
-      sheetName,
-      headers: rows[0] ? Object.keys(rows[0]) : [],
-      sampleRows: rows.slice(0, 3),
-      rowCount: rows.length,
+      sheetName: first?.sheetName,
+      headers: first?.headers ?? [],
+      sampleRows: first?.sampleRows ?? [],
+      rowCount: first?.rowCount ?? 0,
+      sheets,
     };
   } catch (err) {
     return { kind: "spreadsheet", parseError: err instanceof Error ? err.message : String(err) };
@@ -109,7 +117,7 @@ export async function loadAttachment(id: string, schemaName: string) {
 export async function loadAttachments(ids: string[], schemaName: string) {
   if (ids.length === 0) return [];
   const { rows } = await pool.query(
-    `select id, file_name, mime_type, file_size, storage_url, content_summary
+    `select id, file_name, mime_type, file_size, storage_url, local_path, content_summary
      from admin.agent_attachment
      where id = any($1) and schema_name = $2 and deleted = false
      order by created_at`,
@@ -124,4 +132,3 @@ export async function loadAttachments(ids: string[], schemaName: string) {
     content_summary: Record<string, unknown>;
   }>;
 }
-

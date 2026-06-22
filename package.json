@@ -10,7 +10,14 @@
     "db:migrate": "tsx src/db/migrator.ts",
     "db:seed": "tsx src/seed/run.ts",
     "check": "tsc -p tsconfig.json && tsc -p client/tsconfig.json",
-    "check:harness": "tsx src/agent/harness-regression.ts"
+    "check:harness": "tsx src/agent/harness-regression.ts",
+    "smoke:tenant-import": "tsx src/smoke/tenant-onboarding-import.ts",
+    "smoke:business-flow": "tsx src/smoke/tenant-business-flow.ts",
+    "smoke:reversal-flow": "tsx src/smoke/tenant-reversal-flow.ts",
+    "smoke:refund-flow": "tsx src/smoke/tenant-refund-flow.ts",
+    "smoke:core-import-flow": "tsx src/smoke/tenant-core-import-flow.ts",
+    "smoke:assistant-full": "tsx src/smoke/tenant-assistant-full.ts",
+    "eval:harness": "tsx src/smoke/eval/eval-runner.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

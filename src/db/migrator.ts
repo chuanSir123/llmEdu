@@ -69,8 +69,7 @@ export async function migrate() {
       id text primary key,
       config_code text not null unique,
       base_url text,
-      api_key_cipher text,
-      api_key_masked text,
+      api_key text,
       model text,
       provider text,
       temperature numeric default 0.2,
@@ -334,7 +333,7 @@ export async function migrate() {
       );
       create table if not exists "${schema}"."user" (
         id text primary key, name text not null, contact text unique, email text, psw text not null, organization_id text,
-        staff_type text, status text not null default 'ACTIVE', last_login_time timestamptz, ext_json jsonb not null default '{}',
+        management_organization_ids jsonb not null default '[]', staff_type text, status text not null default 'ACTIVE', last_login_time timestamptz, ext_json jsonb not null default '{}',
         created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text,
         deleted boolean not null default false
       );
@@ -531,6 +530,8 @@ export async function migrate() {
     await exec(`ALTER TABLE IF EXISTS "${schema}".student ADD COLUMN IF NOT EXISTS student_no text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".organization ADD COLUMN IF NOT EXISTS contact_phone text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".organization ADD COLUMN IF NOT EXISTS address text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".organization ADD COLUMN IF NOT EXISTS parent_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}"."user" ADD COLUMN IF NOT EXISTS management_organization_ids jsonb NOT NULL DEFAULT '[]'`);
     await exec(`ALTER TABLE IF EXISTS "${schema}"."user" ADD COLUMN IF NOT EXISTS last_login_time timestamptz`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".login_session ADD COLUMN IF NOT EXISTS ip text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".login_session ADD COLUMN IF NOT EXISTS device_info text`);
@@ -626,6 +627,17 @@ export async function migrate() {
   await exec(`ALTER TABLE IF EXISTS admin.llm_config ADD COLUMN IF NOT EXISTS schema_name text`);
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_config_schema_code ON admin.llm_config(schema_name, config_code) WHERE schema_name IS NOT NULL`);
 
+  // 去掉 api_key 加密：迁移到明文列，方便直接改库调试
+  await exec(`ALTER TABLE IF EXISTS admin.llm_config ADD COLUMN IF NOT EXISTS api_key text`);
+  await exec(`
+    UPDATE admin.llm_config
+    SET api_key = convert_from(decode(api_key_cipher, 'base64'), 'UTF8')
+    WHERE (api_key IS NULL OR api_key = '')
+      AND coalesce(api_key_cipher, '') <> ''
+  `).catch(() => undefined);
+  await exec(`ALTER TABLE IF EXISTS admin.llm_config DROP COLUMN IF EXISTS api_key_cipher`);
+  await exec(`ALTER TABLE IF EXISTS admin.llm_config DROP COLUMN IF EXISTS api_key_masked`);
+
   await exec(`
     create table if not exists admin.agent_harness_step_log (
       id text primary key,
@@ -660,6 +672,12 @@ export async function migrate() {
   `);
   await exec(`create index if not exists idx_llm_call_log_session on admin.llm_call_log(session_id, created_at)`);
   await exec(`create index if not exists idx_llm_call_log_schema_time on admin.llm_call_log(schema_name, created_at)`);
+  // token 拆分日志（观测前缀缓存命中率）
+  await exec(`ALTER TABLE IF EXISTS admin.llm_call_log ADD COLUMN IF NOT EXISTS prompt_tokens int`);
+  await exec(`ALTER TABLE IF EXISTS admin.llm_call_log ADD COLUMN IF NOT EXISTS completion_tokens int`);
+  await exec(`ALTER TABLE IF EXISTS admin.llm_call_log ADD COLUMN IF NOT EXISTS cached_tokens int`);
+  // 每步错误码（收敛度量）
+  await exec(`ALTER TABLE IF EXISTS admin.agent_harness_step_log ADD COLUMN IF NOT EXISTS error_codes jsonb`);
   await exec(`
     create table if not exists admin.agent_attachment (
       id text primary key,
@@ -952,11 +970,17 @@ async function syncReportCompanionDsl() {
 
 async function backfillSubscribedFeatureAccess() {
   const { rows: tenants } = await pool.query(
-    `select schema_name from admin.tenant_manage where deleted = false and schema_name not like '%\\_test' escape '\\'`
+    `select schema_name from admin.tenant_manage where status = 'ACTIVE' and deleted = false and schema_name not like '%\\_test' escape '\\'`
   );
   for (const tenant of tenants) {
     const schemaName = String(tenant.schema_name ?? "");
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(schemaName)) continue;
+    const { rows: readyRows } = await pool.query(
+      `select to_regclass($1) is not null as has_role,
+              to_regclass($2) is not null as has_role_resource`,
+      [`"${schemaName.replace(/"/g, '""')}".role`, `"${schemaName.replace(/"/g, '""')}".role_resource`]
+    );
+    if (!readyRows[0]?.has_role || !readyRows[0]?.has_role_resource) continue;
     const schema = `"${schemaName.replace(/"/g, '""')}"`;
     const { rows } = await pool.query(
       `select distinct f.page_code

@@ -100,6 +100,11 @@ function sqlStringLiteral(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function dbValue(value: unknown) {
+  if (value && typeof value === "object" && !(value instanceof Date)) return JSON.stringify(value);
+  return value;
+}
+
 function fieldExpr(field: string, tableColumns: Set<string>) {
   const safeField = assertField(field);
   if (tableColumns.has(safeField)) return `t.${qIdent(safeField)}`;
@@ -136,6 +141,11 @@ async function selectColumns(schemaName: string, dsl: ApiDsl) {
     }
   }
   for (const field of selectedForeignKeys) {
+    if (field === "management_organization_ids" && tableColumns.has("management_organization_ids") && !selectedAliases.has("management_organization_names")) {
+      cols.push(`(select string_agg(org.name, ', ' order by org.name) from ${tableExpr(schemaName, "organization")} org where org.id in (select jsonb_array_elements_text(coalesce(t.management_organization_ids, '[]'::jsonb))) and coalesce(org.deleted, false) = false) as management_organization_names`);
+      selectedAliases.add("management_organization_names");
+      continue;
+    }
     const meta = inferForeignKeyMeta(field);
     if (!meta || selectedAliases.has(meta.displayKey)) continue;
     const sourceExpr = fieldExpr(field, tableColumns);
@@ -295,6 +305,18 @@ function appendDynamicFilters(where: string[], values: unknown[], filterDsl: Fil
   }
 }
 
+function appendDataPermissionScope(where: string[], values: unknown[], tableColumns: Set<string>, tableName: string, scope: { whereSql: string; params: unknown[] }) {
+  if (!scope.whereSql) return;
+  let whereSql = scope.whereSql;
+  if (whereSql.includes("organization_id") && !tableColumns.has("organization_id")) {
+    if (tableName !== "organization") return;
+    whereSql = whereSql.replace(/t\.organization_id/g, "t.id");
+  }
+  const offset = values.length;
+  where.push(whereSql.replace(/\$(\d+)/g, (_, index) => `$${Number(index) + offset}`));
+  values.push(...scope.params);
+}
+
 async function executeAggregateQuery(schemaName: string, dsl: ApiDsl, params: Record<string, unknown>, user: SessionUser | undefined, table: string, tableColumns: Set<string>) {
   const dimensions = [...new Set([...(dsl.groupBy ?? []), ...(dsl.dimensions ?? [])])].filter(Boolean);
   const metrics = dsl.metrics ?? [];
@@ -316,10 +338,7 @@ async function executeAggregateQuery(schemaName: string, dsl: ApiDsl, params: Re
   }
   if (dsl.security?.dataPermission && user) {
     const scope = await getOrganizationScope(user, schemaName);
-    if (scope.whereSql) {
-      where.push(scope.whereSql);
-      values.push(...scope.params);
-    }
+    appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
   }
 
   const selectedAliases = new Set<string>();
@@ -458,10 +477,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     }
     if (dsl.security?.dataPermission && user) {
       const scope = await getOrganizationScope(user, schemaName);
-      if (scope.whereSql) {
-        where.push(scope.whereSql);
-        values.push(...scope.params);
-      }
+      appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
     }
     const page = Math.max(Number(params.page ?? 1), 1);
     const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
@@ -483,9 +499,15 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
 
   if (dsl.operation === "detail") {
     const delClause = dsl.softDelete === false ? "" : " and t.deleted = false";
+    const values: unknown[] = [params.id];
+    const where = [`t.id = $1${delClause}`];
+    if (dsl.security?.dataPermission && user) {
+      const scope = await getOrganizationScope(user, schemaName);
+      appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
+    }
     const { rows } = await pool.query(
-      `select ${await selectColumns(effectiveSchema, dsl)} from ${table} t ${joinSql(schemaName, dsl.joins, dsl.softDelete !== false)} where t.id = $1${delClause}`,
-      [params.id]
+      `select ${await selectColumns(effectiveSchema, dsl)} from ${table} t ${joinSql(schemaName, dsl.joins, dsl.softDelete !== false)} where ${where.join(" and ")}`,
+      values
     );
     return rows[0] ? flattenExtJson(rows[0]) : null;
   }
@@ -501,7 +523,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
   if (dsl.operation === "create") {
     const newId = String(params.id ?? await nextTextId(schemaName, dsl.table));
     const cols = ["id", ...fields];
-    const values: unknown[] = [newId, ...fields.map((field) => input[field])];
+    const values: unknown[] = [newId, ...fields.map((field) => dbValue(input[field]))];
     if (hasExtJson && extFields.length > 0) {
       const extObj: Record<string, unknown> = {};
       for (const f of extFields) extObj[f] = input[f];
@@ -521,7 +543,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     let idx = 1;
     for (const field of fields) {
       sets.push(`${qIdent(field)} = $${idx}`);
-      values.push(input[field]);
+      values.push(dbValue(input[field]));
       idx++;
     }
     if (hasExtJson && extFields.length > 0) {
@@ -533,8 +555,13 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     }
     if (tableColumns.has("updated_at")) sets.push("updated_at = now()");
     values.push(params.id);
+    const where = [`t.id = $${values.length}${dsl.softDelete === false ? "" : " and t.deleted = false"}`];
+    if (dsl.security?.dataPermission && user) {
+      const scope = await getOrganizationScope(user, schemaName);
+      appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
+    }
     const { rows } = await pool.query(
-      `update ${table} set ${sets.join(",")} where id = $${values.length}${dsl.softDelete === false ? "" : " and deleted = false"} returning *`,
+      `update ${table} t set ${sets.join(",")} where ${where.join(" and ")} returning *`,
       values
     );
     return rows[0];
@@ -542,14 +569,20 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
 
   if (dsl.operation === "delete") {
     if (!params.id) throw new Error("缺少 id");
+    const values: unknown[] = [params.id];
+    const where = ["t.id = $1"];
+    if (dsl.security?.dataPermission && user) {
+      const scope = await getOrganizationScope(user, schemaName);
+      appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
+    }
     if (dsl.softDelete === false) {
-      const { rows } = await pool.query(`delete from ${table} where id = $1 returning id`, [params.id]);
+      const { rows } = await pool.query(`delete from ${table} t where ${where.join(" and ")} returning id`, values);
       return { deleted: Boolean(rows[0]), id: params.id };
     }
     const updatedAtSet = tableColumns.has("updated_at") ? ", updated_at = now()" : "";
     const { rows } = await pool.query(
-      `update ${table} set deleted = true${updatedAtSet} where id = $1 and deleted = false returning id`,
-      [params.id]
+      `update ${table} t set deleted = true${updatedAtSet} where ${where.join(" and ")} and t.deleted = false returning id`,
+      values
     );
     return { deleted: Boolean(rows[0]), id: params.id };
   }

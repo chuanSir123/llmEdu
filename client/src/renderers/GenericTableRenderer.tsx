@@ -14,10 +14,11 @@ const badgeTone = {
   gray: "border-[#d7dee7] bg-[#f6f8fa] text-[#607083]"
 } satisfies Record<BadgeTone, string>;
 
-function formatValue(value: unknown, type?: string) {
+function formatValue(value: unknown, type?: string): string {
   if (value === null || value === undefined || value === "") return "-";
   if (type === "datetime") return new Date(String(value)).toLocaleString();
   if (type === "date") return String(value).slice(0, 10);
+  if (Array.isArray(value)) return value.map((item) => formatValue(item)).filter((item) => item !== "-").join(", ");
   if (typeof value === "object") return typeof value === "string" ? value : JSON.stringify(value);
   return String(value);
 }
@@ -100,7 +101,7 @@ export function GenericTableRenderer({
                 <td
                   key={column.key}
                   className={`${token.td} ${tdDensity} ${alignClass(column.align)} max-w-[300px] truncate`}
-                  title={formatValue(row[column.key], column.type)}
+                  title={formatValue(column.displayKey ? row[column.displayKey] ?? row[column.key] : row[column.key], column.type)}
                 >
                   {renderCell(column, row, presentation)}
                 </td>

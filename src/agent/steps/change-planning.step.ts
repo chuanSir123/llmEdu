@@ -1,5 +1,5 @@
 import { callWithToolCalling } from "../llm.service.js";
-import { PLAN_CHANGES_TOOL, PLANNING_SYSTEM_PROMPT_TEMPLATE, FALLBACK_PLANNING_PROMPT } from "../prompts.js";
+import { PLAN_CHANGES_TOOL, PLANNING_SYSTEM_PROMPT_STATIC, PLANNING_CONTEXT_TEMPLATE, FALLBACK_PLANNING_PROMPT } from "../prompts.js";
 import { parsePlanDiffsFromToolArguments } from "../dsl-diff-parser.js";
 import type { ContextResult, DslDiff, IntentResult, HarnessStepResult } from "../types.js";
 
@@ -9,30 +9,39 @@ export async function executeChangePlanning(
   context: ContextResult,
   schemaName: string,
   repairFeedback?: string,
+  priorDiffs?: DslDiff[],
 ): Promise<HarnessStepResult<DslDiff[]>> {
   const start = Date.now();
   const inputSummary = `userMessage=${userMessage.substring(0, 200)} featureCode=${intent.featureCode}${repairFeedback ? " repair=true" : ""}`;
 
   try {
-    const systemPrompt = PLANNING_SYSTEM_PROMPT_TEMPLATE
+    const contextBlock = PLANNING_CONTEXT_TEMPLATE
       .replace("{skillMdContent}", context.skillMdContent)
       .replace("{tableColumns}", JSON.stringify(context.tableColumns, null, 2))
       .replace("{dslSummary}", JSON.stringify(context.dslSummary, null, 2));
 
+    // 消息顺序：静态规则（全局可缓存）→ 稳定上下文 → 用户消息 → 动态修复反馈（最后，避免破坏前缀缓存）
     const messages: Array<{ role: string; content: string }> = [
-      { role: "system", content: systemPrompt },
+      { role: "system", content: PLANNING_SYSTEM_PROMPT_STATIC },
+      { role: "system", content: contextBlock },
+      { role: "user", content: userMessage },
     ];
     if (repairFeedback) {
+      // 增量修复：把上一次生成的 diff 回传，让模型保留通过项、只修报错项
+      if (priorDiffs && priorDiffs.length > 0) {
+        messages.push({ role: "assistant", content: JSON.stringify({ diffs: priorDiffs }) });
+      }
       messages.push({
-        role: "assistant",
+        role: "user",
         content: [
           `上一次生成的变更在校验或预览执行时失败。错误信息：${repairFeedback}`,
-          "请避免重复错误，必要时补充关联的 page/api/action 变更。",
+          priorDiffs && priorDiffs.length > 0
+            ? "请在上一条 assistant 给出的 diffs 基础上做增量修正：保留校验已通过的 diff，只修正与错误相关的项，不要从零重写，也不要删除无关的正确变更。"
+            : "请避免重复错误，必要时补充关联的 page/api/action 变更。",
           "如果错误是报表字段不存在、missing metric/dimension/filter field 或字段校验失败，必须回到已注入的 SKILL.md 和 tableColumns 重新选择真实 sourceTable 与字段；不要根据用户措辞编造 employee/student/amount/name 等字段，也不要为了找到 name 字段切到无关表。",
         ].join("\n"),
       });
     }
-    messages.push({ role: "user", content: userMessage });
 
     const result = await callWithToolCalling({
       schemaName,

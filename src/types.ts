@@ -5,6 +5,7 @@ export type SessionUser = {
   userId: string;
   name: string;
   schemaName?: string;
+  currentManagementOrganizationId?: string;
 };
 
 export type AuthedRequest = FastifyRequest & {

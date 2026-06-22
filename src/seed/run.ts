@@ -1,6 +1,6 @@
 import { pool, withClient } from "../db/pool.js";
 import { migrate } from "../db/migrator.js";
-import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, llmSeed, maskApiKey, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap } from "./data.js";
+import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, llmSeed, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap, standardImportConfigs } from "./data.js";
 import { env } from "../config/env.js";
 import { fillEmptySkillMd } from "../agent/skill-md.service.js";
 import path from "node:path";
@@ -65,8 +65,7 @@ async function seedAdmin() {
     config_code: "demo_school_llm",
     schema_name: "demo_school",
     base_url: env.llm.baseUrl,
-    api_key_cipher: env.llm.apiKey ? Buffer.from(env.llm.apiKey).toString("base64") : "",
-    api_key_masked: maskApiKey(env.llm.apiKey),
+    api_key: env.llm.apiKey ?? "",
     model: env.llm.model,
     provider: "openai-compatible",
     max_context_tokens: 256000,
@@ -252,6 +251,18 @@ async function seedAdmin() {
       status: "active"
     });
   }
+  for (const config of standardImportConfigs) {
+    await upsert("admin.import_dsl", "id", {
+      id: id("import_tenant_default", config.importCode),
+      schema_scope: "tenant_default",
+      schema_name: null,
+      import_code: config.importCode,
+      import_name: config.importName,
+      dsl_json: JSON.stringify(config.dsl),
+      version_no: 1,
+      status: "active"
+    });
+  }
   for (const page of adminPages) {
     await seedDsl("admin", null, page);
   }
@@ -331,6 +342,7 @@ async function ensureDefaultDslVersions() {
     { table: "admin.api_dsl", targetType: "api", codeCol: "api_code", contentCol: "dsl_json" },
     { table: "admin.action_dsl", targetType: "action", codeCol: "action_code", contentCol: "dsl_json" },
     { table: "admin.skill_registry", targetType: "skill", codeCol: "skill_code", contentCol: "skill_md_content" },
+    { table: "admin.import_dsl", targetType: "import", codeCol: "import_code", contentCol: "dsl_json" },
     { table: "admin.business_rule", targetType: "business_rule", codeCol: "rule_code", contentCol: "rule_json" },
     { table: "admin.print_template", targetType: "print_template", codeCol: "template_code", contentCol: "dsl_json" },
   ];
@@ -342,7 +354,7 @@ async function ensureDefaultDslVersions() {
     for (const row of rows) {
       const snapshot = source.targetType === "skill"
         ? { skill_md_content: row[source.contentCol] }
-        : source.targetType === "business_rule" || source.targetType === "print_template"
+        : source.targetType === "import" || source.targetType === "business_rule" || source.targetType === "print_template"
           ? { resource_json: row[source.contentCol] }
           : { dsl_json: row[source.contentCol] };
       items.push({ targetType: source.targetType, targetCode: row[source.codeCol], snapshot });
@@ -424,10 +436,10 @@ async function seedTenantData() {
       { id: "org_003", name: "城西校区", parent_id: "org_001", organization_type: "BRANCH", status: "ACTIVE" }
     ]],
     ["user", [
-      { id: "user_001", name: "张校长", contact: "18800000001", organization_id: "org_001", staff_type: "MANAGER", status: "ACTIVE", psw: passwordHash },
-      { id: "user_002", name: "李老师", contact: "18800000002", organization_id: "org_001", staff_type: "TEACHER", status: "ACTIVE", psw: passwordHash },
-      { id: "user_003", name: "王学管", contact: "18800000003", organization_id: "org_001", staff_type: "STUDY_MANAGER", status: "ACTIVE", psw: passwordHash },
-      { id: "user_004", name: "赵顾问", contact: "18800000004", organization_id: "org_002", staff_type: "SALES", status: "ACTIVE", psw: passwordHash }
+      { id: "user_001", name: "张校长", contact: "18800000001", organization_id: "org_001", management_organization_ids: ["org_001"], staff_type: "MANAGER", status: "ACTIVE", psw: passwordHash },
+      { id: "user_002", name: "李老师", contact: "18800000002", organization_id: "org_001", management_organization_ids: ["org_001"], staff_type: "TEACHER", status: "ACTIVE", psw: passwordHash },
+      { id: "user_003", name: "王学管", contact: "18800000003", organization_id: "org_001", management_organization_ids: ["org_001"], staff_type: "STUDY_MANAGER", status: "ACTIVE", psw: passwordHash },
+      { id: "user_004", name: "赵顾问", contact: "18800000004", organization_id: "org_002", management_organization_ids: ["org_002"], staff_type: "SALES", status: "ACTIVE", psw: passwordHash }
     ]],
     ["role", [
       { id: "role_001", name: "校长", role_code: "PRINCIPAL", organization_id: "org_001" },

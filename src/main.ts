@@ -16,11 +16,12 @@ import { loadAdminMenu, loadTenantMenu } from "./gateway/menu.service.js";
 import { loadPageFullDsl } from "./gateway/page.service.js";
 import { executeGatewayApi } from "./gateway/api-executor.js";
 import { executeAction } from "./gateway/action-executor.js";
-import { canAccessPage } from "./permission/permission.service.js";
+import { canAccessPage, listManagementOrganizations } from "./permission/permission.service.js";
 import { publishVersion, publishVersionAndSyncSkillMd, rollbackVersion, rejectVersion, initializeTenantVersion, listTenantVersions, tenantRollbackVersion } from "./version/version.service.js";
 import { tenantAgentChat, tenantAgentPreview, tenantAgentPublish, tenantAgentReject, listTenantDrafts, getActiveChatSession } from "./tenant/tenant-agent.service.js";
+import { tenantAssistantChat } from "./tenant/tenant-assistant.service.js";
 import { saveAgentAttachment, loadAttachment } from "./tenant/attachment.service.js";
-import { buildImportTemplate, executeTenantImport } from "./tenant/import.service.js";
+import { buildImportTemplate, executeTenantImport, resolveTenantImportConfig } from "./tenant/import.service.js";
 import { rollbackTestSchemaDsl } from "./tenant/test-schema.service.js";
 import { syncSkillMd, fillEmptySkillMd } from "./agent/skill-md.service.js";
 import { loadModuleSelectionTree, createTenantWithModules } from "./tenant/tenant-create.service.js";
@@ -109,6 +110,16 @@ function currentUser(req: unknown) {
   return (req as AuthedRequest).user as SessionUser | undefined;
 }
 
+async function resolveAuthorizedTenantSchema(user: SessionUser | undefined, requestedSchemaName?: string) {
+  if (!user) throw httpError(401, "请先登录");
+  const schemaName = requestedSchemaName || user.schemaName || "";
+  const schema = await resolveTenantSchema(schemaName);
+  if (user.kind === "tenant" && user.schemaName !== schema) {
+    throw httpError(403, "不能访问其他租户数据");
+  }
+  return schema;
+}
+
 export async function buildServer() {
   await seed();
 
@@ -120,6 +131,10 @@ export async function buildServer() {
     try {
       request.user = await request.jwtVerify<SessionUser>();
       if (request.user?.kind === "tenant" && request.user.schemaName) {
+        const currentManagementOrganizationId = request.headers["x-management-organization-id"];
+        if (typeof currentManagementOrganizationId === "string" && currentManagementOrganizationId.trim()) {
+          request.user.currentManagementOrganizationId = currentManagementOrganizationId.trim();
+        }
         const token = request.headers.authorization?.replace("Bearer ", "") ?? "";
         const revoked = await isTokenRevoked(request.user.schemaName, token);
         if (revoked) throw httpError(401, "登录已过期");
@@ -152,6 +167,14 @@ export async function buildServer() {
     const user = currentUser(request);
     if (!user) throw httpError(401, "请先登录");
     return getUserPermissions(user, user.schemaName ?? "admin");
+  });
+
+  app.get("/api/auth/management-organizations", { preHandler: [app.authenticate as never] }, async (request) => {
+    const user = currentUser(request);
+    if (!user) throw httpError(401, "请先登录");
+    const query = z.object({ schemaName: z.string().optional() }).parse(request.query);
+    const schema = await resolveAuthorizedTenantSchema(user, query.schemaName);
+    return listManagementOrganizations(user, schema);
   });
 
   app.get("/api/gateway/menu", { preHandler: [app.authenticate as never] }, async (request) => {
@@ -322,6 +345,44 @@ export async function buildServer() {
     return reply;
   });
 
+  app.post("/api/tenant/assistant/chat/stream", { preHandler: [app.authenticate as never] }, async (request, reply) => {
+    const started = Date.now();
+    const user = currentUser(request);
+    const body = z.object({ schemaName: z.string(), message: z.string(), sessionId: z.string().optional(), attachmentIds: z.array(z.string()).optional() }).parse(request.body);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    const sendEvent = (event: string, data: unknown) => {
+      reply.raw.write(`event: ${event}\n`);
+      reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    try {
+      const result = await tenantAssistantChat({
+        schemaName: schema,
+        user: user!,
+        message: body.message,
+        sessionId: body.sessionId,
+        attachmentIds: body.attachmentIds,
+        onProgress: (event) => sendEvent("progress", event),
+        onSummary: (summary) => sendEvent("summary", { summary }),
+        onDelta: (text) => sendEvent("delta", { text }),
+      });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.assistant.chat.stream", inputSummary: { sessionId: body.sessionId, attachmentIds: body.attachmentIds }, outputSummary: { sessionId: result.sessionId }, costMs: Date.now() - started });
+      sendEvent("done", result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.assistant.chat.stream", inputSummary: body, costMs: Date.now() - started, error: message });
+      sendEvent("error", { message });
+    } finally {
+      reply.raw.end();
+    }
+    return reply;
+  });
+
   app.post("/api/tenant/agent/preview", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
     const user = currentUser(request);
@@ -390,7 +451,7 @@ export async function buildServer() {
     );
     const { rows: llmRows } = await pool.query(
       `select schema_name, model, has_tools, tool_names, messages_json, response_content, function_call,
-              status, error, duration_ms, tokens_used, created_at
+              status, error, duration_ms, tokens_used, prompt_tokens, completion_tokens, cached_tokens, created_at
        from admin.llm_call_log
        where session_id = $1
        order by created_at`,
@@ -442,14 +503,27 @@ export async function buildServer() {
   });
 
   app.post("/api/tenant/import/template", { preHandler: [app.authenticate as never] }, async (request, reply) => {
+    const user = currentUser(request);
     const body = z.object({
       schemaName: z.string(),
       title: z.string().optional(),
+      pageCode: z.string().optional(),
+      apiCode: z.string().optional(),
       fields: z.array(z.record(z.unknown())).default([]),
     }).parse(request.body);
-    const buffer = buildImportTemplate(body.fields as Array<{ key: string; label?: string; title?: string; required?: boolean }>);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    if (body.pageCode && !(await canAccessPage(user, schema, body.pageCode))) throw httpError(403, "无页面权限");
+    const config = body.pageCode
+      ? await resolveTenantImportConfig({
+          schemaName: schema,
+          pageCode: body.pageCode,
+          apiCode: body.apiCode,
+          providedFields: body.fields as Array<{ key: string; label?: string; title?: string; required?: boolean }>,
+        })
+      : { fields: body.fields as Array<{ key: string; label?: string; title?: string; required?: boolean }>, templateTitle: body.title ?? "导入模板" };
+    const buffer = buildImportTemplate(config.fields);
     reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(body.title ?? "导入模板")}.xlsx"`);
+    reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(body.title ?? config.templateTitle)}.xlsx"`);
     return reply.send(buffer);
   });
 
@@ -463,19 +537,29 @@ export async function buildServer() {
       contentBase64: z.string(),
       fields: z.array(z.record(z.unknown())).default([]),
       idResolutionStrategy: z.enum(["first", "error"]).default("error"),
+      mode: z.enum(["import", "validate"]).default("import"),
     }).parse(request.body);
     const started = Date.now();
-    const result = await executeTenantImport({
-      schemaName: body.schemaName,
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    if (!(await canAccessPage(user, schema, body.pageCode))) throw httpError(403, "无页面权限");
+    const importConfig = await resolveTenantImportConfig({
+      schemaName: schema,
       pageCode: body.pageCode,
       apiCode: body.apiCode,
+      providedFields: body.fields as Array<{ key: string; label?: string; title?: string; required?: boolean; optionSource?: { apiCode: string; pageCode?: string; valueField?: string; labelField?: string; filters?: Record<string, unknown>; pageSize?: number } }>,
+    });
+    const result = await executeTenantImport({
+      schemaName: schema,
+      pageCode: body.pageCode,
+      apiCode: importConfig.apiCode,
       fileName: body.fileName,
       contentBase64: body.contentBase64,
-      fields: body.fields as Array<{ key: string; label?: string; title?: string; required?: boolean; optionSource?: { apiCode: string; pageCode?: string; valueField?: string; labelField?: string; filters?: Record<string, unknown>; pageSize?: number } }>,
+      fields: importConfig.fields,
       idResolutionStrategy: body.idResolutionStrategy,
+      validateOnly: body.mode === "validate",
       user,
     });
-    await audit({ schemaName: body.schemaName, userId: user?.userId, pageCode: body.pageCode, actionCode: "tenant.import.execute", inputSummary: { fileName: body.fileName }, outputSummary: { success: result.success, failed: result.failed }, costMs: Date.now() - started });
+    await audit({ schemaName: schema, userId: user?.userId, pageCode: body.pageCode, actionCode: "tenant.import.execute", inputSummary: { fileName: body.fileName, mode: body.mode }, outputSummary: { success: result.success, failed: result.failed }, costMs: Date.now() - started });
     return result;
   });
 

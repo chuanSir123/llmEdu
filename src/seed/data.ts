@@ -122,6 +122,7 @@ const miniClassSelect = { pageCode: "mini_class_list", apiCode: "mini_class_list
 const oneOnNGroupSelect = { pageCode: "one_on_n_group_list", apiCode: "one_on_n_group_list.query", labelField: "name" };
 const derivedArrangePages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list"]);
 const readOnlyPages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "student_ele_account", "student_ele_account_record"]);
+const standardImportPageCodes = new Set(["student_list", "contract_list", "funds_history", "course_list", "charge_record", "refund_record"]);
 
 function fieldComponent(field: Field) {
   const base = isLongTextField(field)
@@ -221,6 +222,143 @@ const refundCreateFields = [
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
 
+export const standardImportConfigs = [
+  {
+    importCode: "student_list.import",
+    importName: "学员导入",
+    module: "student",
+    feature: "student_list",
+    dsl: {
+      pageCode: "student_list",
+      apiCode: "student_list.create",
+      title: "学员导入模板",
+      duplicateStrategy: "insert",
+      fields: [
+        { key: "name", label: "学员姓名", required: true },
+        { key: "contact", label: "联系电话" },
+        { key: "organization_id", label: "校区", required: true, optionSource: orgSelect },
+        { key: "student_status", label: "状态", required: true, valueLabels: valueLabels.student_status },
+        { key: "school_name", label: "学校" },
+        { key: "grade", label: "年级" },
+        { key: "remark", label: "备注" }
+      ]
+    }
+  },
+  {
+    importCode: "contract_list.import",
+    importName: "合同导入",
+    module: "finance",
+    feature: "contract_list",
+    dsl: {
+      pageCode: "contract_list",
+      apiCode: "contract_list.create",
+      title: "合同导入模板",
+      duplicateStrategy: "insert",
+      fields: [
+        { key: "student_id", label: "学员", required: true, optionSource: allStudentSelect },
+        { key: "product_ids", label: "报读课程", type: "multiSelect", required: true, optionSource: productSelect },
+        { key: "promotion_id", label: "合同优惠", optionSource: promotionSelect },
+        { key: "contract_type", label: "合同类型", valueLabels: valueLabels.product_type },
+        { key: "organization_id", label: "校区", required: true, optionSource: orgSelect },
+        { key: "sign_staff_id", label: "签约人", optionSource: userSelect },
+        { key: "sign_time", label: "签约时间", type: "datetime" },
+        { key: "remark", label: "备注" }
+      ]
+    }
+  },
+  {
+    importCode: "funds_history.import",
+    importName: "收款导入",
+    module: "finance",
+    feature: "funds_history",
+    dsl: {
+      pageCode: "funds_history",
+      apiCode: "funds_history.create",
+      title: "收款导入模板",
+      duplicateStrategy: "insert",
+      fields: [
+        { key: "contract_id", label: "合同", optionSource: contractSelect },
+        { key: "student_id", label: "学员", required: true, optionSource: studentSelect },
+        { key: "organization_id", label: "校区", required: true, optionSource: orgSelect },
+        { key: "transaction_amount", label: "收款金额", type: "number", required: true },
+        { key: "pay_way_config_id", label: "支付方式", required: true, optionSource: payWaySelect },
+        { key: "transaction_time", label: "收款时间", type: "datetime" },
+        { key: "funds_type", label: "流水类型", required: true, valueLabels: valueLabels.funds_type },
+        { key: "remark", label: "备注" }
+      ]
+    }
+  },
+  {
+    importCode: "course_list.import",
+    importName: "排课导入",
+    module: "education",
+    feature: "course_list",
+    dsl: {
+      pageCode: "course_list",
+      apiCode: "course_list.create",
+      title: "排课导入模板",
+      duplicateStrategy: "insert",
+      fields: [
+        { key: "course_title", label: "课程名称", required: true },
+        { key: "course_type", label: "课程类型", required: true, valueLabels: valueLabels.course_type },
+        { key: "course_date", label: "上课日期", type: "date", required: true },
+        { key: "start_time", label: "开始时间", type: "time", required: true },
+        { key: "end_time", label: "结束时间", type: "time", required: true },
+        { key: "teacher_id", label: "老师", required: true, optionSource: userSelect },
+        { key: "study_manager_id", label: "学管师", optionSource: userSelect },
+        { key: "student_id", label: "上课学员", required: true, optionSource: studentSelect },
+        { key: "contract_product_id", label: "合同产品", optionSource: contractProductSelect },
+        { key: "organization_id", label: "校区", required: true, optionSource: orgSelect },
+        { key: "course_hour", label: "课时", type: "number", required: true }
+      ]
+    }
+  },
+  {
+    importCode: "charge_record.import",
+    importName: "扣费导入",
+    module: "education",
+    feature: "charge_record",
+    dsl: {
+      pageCode: "charge_record",
+      apiCode: "charge_record.create",
+      title: "扣费导入模板",
+      duplicateStrategy: "insert",
+      fields: [
+        { key: "course_id", label: "课程", required: true, optionSource: { pageCode: "course_list", apiCode: "course_list.query", labelField: "course_title" } },
+        { key: "student_id", label: "学员", required: true, optionSource: studentSelect },
+        { key: "contract_product_id", label: "合同产品", required: true, optionSource: contractProductSelect },
+        { key: "organization_id", label: "校区", required: true, optionSource: orgSelect },
+        { key: "charge_type", label: "扣费类型", required: true, valueLabels: valueLabels.charge_type },
+        { key: "charge_hour", label: "扣课时", type: "number", required: true },
+        { key: "charge_amount", label: "扣费金额", type: "number", required: true }
+      ]
+    }
+  },
+  {
+    importCode: "refund_record.import",
+    importName: "退费导入",
+    module: "finance",
+    feature: "refund_record",
+    dsl: {
+      pageCode: "refund_record",
+      apiCode: "refund_record.create",
+      title: "退费导入模板",
+      duplicateStrategy: "insert",
+      fields: [
+        { key: "student_id", label: "学员", required: true, optionSource: studentSelect },
+        { key: "contract_product_id", label: "合同产品", required: true, optionSource: contractProductSelect },
+        { key: "refund_real_hour", label: "退课时", type: "number" },
+        { key: "refund_real_amount", label: "退金额", type: "number", required: true },
+        { key: "refund_promotion_amount", label: "退优惠金额", type: "number" },
+        { key: "refund_promotion_hour", label: "退赠课时", type: "number" },
+        { key: "refund_way_config_id", label: "退费方式", required: true, optionSource: payWaySelect },
+        { key: "refund_time", label: "退费时间", type: "datetime" },
+        { key: "remark", label: "备注" }
+      ]
+    }
+  }
+] as const;
+
 const contractRefundFields = [
   { key: "contract_id", label: "合同", type: "text", hidden: true },
   { key: "student_name", label: "学员", type: "text", readonly: true },
@@ -313,13 +451,12 @@ export const pages: PageSeed[] = [
     module: "ai_customization",
     feature: "customization_record_list",
     page: "customization_record_list",
-    name: "定制化记录",
+    name: "AI 对话记录",
     table: "agent_customization_record",
     softDelete: false,
     apiSchema: "admin",
-    group: "AI 定制",
+    group: "AI 助手",
     fields: [
-      { key: "session_id", label: "会话ID" },
       { key: "change_summary", label: "变更摘要" },
       { key: "created_at", label: "创建时间", type: "datetime" }
     ],
@@ -552,6 +689,7 @@ export const pages: PageSeed[] = [
     group: "组织权限",
     fields: [
       { key: "name", label: "校区名称", filter: true },
+      { key: "parent_id", label: "上级架构" },
       { key: "organization_type", label: "组织类型" },
       { key: "status", label: "状态", filter: true }
     ]
@@ -566,6 +704,8 @@ export const pages: PageSeed[] = [
     fields: [
       { key: "name", label: "员工姓名", filter: true },
       { key: "contact", label: "电话" },
+      { key: "organization_id", label: "归属架构" },
+      { key: "management_organization_ids", label: "管理架构" },
       { key: "staff_type", label: "类型" },
       { key: "status", label: "状态" }
     ]
@@ -1278,7 +1418,9 @@ export const modalDslSeeds: Array<{ actionCode: string; actionName: string; page
   ] } },
   { actionCode: "user_add_modal", actionName: "新增员工弹窗", pageCode: "user_list", module: "system", feature: "user_list", dsl: { modalCode: "user_add_modal", modalName: "新增员工", size: "medium", columns: 3, labelAlign: "left", submitApiCode: "user.create", fields: [
     { key: "name", label: "员工姓名", type: "text", required: true }, { key: "contact", label: "电话", type: "text", required: true },
-    { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect }, { key: "staff_type", label: "类型", type: "text" },
+    { key: "organization_id", label: "归属架构", type: "organizationTreeSelect", optionSource: orgSelect },
+    { key: "management_organization_ids", label: "管理架构", type: "organizationTreeMultiSelect", optionSource: orgSelect, span: 2 },
+    { key: "staff_type", label: "类型", type: "text" },
     { key: "psw", label: "初始密码", type: "password" }
   ] } },
   { actionCode: "money_arrange_detail_modal", actionName: "资金分配详情弹窗", pageCode: "money_arrange_list", module: "finance", feature: "money_arrange_list", dsl: { modalCode: "money_arrange_detail_modal", modalName: "资金分配详情", size: "medium", columns: 2, labelAlign: "left", readOnly: true, fields: [
@@ -1455,7 +1597,6 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     filters,
     toolbar: page.page === "customization_record_list"
       ? [
-          { actionCode: "customization_record_list.new_customization", label: "新增定制化", type: "open_ai_customization", variant: "primary" },
           { actionCode: `${page.page}.refresh`, label: "刷新", type: "execute_api", variant: "default" }
         ]
       : [
@@ -1520,6 +1661,15 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.presentation.table.primaryRowActions = ["tenant_version_list.rollback", "tenant_version_list.publish"];
   }
 
+  if (page.page === "customization_record_list") {
+    baseDsl.subtitle = "查看 AI 助手对话、工具调用和导入处理记录";
+    baseDsl.presentation.header.subtitle = "查看 AI 助手对话、工具调用和导入处理记录";
+    baseDsl.table.rowActions = [
+      { actionCode: "customization_record_list.detail", label: "详情", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["customization_record_list.detail"];
+  }
+
   if (page.page === "role_list") {
     baseDsl.createApi = "role.permission.save";
     baseDsl.updateApi = "role.permission.save";
@@ -1530,6 +1680,47 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     ];
     baseDsl.presentation.modal.size = "fullscreen";
     baseDsl.presentation.table.primaryRowActions = ["role_list.edit", "role_list.delete"];
+  }
+
+  if (page.page === "organization_list") {
+    baseDsl.subtitle = "维护分公司、校区和自定义管理架构";
+    baseDsl.presentation.header.subtitle = "维护分公司、校区和自定义管理架构";
+    baseDsl.table.columns = [
+      { key: "name", title: "架构名称", width: 180 },
+      { key: "parent_id", title: "上级架构", width: 160, displayKey: "parent_name" },
+      { key: "organization_type", title: "架构类型", width: 120, badge: true },
+      { key: "status", title: "状态", width: 100, badge: true }
+    ];
+    baseDsl.modal.fields = [
+      { key: "name", label: "架构名称", type: "text", required: true },
+      { key: "parent_id", label: "上级架构", type: "organizationTreeSelect", optionSource: orgSelect, searchable: true },
+      { key: "organization_type", label: "架构类型", type: "text" },
+      { key: "status", label: "状态", type: "text" }
+    ];
+    baseDsl.presentation.valueLabels = {
+      ...(baseDsl.presentation.valueLabels ?? {}),
+      organization_type: { COMPANY: "分公司", BRANCH: "校区", CUSTOM: "自定义架构", HEAD: "总部" }
+    };
+  }
+
+  if (page.page === "user_list") {
+    baseDsl.table.columns = [
+      { key: "name", title: "员工姓名", width: 140 },
+      { key: "contact", title: "电话", width: 150 },
+      { key: "organization_id", title: "归属架构", width: 160, displayKey: "organization_name" },
+      { key: "management_organization_ids", title: "管理架构", width: 220, displayKey: "management_organization_names" },
+      { key: "staff_type", title: "类型", width: 120, badge: true },
+      { key: "status", title: "状态", width: 100, badge: true }
+    ];
+    baseDsl.modal.fields = [
+      { key: "name", label: "员工姓名", type: "text", required: true },
+      { key: "contact", label: "电话", type: "text", required: true },
+      { key: "email", label: "邮箱", type: "text" },
+      { key: "organization_id", label: "归属架构", type: "organizationTreeSelect", optionSource: orgSelect, searchable: true },
+      { key: "management_organization_ids", label: "管理架构", type: "organizationTreeMultiSelect", optionSource: orgSelect, searchable: true, span: 2 },
+      { key: "staff_type", label: "类型", type: "text" },
+      { key: "status", label: "状态", type: "text" }
+    ];
   }
 
   if (page.page === "approval_flow_list") {
@@ -1790,6 +1981,24 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.modal.fields = fundsCreateFields;
   }
 
+  if (standardImportPageCodes.has(page.page)) {
+    const importAction = {
+      actionCode: `${page.page}.import`,
+      label: "导入",
+      type: "import",
+      actionType: "import",
+      variant: "default",
+      importConfig: { importCode: `${page.page}.import`, apiCode: `${page.page}.create` }
+    };
+    const toolbar = Array.isArray(baseDsl.toolbar) ? baseDsl.toolbar : [];
+    if (!toolbar.some((action: Record<string, unknown>) => action.actionCode === importAction.actionCode)) {
+      const refreshIndex = toolbar.findIndex((action: Record<string, unknown>) => action.actionCode === `${page.page}.refresh`);
+      baseDsl.toolbar = refreshIndex >= 0
+        ? [...toolbar.slice(0, refreshIndex), importAction, ...toolbar.slice(refreshIndex)]
+        : [...toolbar, importAction];
+    }
+  }
+
   if (page.page === "frontdesk_home") {
     return {
       ...baseDsl,
@@ -1924,6 +2133,7 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
       ruleCode: "course_create_rule"
     };
   }
+  const hasOrganizationScope = page.table === "organization" || page.fields.some((field) => field.key === "organization_id");
   return {
     table: page.table,
     schema: page.apiSchema,
@@ -1936,7 +2146,8 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
       ? [...(page.fixedFilters ?? []), { field: "target_type", op: "eq", value: "bundle" }]
       : page.fixedFilters ?? [],
     sort: page.sort ?? "created_at desc",
-    pagination: true
+    pagination: true,
+    ...(hasOrganizationScope ? { security: { dataPermission: "organization_or_sub" } } : {})
   };
 }
 
@@ -2432,8 +2643,7 @@ export const llmSeed = {
   config_code: "default_llm",
   schema_name: null,
   base_url: env.llm.baseUrl,
-  api_key_cipher: env.llm.apiKey ? Buffer.from(env.llm.apiKey).toString("base64") : "",
-  api_key_masked: maskApiKey(env.llm.apiKey),
+  api_key: env.llm.apiKey ?? "",
   model: env.llm.model,
   provider: "openai-compatible",
   max_context_tokens: 256000,

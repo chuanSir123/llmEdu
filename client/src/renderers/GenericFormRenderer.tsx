@@ -100,17 +100,55 @@ export function GenericFormRenderer({
     onChange(next);
   };
 
-  const fieldOptions = (field: FieldDsl, options?: Record<string, string>) => {
+  const normalizeSelectedValues = (raw: unknown) => {
+    if (Array.isArray(raw)) return raw.map(String);
+    if (typeof raw === "string" && raw.trim().startsWith("[")) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch {
+        return [];
+      }
+    }
+    return raw ? [String(raw)] : [];
+  };
+
+  const treeOptions = (field: FieldDsl, options?: Record<string, string>) => {
     const list = field.optionSource ? remoteOptions[field.key] ?? [] : Object.entries(options ?? {}).map(([value, label]) => ({ value, label, row: {} }));
+    if (!field.type?.startsWith("organizationTree")) return list.map((option) => ({ ...option, depth: 0 }));
+    const byParent = new Map<string, typeof list>();
+    for (const option of list) {
+      const row = option.row as Record<string, unknown>;
+      const parent = String(row.parent_id ?? "");
+      byParent.set(parent, [...(byParent.get(parent) ?? []), option]);
+    }
+    const ordered: Array<(typeof list)[number] & { depth: number }> = [];
+    const visit = (parentId: string, depth: number) => {
+      for (const option of byParent.get(parentId) ?? []) {
+        ordered.push({ ...option, depth });
+        visit(option.value, depth + 1);
+      }
+    };
+    visit("", 0);
+    for (const option of list) {
+      if (!ordered.some((item) => item.value === option.value)) ordered.push({ ...option, depth: 0 });
+    }
+    return ordered;
+  };
+
+  const fieldOptions = (field: FieldDsl, options?: Record<string, string>) => {
+    const list = treeOptions(field, options);
     const query = String(searchText[field.key] ?? "").trim().toLowerCase();
     return query ? list.filter((option) => option.label.toLowerCase().includes(query) || option.value.toLowerCase().includes(query)) : list;
   };
 
   const selectedLabel = (field: FieldDsl, options?: Record<string, string>) => {
     const raw = value[field.key];
-    if (Array.isArray(raw)) {
-      const labels = raw
-        .map((item) => fieldOptions(field, options).find((option) => option.value === String(item))?.label ?? String(item))
+    const selectedValues = normalizeSelectedValues(raw);
+    if (field.type === "multiSelect" || field.type === "organizationTreeMultiSelect" || Array.isArray(raw)) {
+      const allOptions = treeOptions(field, options);
+      const labels = selectedValues
+        .map((item) => allOptions.find((option) => option.value === String(item))?.label ?? String(item))
         .filter(Boolean);
       return labels.length ? labels.join("，") : "请选择";
     }
@@ -119,7 +157,7 @@ export function GenericFormRenderer({
   };
 
   function renderSearchableSelect(field: FieldDsl, options?: Record<string, string>) {
-    const isMulti = field.type === "multiSelect" && field.optionSource;
+    const isMulti = (field.type === "multiSelect" && field.optionSource) || field.type === "organizationTreeMultiSelect";
     const opts = fieldOptions(field, options);
     const selLabel = selectedLabel(field, options);
     const isOpen = openField === field.key;
@@ -152,11 +190,11 @@ export function GenericFormRenderer({
                   请选择
                 </button>
               )}
-              {opts.map(({ value: optionValue, label: optionLabel }) => {
+              {opts.map(({ value: optionValue, label: optionLabel, depth }) => {
                 if (isMulti) {
-                  const selected = (Array.isArray(value[field.key]) ? (value[field.key] as unknown[]) : []).map(String);
+                  const selected = normalizeSelectedValues(value[field.key]);
                   return (
-                    <label key={optionValue} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-[#f2f7ff]">
+                    <label key={optionValue} className="flex cursor-pointer items-center gap-2 py-2 pr-3 text-sm hover:bg-[#f2f7ff]" style={{ paddingLeft: 12 + (depth ?? 0) * 16 }}>
                       <input
                         type="checkbox"
                         checked={selected.includes(optionValue)}
@@ -175,6 +213,7 @@ export function GenericFormRenderer({
                     type="button"
                     key={optionValue}
                     className={`flex w-full items-center gap-2 truncate px-3 py-2 text-left text-sm hover:bg-[#f2f7ff] ${isSelected ? "bg-[#edf3ff] text-[#2f80ed] font-medium" : "text-[#263445]"}`}
+                    style={{ paddingLeft: 12 + (depth ?? 0) * 16 }}
                     onClick={() => {
                       applySelectValue(field, optionValue);
                       setOpenField(null);

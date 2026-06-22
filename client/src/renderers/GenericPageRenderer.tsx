@@ -256,11 +256,6 @@ export function GenericPageRenderer({
       setModal({ type: "create", value: action.defaultValues ?? {}, action });
       return;
     }
-    if (action.actionCode === "customization_record_list.new_customization" || action.type === "open_ai_customization") {
-      if (!onOpenAiCustomization) return;
-      onOpenAiCustomization?.();
-      return;
-    }
     if (isImportToolbarAction(action)) {
       setImportConfig((action.importConfig as Record<string, unknown> | undefined) ?? { apiCode: dsl.createApi });
       return;
@@ -283,10 +278,6 @@ export function GenericPageRenderer({
       return;
     }
     if (action.actionCode.endsWith(".edit")) {
-      if (dsl.pageCode === "customization_record_list") {
-        onContinueAiCustomization?.(String(row.session_id ?? ""));
-        return;
-      }
       setModal({ type: "edit", value: row });
       return;
     }
@@ -879,7 +870,7 @@ export function GenericPageRenderer({
       </div>
       <div className="mb-3 flex flex-wrap gap-2">
         {sortWithOrder(toolbarDsl)
-          .filter((action) => !(action.actionCode === "customization_record_list.new_customization" || action.type === "open_ai_customization") || Boolean(onOpenAiCustomization))
+          .filter((action) => action.actionCode !== "customization_record_list.new_customization" && action.type !== "open_ai_customization")
           .map((action) => (
           <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
         ))}
