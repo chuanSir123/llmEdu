@@ -115,7 +115,10 @@ async function resolveAuthorizedTenantSchema(user: SessionUser | undefined, requ
   const schemaName = requestedSchemaName || user.schemaName || "";
   const schema = await resolveTenantSchema(schemaName);
   if (user.kind === "tenant" && user.schemaName !== schema) {
-    throw httpError(403, "不能访问其他租户数据");
+    const ownPreviewSchema = user.schemaName ? `${user.schemaName}_test` : "";
+    if (schema !== ownPreviewSchema) {
+      throw httpError(403, "不能访问其他租户数据");
+    }
   }
   return schema;
 }
@@ -681,7 +684,7 @@ export async function buildServer() {
   });
 
   app.get("/api/admin/tenant/customization-records", { preHandler: [app.authenticate as never] }, async (request) => {
-    const query = z.object({ schemaName: z.string().optional(), page: z.coerce.number().optional(), pageSize: z.coerce.number().optional() }).parse(request.query);
+    const query = z.object({ schemaName: z.string().optional(), recordType: z.enum(["assistant", "customization"]).optional(), page: z.coerce.number().optional(), pageSize: z.coerce.number().optional() }).parse(request.query);
     return listCustomizationRecords(query);
   });
 

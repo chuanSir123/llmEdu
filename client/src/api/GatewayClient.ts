@@ -187,7 +187,7 @@ export const GatewayClient = {
       `/api/tenant/agent/chat/session?schemaName=${encodeURIComponent(schemaName)}${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ""}`
     ),
   getCustomizationRecordDetail: (id: string) =>
-    request<{ record: { id: string; schemaName: string; sessionId: string; changeSummary: string; skillMd: string; chatTimeline: Array<{ role: string; content: string; dslDiff?: unknown; timestamp: string }> } }>(`/api/admin/tenant/customization-records/${id}`),
+    request<{ record: { id: string; schemaName: string; sessionId: string; recordType?: string; userPrompt?: string; changeSummary: string; skillMd: string; chatTimeline: Array<{ role: string; content: string; dslDiff?: unknown; timestamp: string }> } | null }>(`/api/admin/tenant/customization-records/${id}`),
   tenantConfig: () =>
     request<{ agentCustomizationEnabled: boolean }>("/api/tenant/config"),
   getHarnessLog: (sessionId: string) =>

@@ -274,7 +274,7 @@ export function GenericPageRenderer({
   async function onRowAction(action: ActionDsl, row: Record<string, unknown>) {
     if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
     if (action.actionCode.endsWith(".detail")) {
-      if (dsl.pageCode === "customization_record_list") {
+      if (dsl.pageCode === "customization_record_list" || dsl.pageCode === "assistant_record_list") {
         setCustomizationRecordId(String(row.id ?? ""));
         return;
       }

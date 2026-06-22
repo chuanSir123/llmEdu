@@ -12,6 +12,8 @@ type RecordDetail = {
   id: string;
   schemaName: string;
   sessionId: string;
+  recordType?: string;
+  userPrompt?: string;
   changeSummary: string;
   skillMd: string;
   chatTimeline: TimelineEntry[];
@@ -92,10 +94,6 @@ export function CustomizationRecordDetail({
           )}
           {detail && !loading && !error && (
             <div className="flex h-full flex-col bg-[#f5f7fb]">
-              <div className="border-b border-[#e8edf5] bg-white px-6 py-4">
-                <div className="text-sm font-semibold text-[#263445]">本次变更摘要</div>
-                <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#526075]">{detail.changeSummary || "无变更摘要"}</div>
-              </div>
               <div className="flex-1 overflow-auto px-6 py-5">
                 <div className="mx-auto max-w-[920px] space-y-5">
                   {(detail.chatTimeline ?? []).map((entry, idx) => {

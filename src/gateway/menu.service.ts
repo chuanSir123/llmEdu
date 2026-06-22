@@ -72,7 +72,8 @@ export async function loadAdminMenu() {
           ],
           租户运营: [
             { featureCode: "tenant_recharge_record", featureName: "充值记录", pageCode: "tenant_recharge_record" },
-            { featureCode: "customization_record_list", featureName: "AI 对话记录", pageCode: "customization_record_list" }
+            { featureCode: "assistant_record_list", featureName: "AI 助手记录", pageCode: "assistant_record_list" },
+            { featureCode: "customization_record_list", featureName: "AI 定制记录", pageCode: "customization_record_list" }
           ]
         }
       }

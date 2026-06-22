@@ -12,10 +12,13 @@ export async function writeCustomizationRecord(input: {
   schemaName: string;
   sessionId: string;
   userId: string;
+  recordType?: "assistant" | "customization";
   chatRound: { userInput: string; aiReply: string; dslDiff: unknown; timestamp: string };
   skillMdSnapshot?: string;
   changeSummary?: Record<string, unknown> | string;
 }) {
+  const recordType = input.recordType ?? "customization";
+  const userPrompt = input.chatRound.userInput;
   const { rows: existing } = await pool.query(
     `select id, chat_rounds from admin.agent_customization_record where session_id = $1`,
     [input.sessionId]
@@ -25,22 +28,25 @@ export async function writeCustomizationRecord(input: {
     const rounds = existing[0].chat_rounds ?? [];
     rounds.push(input.chatRound);
     await pool.query(
-      `update admin.agent_customization_record set chat_rounds = $1, skill_md_snapshot = coalesce($2, skill_md_snapshot), change_summary = coalesce($3, change_summary), updated_at = now() where session_id = $4`,
-      [JSON.stringify(rounds), input.skillMdSnapshot ?? null, input.changeSummary ? JSON.stringify(input.changeSummary) : null, input.sessionId]
+      `update admin.agent_customization_record
+       set chat_rounds = $1, skill_md_snapshot = coalesce($2, skill_md_snapshot), change_summary = coalesce($3, change_summary),
+           record_type = $4, user_prompt = coalesce(nullif(user_prompt, ''), $5), updated_at = now()
+       where session_id = $6`,
+      [JSON.stringify(rounds), input.skillMdSnapshot ?? null, input.changeSummary ? JSON.stringify(input.changeSummary) : null, recordType, userPrompt, input.sessionId]
     );
     return existing[0].id;
   }
 
   const id = randomUUID();
   await pool.query(
-    `insert into admin.agent_customization_record(id, schema_name, session_id, user_id, chat_rounds, skill_md_snapshot, change_summary)
-      values($1,$2,$3,$4,$5,$6,$7)`,
-     [id, input.schemaName, input.sessionId, input.userId, JSON.stringify([input.chatRound]), input.skillMdSnapshot ?? null, input.changeSummary ? JSON.stringify(input.changeSummary) : "{}"]
+    `insert into admin.agent_customization_record(id, schema_name, session_id, user_id, record_type, user_prompt, chat_rounds, skill_md_snapshot, change_summary)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+     [id, input.schemaName, input.sessionId, input.userId, recordType, userPrompt, JSON.stringify([input.chatRound]), input.skillMdSnapshot ?? null, input.changeSummary ? JSON.stringify(input.changeSummary) : "{}"]
   );
   return id;
 }
 
-export async function listCustomizationRecords(filters?: { schemaName?: string; page?: number; pageSize?: number }) {
+export async function listCustomizationRecords(filters?: { schemaName?: string; recordType?: "assistant" | "customization"; page?: number; pageSize?: number }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
   let idx = 1;
@@ -48,6 +54,11 @@ export async function listCustomizationRecords(filters?: { schemaName?: string; 
   if (filters?.schemaName) {
     conditions.push(`schema_name = $${idx}`);
     params.push(filters.schemaName);
+    idx++;
+  }
+  if (filters?.recordType) {
+    conditions.push(`record_type = $${idx}`);
+    params.push(filters.recordType);
     idx++;
   }
 
@@ -58,7 +69,7 @@ export async function listCustomizationRecords(filters?: { schemaName?: string; 
 
   const { rows: countRows } = await pool.query(`select count(*) as total from admin.agent_customization_record ${where}`, params);
   const { rows } = await pool.query(
-    `select id, schema_name, session_id, user_id, change_summary, created_at, updated_at from admin.agent_customization_record ${where} order by created_at desc limit $${idx} offset $${idx + 1}`,
+    `select id, schema_name, session_id, user_id, record_type, user_prompt, change_summary, created_at, updated_at from admin.agent_customization_record ${where} order by created_at desc limit $${idx} offset $${idx + 1}`,
     [...params, pageSize, offset]
   );
 
@@ -97,6 +108,8 @@ export async function getCustomizationRecordDetail(recordId: string) {
       id: row.id,
       schemaName: row.schema_name,
       sessionId: row.session_id,
+      recordType: row.record_type ?? "customization",
+      userPrompt: row.user_prompt ?? "",
       changeSummary,
       skillMd: row.skill_md_snapshot ?? "",
       chatTimeline
