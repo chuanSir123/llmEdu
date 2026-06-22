@@ -227,6 +227,20 @@ function parseSort(sort: SortDsl | undefined) {
   return { field, direction: sort.direction === "asc" ? "asc" as const : "desc" as const };
 }
 
+
+function queryOrderClause(dsl: ApiDsl, tableColumns: Set<string>) {
+  const orderExprs = sortItems(dsl)
+    .map((sort) => {
+      const parsed = parseSort(sort);
+      if (!parsed) return undefined;
+      return `${fieldExpr(parsed.field, tableColumns)} ${parsed.direction}`;
+    })
+    .filter(Boolean);
+  if (orderExprs.length > 0) return `order by ${orderExprs.join(", ")}`;
+  const orderColumn = tableColumns.has("created_at") ? "created_at" : "id";
+  return `order by t.${qIdent(orderColumn)} desc`;
+}
+
 function aggregateOrderExpr(sort: SortDsl | undefined, dimensions: string[], metrics: AggregateMetric[], tableColumns: Set<string>) {
   const parsed = parseSort(sort);
   if (!parsed) return undefined;
@@ -482,14 +496,14 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     const page = Math.max(Number(params.page ?? 1), 1);
     const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
     values.push(pageSize, (page - 1) * pageSize);
-    const orderColumn = tableColumns.has("created_at") ? "created_at" : "id";
     const whereClause = where.length > 0 ? `where ${where.join(" and ")}` : "";
+    const orderClause = queryOrderClause(dsl, tableColumns);
     const sql = `
       select ${await selectColumns(effectiveSchema, dsl)}, count(*) over() as __total
       from ${table} t
-      ${joinSql(schemaName, dsl.joins, dsl.softDelete !== false)}
+      ${joinSql(effectiveSchema, dsl.joins, dsl.softDelete !== false)}
       ${whereClause}
-      order by t.${qIdent(orderColumn)} desc
+      ${orderClause}
       limit $${values.length - 1} offset $${values.length}
     `;
     const { rows } = await pool.query(sql, values);
@@ -506,7 +520,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
       appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
     }
     const { rows } = await pool.query(
-      `select ${await selectColumns(effectiveSchema, dsl)} from ${table} t ${joinSql(schemaName, dsl.joins, dsl.softDelete !== false)} where ${where.join(" and ")}`,
+      `select ${await selectColumns(effectiveSchema, dsl)} from ${table} t ${joinSql(effectiveSchema, dsl.joins, dsl.softDelete !== false)} where ${where.join(" and ")}`,
       values
     );
     return rows[0] ? flattenExtJson(rows[0]) : null;
@@ -521,7 +535,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     : [];
 
   if (dsl.operation === "create") {
-    const newId = String(params.id ?? await nextTextId(schemaName, dsl.table));
+    const newId = String(params.id ?? await nextTextId(effectiveSchema, dsl.table));
     const cols = ["id", ...fields];
     const values: unknown[] = [newId, ...fields.map((field) => dbValue(input[field]))];
     if (hasExtJson && extFields.length > 0) {
@@ -537,7 +551,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
 
   if (dsl.operation === "update") {
     if (!params.id) throw new Error("缺少 id");
-    if (!fields.length && !extFields.length) return executeApiDsl(schemaName, { ...dsl, operation: "detail" }, { id: params.id });
+    if (!fields.length && !extFields.length) return executeApiDsl(schemaName, { ...dsl, operation: "detail" }, { id: params.id }, user);
     const values: unknown[] = [];
     const sets: string[] = [];
     let idx = 1;
