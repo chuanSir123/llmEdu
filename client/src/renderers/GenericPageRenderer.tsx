@@ -252,6 +252,10 @@ export function GenericPageRenderer({
   }
 
   async function onToolbar(action: ActionDsl) {
+    if (action.type === "open_ai_customization" || action.actionType === "open_ai_customization") {
+      onOpenAiCustomization?.();
+      return;
+    }
     if (action.actionCode.endsWith(".create")) {
       setModal({ type: "create", value: action.defaultValues ?? {}, action });
       return;
@@ -270,7 +274,7 @@ export function GenericPageRenderer({
   async function onRowAction(action: ActionDsl, row: Record<string, unknown>) {
     if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
     if (action.actionCode.endsWith(".detail")) {
-      if (dsl.pageCode === "customization_record_list") {
+      if (dsl.pageCode === "customization_record_list" || dsl.pageCode === "assistant_record_list") {
         setCustomizationRecordId(String(row.id ?? ""));
         return;
       }
@@ -870,7 +874,6 @@ export function GenericPageRenderer({
       </div>
       <div className="mb-3 flex flex-wrap gap-2">
         {sortWithOrder(toolbarDsl)
-          .filter((action) => action.actionCode !== "customization_record_list.new_customization" && action.type !== "open_ai_customization")
           .map((action) => (
           <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
         ))}

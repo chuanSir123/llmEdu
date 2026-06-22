@@ -600,6 +600,8 @@ export async function migrate() {
       schema_name text not null,
       session_id text not null,
       user_id text not null,
+      record_type text not null default 'customization',
+      user_prompt text not null default '',
       chat_rounds jsonb not null default '[]',
       skill_md_snapshot text,
       change_summary jsonb not null default '{}',
@@ -607,6 +609,7 @@ export async function migrate() {
       updated_at timestamptz not null default now()
     );
     create index if not exists idx_customization_schema on admin.agent_customization_record(schema_name);
+    create index if not exists idx_customization_schema_type on admin.agent_customization_record(schema_name, record_type);
     create unique index if not exists idx_customization_session on admin.agent_customization_record(session_id);
     create table if not exists admin.tenant_dsl_change (
       id text primary key,
@@ -621,6 +624,11 @@ export async function migrate() {
   `);
 
   await exec(`ALTER TABLE IF EXISTS admin.tenant_manage ADD COLUMN IF NOT EXISTS agent_customization_enabled boolean NOT NULL DEFAULT false`);
+  await exec(`ALTER TABLE IF EXISTS admin.agent_customization_record ADD COLUMN IF NOT EXISTS record_type text NOT NULL DEFAULT 'customization'`);
+  await exec(`ALTER TABLE IF EXISTS admin.agent_customization_record ADD COLUMN IF NOT EXISTS user_prompt text NOT NULL DEFAULT ''`);
+  await exec(`CREATE INDEX IF NOT EXISTS idx_customization_schema_type ON admin.agent_customization_record(schema_name, record_type)`);
+  await exec(`UPDATE admin.agent_customization_record SET record_type = 'assistant' WHERE change_summary->>'type' = 'assistant'`);
+  await exec(`UPDATE admin.agent_customization_record SET user_prompt = coalesce(chat_rounds->0->>'userInput', '') WHERE coalesce(user_prompt, '') = ''`);
   await exec(`DROP TABLE IF EXISTS admin.agent_task`);
   await exec(`DROP TABLE IF EXISTS admin.schema_change_request`);
 

@@ -451,16 +451,39 @@ export const pages: PageSeed[] = [
     module: "ai_customization",
     feature: "customization_record_list",
     page: "customization_record_list",
-    name: "AI 对话记录",
+    name: "AI 定制记录",
+    table: "agent_customization_record",
+    softDelete: false,
+    apiSchema: "admin",
+    group: "AI 定制",
+    fields: [
+      { key: "user_prompt", label: "用户需求" },
+      { key: "record_type", label: "类型", hidden: true },
+      { key: "created_at", label: "创建时间", type: "datetime" }
+    ],
+    fixedFilters: [
+      { field: "schema_name", op: "eq", valueFromParam: "schemaName" },
+      { field: "record_type", op: "eq", value: "customization" }
+    ]
+  },
+  {
+    module: "ai_customization",
+    feature: "assistant_record_list",
+    page: "assistant_record_list",
+    name: "AI 助手记录",
     table: "agent_customization_record",
     softDelete: false,
     apiSchema: "admin",
     group: "AI 助手",
     fields: [
-      { key: "change_summary", label: "变更摘要" },
+      { key: "user_prompt", label: "用户提问" },
+      { key: "record_type", label: "类型", hidden: true },
       { key: "created_at", label: "创建时间", type: "datetime" }
     ],
-    fixedFilters: [{ field: "schema_name", op: "eq", valueFromParam: "schemaName" }]
+    fixedFilters: [
+      { field: "schema_name", op: "eq", valueFromParam: "schemaName" },
+      { field: "record_type", op: "eq", value: "assistant" }
+    ]
   },
   {
     module: "ai_customization",
@@ -1521,8 +1544,9 @@ export const adminPages: PageSeed[] = [
     softDelete: false,
     fields: [
       { key: "schema_name", label: "租户", filter: true },
+      { key: "record_type", label: "类型", filter: true },
       { key: "session_id", label: "会话ID" },
-      { key: "change_summary", label: "变更摘要" },
+      { key: "user_prompt", label: "用户提问/用户需求" },
       { key: "created_at", label: "创建时间", type: "datetime" }
     ]
   }
@@ -1575,6 +1599,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     filters,
     toolbar: page.page === "customization_record_list"
       ? [
+          { actionCode: "customization_record_list.new_customization", label: "新增定制化", type: "open_ai_customization", actionType: "open_ai_customization", variant: "primary" },
           { actionCode: `${page.page}.refresh`, label: "刷新", type: "execute_api", variant: "default" }
         ]
       : [
@@ -1640,12 +1665,28 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   }
 
   if (page.page === "customization_record_list") {
-    baseDsl.subtitle = "查看 AI 助手对话、工具调用和导入处理记录";
-    baseDsl.presentation.header.subtitle = "查看 AI 助手对话、工具调用和导入处理记录";
+    baseDsl.subtitle = "查看 AI 定制需求、对话和 DSL 变更记录";
+    baseDsl.presentation.header.subtitle = "查看 AI 定制需求、对话和 DSL 变更记录";
+    baseDsl.toolbar = [
+      { actionCode: "customization_record_list.new_customization", label: "新增定制化", type: "open_ai_customization", actionType: "open_ai_customization", variant: "primary" },
+      { actionCode: "customization_record_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
+    ];
     baseDsl.table.rowActions = [
       { actionCode: "customization_record_list.detail", label: "详情", type: "open_modal" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["customization_record_list.detail"];
+  }
+
+  if (page.page === "assistant_record_list") {
+    baseDsl.subtitle = "查看 AI 助手提问、回复和工具调用记录";
+    baseDsl.presentation.header.subtitle = "查看 AI 助手提问、回复和工具调用记录";
+    baseDsl.toolbar = [
+      { actionCode: "assistant_record_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
+    ];
+    baseDsl.table.rowActions = [
+      { actionCode: "assistant_record_list.detail", label: "详情", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["assistant_record_list.detail"];
   }
 
   if (page.page === "role_list") {

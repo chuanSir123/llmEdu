@@ -4,7 +4,7 @@ import type { SessionUser } from "../types.js";
 
 export async function loadTenantMenu(schemaName: string, user?: SessionUser) {
   const permitted = new Set(await visiblePageCodes(user, schemaName));
-  const isTestSchema = schemaName.endsWith("_test");
+  const isPreviewTestSchema = schemaName.endsWith("_test");
   const { rows } = await pool.query(
     `select m.module_code, m.module_name, m.icon, m.sort_no as module_sort,
             f.feature_code, f.feature_name, f.page_code, f.sort_no as feature_sort
@@ -17,7 +17,7 @@ export async function loadTenantMenu(schemaName: string, user?: SessionUser) {
   );
   const modules = new Map<string, { moduleCode: string; moduleName: string; icon: string; groups: Record<string, unknown[]> }>();
   for (const row of rows) {
-    if (isTestSchema && row.module_code === "ai_customization") continue;
+    if (isPreviewTestSchema && row.module_code === "ai_customization") continue;
     if (permitted.size && !permitted.has(row.page_code)) continue;
     if (!modules.has(row.module_code)) {
       modules.set(row.module_code, { moduleCode: row.module_code, moduleName: row.module_name, icon: row.icon, groups: {} });
@@ -72,7 +72,8 @@ export async function loadAdminMenu() {
           ],
           租户运营: [
             { featureCode: "tenant_recharge_record", featureName: "充值记录", pageCode: "tenant_recharge_record" },
-            { featureCode: "tenant_customization_record", featureName: "定制化记录", pageCode: "tenant_customization_record" }
+            { featureCode: "assistant_record_list", featureName: "AI 助手记录", pageCode: "assistant_record_list" },
+            { featureCode: "customization_record_list", featureName: "AI 定制记录", pageCode: "customization_record_list" }
           ]
         }
       }

@@ -210,6 +210,7 @@ export async function tenantAgentChat(input: {
       schemaName: input.schemaName,
       sessionId: sessionId!,
       userId: input.userId,
+      recordType: "customization",
       chatRound: { userInput: input.message, aiReply: reply, dslDiff: diffs, timestamp: new Date().toISOString() },
       changeSummary: draftSummary
         ? `${draftSummary}（${diffs.length}项变更：${diffs.map((d: DslDiff) => `${d.targetType}/${d.targetCode} ${d.op}${d.field ? ` ${d.field}` : ""}`).join("、")}）`

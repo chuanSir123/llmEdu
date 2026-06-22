@@ -1033,6 +1033,7 @@ export async function tenantAssistantChat(input: {
     schemaName: input.schemaName,
     sessionId: session.sessionId,
     userId: input.user.userId,
+    recordType: "assistant",
     chatRound: { userInput: input.message, aiReply: finalText, dslDiff: toolResults, timestamp: new Date().toISOString() },
     changeSummary: toolResults.length ? { type: "assistant", tools: toolResults.map((item) => item.name), summary: finalText } : { type: "assistant", summary: finalText },
   });
