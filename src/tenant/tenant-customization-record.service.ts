@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { pool } from "../db/pool.js";
 
+type StoredChatRound = {
+  userInput?: string;
+  aiReply?: string;
+  dslDiff?: unknown;
+  timestamp?: string;
+};
+
 export async function writeCustomizationRecord(input: {
   schemaName: string;
   sessionId: string;
@@ -63,5 +70,36 @@ export async function getCustomizationRecordDetail(recordId: string) {
     `select * from admin.agent_customization_record where id = $1`,
     [recordId]
   );
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return { record: null };
+
+  const rounds = Array.isArray(row.chat_rounds) ? (row.chat_rounds as StoredChatRound[]) : [];
+  const chatTimeline = rounds.flatMap((round) => [
+    {
+      role: "user",
+      content: round.userInput ?? "",
+      timestamp: round.timestamp ?? row.created_at
+    },
+    {
+      role: "assistant",
+      content: round.aiReply ?? "",
+      dslDiff: round.dslDiff,
+      timestamp: round.timestamp ?? row.updated_at ?? row.created_at
+    }
+  ]);
+
+  const changeSummary = typeof row.change_summary === "string"
+    ? row.change_summary
+    : JSON.stringify(row.change_summary ?? {}, null, 2);
+
+  return {
+    record: {
+      id: row.id,
+      schemaName: row.schema_name,
+      sessionId: row.session_id,
+      changeSummary,
+      skillMd: row.skill_md_snapshot ?? "",
+      chatTimeline
+    }
+  };
 }

@@ -252,6 +252,10 @@ export function GenericPageRenderer({
   }
 
   async function onToolbar(action: ActionDsl) {
+    if (action.type === "open_ai_customization" || action.actionType === "open_ai_customization") {
+      onOpenAiCustomization?.();
+      return;
+    }
     if (action.actionCode.endsWith(".create")) {
       setModal({ type: "create", value: action.defaultValues ?? {}, action });
       return;
@@ -870,7 +874,6 @@ export function GenericPageRenderer({
       </div>
       <div className="mb-3 flex flex-wrap gap-2">
         {sortWithOrder(toolbarDsl)
-          .filter((action) => action.actionCode !== "customization_record_list.new_customization" && action.type !== "open_ai_customization")
           .map((action) => (
           <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
         ))}
