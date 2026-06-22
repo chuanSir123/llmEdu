@@ -37,7 +37,18 @@ export function CustomizationRecordDetail({
     setError("");
     GatewayClient.getCustomizationRecordDetail(recordId)
       .then((res) => {
-        if (!cancelled) setDetail(res.record as RecordDetail);
+        if (cancelled) return;
+        if (!res.record) {
+          setError("记录不存在");
+          setDetail(null);
+          return;
+        }
+        setDetail({
+          ...(res.record as RecordDetail),
+          changeSummary: res.record.changeSummary ?? "",
+          skillMd: res.record.skillMd ?? "",
+          chatTimeline: Array.isArray(res.record.chatTimeline) ? res.record.chatTimeline : []
+        });
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "加载详情失败");
@@ -87,7 +98,7 @@ export function CustomizationRecordDetail({
               </div>
               <div className="flex-1 overflow-auto px-6 py-5">
                 <div className="mx-auto max-w-[920px] space-y-5">
-                  {detail.chatTimeline.map((entry, idx) => {
+                  {(detail.chatTimeline ?? []).map((entry, idx) => {
                     const isUser = entry.role === "user";
                     return (
                       <div key={idx} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
@@ -95,7 +106,7 @@ export function CustomizationRecordDetail({
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#e8f1ff] text-xs font-semibold text-[#2f80ed]">AI</div>
                         )}
                         <div className={`min-w-0 max-w-[76%] ${isUser ? "items-end" : "items-start"}`}>
-                          <div className={`mb-1 text-xs ${isUser ? "text-right" : ""} text-[#8b95a7]`}>{new Date(entry.timestamp).toLocaleString()}</div>
+                          <div className={`mb-1 text-xs ${isUser ? "text-right" : ""} text-[#8b95a7]`}>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "未知时间"}</div>
                           <div className={`whitespace-pre-wrap rounded-[8px] px-4 py-3 text-sm leading-6 shadow-sm ${
                             isUser ? "bg-[#2f80ed] text-white" : "border border-[#e8edf5] bg-white text-[#263445]"
                           }`}>
@@ -123,7 +134,7 @@ export function CustomizationRecordDetail({
                       </div>
                     );
                   })}
-                  {!detail.chatTimeline.length && (
+                  {!(detail.chatTimeline ?? []).length && (
                     <div className="border border-dashed border-[#cfd8e6] bg-white py-10 text-center text-sm text-[#8b95a7]">没有找到原始对话记录</div>
                   )}
                 </div>

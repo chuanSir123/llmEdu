@@ -1575,6 +1575,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     filters,
     toolbar: page.page === "customization_record_list"
       ? [
+          { actionCode: "customization_record_list.new_customization", label: "新增定制化", type: "open_ai_customization", actionType: "open_ai_customization", variant: "primary" },
           { actionCode: `${page.page}.refresh`, label: "刷新", type: "execute_api", variant: "default" }
         ]
       : [
@@ -1642,6 +1643,10 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   if (page.page === "customization_record_list") {
     baseDsl.subtitle = "查看 AI 助手对话、工具调用和导入处理记录";
     baseDsl.presentation.header.subtitle = "查看 AI 助手对话、工具调用和导入处理记录";
+    baseDsl.toolbar = [
+      { actionCode: "customization_record_list.new_customization", label: "新增定制化", type: "open_ai_customization", actionType: "open_ai_customization", variant: "primary" },
+      { actionCode: "customization_record_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
+    ];
     baseDsl.table.rowActions = [
       { actionCode: "customization_record_list.detail", label: "详情", type: "open_modal" }
     ];

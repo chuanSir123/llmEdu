@@ -65,7 +65,7 @@ export type ApiDsl = {
 export type ActionDsl = {
   actionCode: string;
   actionName?: string;
-  actionType: "open_page" | "execute_api" | "open_modal" | "dropdown" | "input" | "display" | "tab" | "export" | "import";
+  actionType: "open_page" | "execute_api" | "open_modal" | "open_ai_customization" | "dropdown" | "input" | "display" | "tab" | "export" | "import";
   label?: string;
   type?: string;
   variant?: "primary" | "default" | "danger";
