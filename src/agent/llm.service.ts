@@ -42,11 +42,15 @@ export async function loadLlmConfig(schemaName: string): Promise<LlmConfig> {
 
 export async function callWithToolCalling(input: LlmCallInput): Promise<LlmCallResult> {
   const config = await loadLlmConfig(input.schemaName);
-  const useToolCalling = input.tools && input.tools.length > 0 && config.supportsToolCalling;
+  // Do not reorder tools here. Tool definitions are part of the model input
+  // prefix; preserving caller order avoids invalidating provider-side prefix
+  // cache for existing, intentionally ordered tool lists.
+  const tools = input.tools;
+  const useToolCalling = tools && tools.length > 0 && config.supportsToolCalling;
 
   if (useToolCalling) {
     try {
-      const result = await rawCall(input.schemaName, config, input.messages, input.tools, input.onDelta);
+      const result = await rawCall(input.schemaName, config, input.messages, tools, input.onDelta);
       if (result.functionCall) {
         return { type: "tool_call", functionCall: result.functionCall, functionCalls: result.functionCalls, tokensUsed: result.tokensUsed };
       }
@@ -66,6 +70,11 @@ export async function callWithToolCalling(input: LlmCallInput): Promise<LlmCallR
 
   const result = await rawCall(input.schemaName, config, messages, undefined, input.onDelta);
   return { type: "text", content: result.content, tokensUsed: result.tokensUsed };
+}
+
+function toolName(tool: Record<string, unknown>) {
+  const fn = tool.function as Record<string, unknown> | undefined;
+  return typeof fn?.name === "string" ? fn.name : "";
 }
 
 type RawCallResult = {
@@ -276,8 +285,12 @@ async function rawCallOnce(
     const completionTokens = usage?.completion_tokens;
     const cachedTokens = usage?.prompt_tokens_details?.cached_tokens ?? usage?.cached_tokens;
 
-    console.log("[LLM] model=%s response_length=%d tool_calls=%d tokens=%d cached=%d stream=%s",
-      config.model, content.length, functionCalls.length, tokensUsed ?? 0, cachedTokens ?? 0, streaming);
+    const cacheHitRate = promptTokens && promptTokens > 0 && cachedTokens !== undefined
+      ? Math.round((cachedTokens / promptTokens) * 100)
+      : undefined;
+
+    console.log("[LLM] model=%s response_length=%d tool_calls=%d tokens=%d cached=%d cache_hit=%s stream=%s",
+      config.model, content.length, functionCalls.length, tokensUsed ?? 0, cachedTokens ?? 0, cacheHitRate === undefined ? "n/a" : `${cacheHitRate}%`, streaming);
 
     const tokenLog = { tokensUsed, promptTokens, completionTokens, cachedTokens };
 
@@ -329,10 +342,7 @@ async function logLlmCall(input: {
   try {
     const trace = llmTraceStorage.getStore();
     const toolNames = (input.tools ?? [])
-      .map((tool) => {
-        const fn = tool.function as Record<string, unknown> | undefined;
-        return typeof fn?.name === "string" ? fn.name : "";
-      })
+      .map(toolName)
       .filter(Boolean);
     await pool.query(
       `insert into admin.llm_call_log(

@@ -66,6 +66,13 @@ async function harnessRunInner(input: {
   );
   persistedSteps.push(intent);
 
+  if (intent.error || !intent.data) {
+    await emit("failed", "需求理解失败", "AI 定制助手暂时无法理解本次需求，请稍后重试或联系管理员。");
+    const failedResult = buildFailedResult(intent, input.userMessage, intent.error ?? "intent classification returned empty result");
+    await writeStepLogs(input.sessionId, persistedSteps);
+    return failedResult;
+  }
+
   if (!intent.data.featureCode) {
     await emit("need_confirm", "需要更多信息", "暂时无法确定要修改哪个功能，请补充页面名称或业务场景。");
     const emptyResult = buildEmptyResult(intent, input.userMessage);
@@ -85,12 +92,38 @@ async function harnessRunInner(input: {
     executeContextInjection(intent.data, input.schemaName, effectiveUserMessage)
   );
   persistedSteps.push(context);
+  if (context.error || !context.data) {
+    await emit("failed", "上下文加载失败", "读取当前页面、接口或租户配置时失败，请稍后重试或联系管理员。");
+    const failedResult = buildFailedResult(intent, input.userMessage, context.error ?? "context injection returned empty result", context);
+    await writeStepLogs(input.sessionId, persistedSteps);
+    return failedResult;
+  }
+  await emit(
+    "tool_result",
+    "上下文已就绪",
+    `已加载 ${context.data.relevantDslCodes.length} 个相关功能、${Object.keys(context.data.tableColumns).length} 张相关表，当前上下文约 ${context.data.tokenEstimate} tokens。`,
+    {
+      relevantDslCodes: context.data.relevantDslCodes,
+      tableCount: Object.keys(context.data.tableColumns).length,
+      tokenEstimate: context.data.tokenEstimate,
+      pages: context.data.dslSummary.pages.length,
+      apis: context.data.dslSummary.apis.length,
+      actions: context.data.dslSummary.actions.length,
+    },
+    { toolName: "context_injection", status: "success" },
+  );
   const policy = await loadTenantAgentPolicy(input.schemaName);
 
   const requirement = await runStep("requirement_planning", () =>
     executeRequirementPlanning(effectiveUserMessage, intent.data, context.data, input.schemaName)
   );
   persistedSteps.push(requirement);
+  if (requirement.error || !requirement.data) {
+    await emit("failed", "定制计划生成失败", "根据当前需求生成定制计划时失败，请补充更明确的需求后重试。");
+    const failedResult = buildFailedResult(intent, input.userMessage, requirement.error ?? "requirement planning returned empty result", context, requirement);
+    await writeStepLogs(input.sessionId, persistedSteps);
+    return failedResult;
+  }
 
   await emit(
     requirement.data.canProceed ? "planning" : "need_confirm",
@@ -356,6 +389,64 @@ function buildEmptyResult(
     validation: emptyValidation,
     execution: emptyExecution,
     totalDuration_ms: intent.duration_ms,
+  };
+}
+
+function buildFailedResult(
+  intent: HarnessStepResult<IntentResult>,
+  userMessage: string,
+  reason: string,
+  context?: HarnessStepResult<ContextResult>,
+  requirement?: HarnessStepResult<ChangePlan>,
+): HarnessResult {
+  const failedContext: HarnessStepResult<ContextResult> = context ?? {
+    stepName: "context_injection",
+    input_summary: "",
+    output_summary: `skipped: ${reason}`.substring(0, 500),
+    duration_ms: 0,
+    data: { skillMdContent: "", tableColumns: {}, relevantDslCodes: [], dslSummary: { pages: [], apis: [], actions: [] }, tokenEstimate: 0 },
+    error: reason,
+  };
+  const failedRequirement: HarnessStepResult<ChangePlan> = requirement ?? {
+    stepName: "requirement_planning",
+    input_summary: userMessage.substring(0, 500),
+    output_summary: `skipped: ${reason}`.substring(0, 500),
+    duration_ms: 0,
+    data: { summary: "AI 定制流程中断", capabilities: [], questions: ["请稍后重试或联系管理员。"], canProceed: false },
+    error: reason,
+  };
+  const failedPlanning: HarnessStepResult<DslDiff[]> = {
+    stepName: "change_planning",
+    input_summary: "",
+    output_summary: `skipped: ${reason}`.substring(0, 500),
+    duration_ms: 0,
+    data: [],
+    error: reason,
+  };
+  const failedValidation: HarnessStepResult<DslDiff[]> = {
+    stepName: "validation_repair",
+    input_summary: "",
+    output_summary: `skipped: ${reason}`.substring(0, 500),
+    duration_ms: 0,
+    data: [],
+    error: reason,
+  };
+  const failedExecution: HarnessStepResult<Array<{ versionId: string; versionNo: number }>> = {
+    stepName: "execute_preview",
+    input_summary: "",
+    output_summary: `skipped: ${reason}`.substring(0, 500),
+    duration_ms: 0,
+    data: [],
+    error: reason,
+  };
+  return {
+    intent,
+    context: failedContext,
+    requirement: failedRequirement,
+    planning: failedPlanning,
+    validation: failedValidation,
+    execution: failedExecution,
+    totalDuration_ms: intent.duration_ms + failedContext.duration_ms + failedRequirement.duration_ms,
   };
 }
 
