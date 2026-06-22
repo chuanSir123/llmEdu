@@ -4,7 +4,7 @@ import { harnessRun } from "../agent/harness-runner.js";
 import { publishVersionAndSyncSkillMd, rejectVersion } from "../version/version.service.js";
 import { writeCustomizationRecord } from "./tenant-customization-record.service.js";
 import { ensureTestSchema, writePreviewDslToTestSchema } from "./test-schema.service.js";
-import type { AgentProgressCallback, DslDiff } from "../agent/types.js";
+import type { AgentProgressCallback, DslDiff, HarnessResult } from "../agent/types.js";
 import { callWithToolCalling } from "../agent/llm.service.js";
 import { validateApiDslAgainstSchema } from "../db/dsl-validator.js";
 import { loadAttachments } from "./attachment.service.js";
@@ -146,8 +146,8 @@ export async function tenantAgentChat(input: {
       return { sessionId, reply: `AI 定制化执行失败：${errMsg}`, draftInfo: undefined };
     }
 
-    const diffs = harnessResult.validation.data;
-    const executionResults = harnessResult.execution.data;
+    const diffs = harnessResult.validation.data ?? [];
+    const executionResults = harnessResult.execution.data ?? [];
 
     let draftVersionId: string | undefined;
     let draftVersionNo: number | undefined;
@@ -156,7 +156,7 @@ export async function tenantAgentChat(input: {
     if (executionResults.length > 0) {
       draftVersionId = executionResults[0].versionId;
       draftVersionNo = executionResults[0].versionNo;
-      draftSummary = harnessResult.intent.data.reason;
+      draftSummary = harnessResult.intent.data?.reason ?? harnessResult.requirement.data?.summary;
     }
 
     if (diffs.length > 0 && draftVersionId) {
@@ -174,12 +174,12 @@ export async function tenantAgentChat(input: {
     const hasError = harnessResult.execution.error || harnessResult.validation.error;
     if (hasError) {
       reply = `DSL 变更执行遇到问题：${harnessResult.execution.error || harnessResult.validation.error}`;
-    } else if (!harnessResult.requirement.data.canProceed && harnessResult.requirement.data.questions.length > 0) {
-      reply = `我已初步理解需求：${harnessResult.requirement.data.summary}\n\n为了避免生成错误配置，请先确认：\n${harnessResult.requirement.data.questions.map((q, index) => `${index + 1}. ${q}`).join("\n")}`;
+    } else if (!harnessResult.requirement.data?.canProceed && (harnessResult.requirement.data?.questions.length ?? 0) > 0) {
+      reply = `我已初步理解需求：${harnessResult.requirement.data?.summary ?? "需要补充定制信息"}\n\n为了避免生成错误配置，请先确认：\n${(harnessResult.requirement.data?.questions ?? []).map((q, index) => `${index + 1}. ${q}`).join("\n")}`;
     } else if (diffs.length > 0) {
       const intentData = harnessResult.intent.data;
-      reply = `已生成 DSL 变更草稿，涉及 ${diffs.length} 项变更。\n目标功能：${intentData.featureCode}（${intentData.action === "create" ? "新建" : "修改"}）\n变更内容：${diffs.map((d) => `- ${d.targetType}/${d.targetCode}: ${d.op}${d.field ? ` ${d.field}` : ""}`).join("\n")}`;
-    } else if (!harnessResult.intent.data.featureCode) {
+      reply = `已生成 DSL 变更草稿，涉及 ${diffs.length} 项变更。\n目标功能：${intentData?.featureCode ?? "待确认"}（${intentData?.action === "create" ? "新建" : "修改"}）\n变更内容：${diffs.map((d) => `- ${d.targetType}/${d.targetCode}: ${d.op}${d.field ? ` ${d.field}` : ""}`).join("\n")}`;
+    } else if (!harnessResult.intent.data?.featureCode) {
       reply = `未检测到需要变更的 DSL 内容。请尝试更详细地描述需求，例如"在学员列表页面增加地址列和地址筛选"。`;
     } else {
       reply = `未检测到需要变更的 DSL 内容。请尝试更详细地描述需求。`;
@@ -200,9 +200,10 @@ export async function tenantAgentChat(input: {
     existingMessages.push({ role: "user", content: input.message, timestamp: new Date().toISOString() });
     existingMessages.push({ role: "assistant", content: reply, draftInfo, timestamp: new Date().toISOString() });
 
+    const harnessRunMemory = buildHarnessRunMemory(harnessResult, diffs, draftInfo);
     await client.query(
       `update admin.agent_chat_session set context = $1, updated_at = now() where id = $2`,
-      [JSON.stringify({ ...context, lastMessage: input.message, lastReply: reply, messages: existingMessages }), sessionId]
+      [JSON.stringify({ ...context, lastMessage: input.message, lastReply: reply, messages: existingMessages, lastHarnessRun: harnessRunMemory }), sessionId]
     );
 
     await writeCustomizationRecord({
@@ -617,6 +618,13 @@ export async function getActiveChatSession(schemaName: string, userId: string, s
 
 function buildChatHistory(context: Record<string, unknown>): Array<{ role: string; content: string }> {
   const history: Array<{ role: string; content: string }> = [];
+  const lastHarnessRun = context.lastHarnessRun;
+  if (lastHarnessRun && typeof lastHarnessRun === "object" && !Array.isArray(lastHarnessRun)) {
+    history.push({
+      role: "assistant",
+      content: `上一次 AI 定制运行摘要：${JSON.stringify(lastHarnessRun).substring(0, 1200)}`,
+    });
+  }
   const messages = context.messages as Array<{ role: string; content: string }> | undefined;
   if (Array.isArray(messages)) {
     for (const msg of messages) {
@@ -633,6 +641,50 @@ function buildChatHistory(context: Record<string, unknown>): Array<{ role: strin
     }
   }
   return history;
+}
+
+function buildHarnessRunMemory(
+  harnessResult: HarnessResult,
+  diffs: DslDiff[],
+  draftInfo?: { versionId: string; versionNo: number; summary: string; previewed: boolean },
+) {
+  return {
+    intent: harnessResult.intent.data
+      ? {
+          featureCode: harnessResult.intent.data.featureCode,
+          action: harnessResult.intent.data.action,
+          reason: harnessResult.intent.data.reason,
+          moduleCode: harnessResult.intent.data.moduleCode,
+        }
+      : undefined,
+    requirement: harnessResult.requirement.data
+      ? {
+          summary: harnessResult.requirement.data.summary,
+          canProceed: harnessResult.requirement.data.canProceed,
+          questions: harnessResult.requirement.data.questions,
+          capabilities: harnessResult.requirement.data.capabilities.map((item) => ({
+            type: item.type,
+            label: item.label,
+            risk: item.risk,
+          })),
+        }
+      : undefined,
+    context: {
+      related: harnessResult.context.data?.relevantDslCodes ?? [],
+      tokenEstimate: harnessResult.context.data?.tokenEstimate ?? 0,
+      summary: harnessResult.context.output_summary,
+    },
+    diffs: diffs.slice(0, 20).map((diff) => ({
+      targetType: diff.targetType,
+      targetCode: diff.targetCode,
+      op: diff.op,
+      field: diff.field ?? diff.fieldDef?.key ?? diff.fieldDef?.field,
+    })),
+    validationError: harnessResult.validation.error,
+    executionError: harnessResult.execution.error,
+    draftInfo,
+    totalDuration_ms: harnessResult.totalDuration_ms,
+  };
 }
 
 function buildMessageWithAttachments(

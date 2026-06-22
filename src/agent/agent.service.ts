@@ -6,13 +6,22 @@ import { harnessRun } from "./harness-runner.js";
 import type { DslDiff as NewDslDiff } from "./types.js";
 
 export async function loadAgentContext(schemaName: string, targetModuleCode?: string, targetFeatureCode?: string) {
-  const moduleFilter = targetModuleCode ? ` and module_code = '${targetModuleCode}'` : "";
-  const featureFilter = targetFeatureCode ? ` and feature_code = '${targetFeatureCode}'` : "";
+  const params: string[] = [schemaName];
+  const filters: string[] = [];
+  if (targetModuleCode) {
+    params.push(targetModuleCode);
+    filters.push(`module_code = $${params.length}`);
+  }
+  if (targetFeatureCode) {
+    params.push(targetFeatureCode);
+    filters.push(`feature_code = $${params.length}`);
+  }
+  const scopeFilter = filters.length > 0 ? ` and ${filters.join(" and ")}` : "";
 
   const [pageDsls, apiDsls, skills, versions, columns] = await Promise.all([
-    pool.query(`select page_code, page_name, dsl_json from admin.page_dsl where (schema_scope = 'tenant_default' or (schema_scope = 'tenant' and schema_name = $1)) and status = 'active' and deleted = false${moduleFilter}${featureFilter}`, [schemaName]),
-    pool.query(`select api_code, api_type, dsl_json from admin.api_dsl where (schema_scope = 'tenant_default' or (schema_scope = 'tenant' and schema_name = $1)) and status = 'active' and deleted = false${moduleFilter}${featureFilter}`, [schemaName]),
-    pool.query(`select skill_code, skill_name, skill_md_content from admin.skill_registry where (schema_scope = 'tenant_default' or (schema_scope = 'tenant' and schema_name = $1)) and status = 'active' and deleted = false${moduleFilter}${featureFilter}`, [schemaName]),
+    pool.query(`select page_code, page_name, dsl_json from admin.page_dsl where (schema_scope = 'tenant_default' or (schema_scope = 'tenant' and schema_name = $1)) and status = 'active' and deleted = false${scopeFilter}`, params),
+    pool.query(`select api_code, api_type, dsl_json from admin.api_dsl where (schema_scope = 'tenant_default' or (schema_scope = 'tenant' and schema_name = $1)) and status = 'active' and deleted = false${scopeFilter}`, params),
+    pool.query(`select skill_code, skill_name, skill_md_content from admin.skill_registry where (schema_scope = 'tenant_default' or (schema_scope = 'tenant' and schema_name = $1)) and status = 'active' and deleted = false${scopeFilter}`, params),
     pool.query(`select target_type, target_code, version_no, status, change_summary from admin.dsl_version where schema_name = $1 and deleted = false order by created_at desc limit 10`, [schemaName]),
     pool.query(`select table_name, column_name from information_schema.columns where table_schema = $1`, [schemaName]),
   ]);
@@ -315,12 +324,12 @@ export async function submitAgentTask(schemaName: string, prompt: string, mode =
     userId: "agent",
   });
 
-  const reason = harnessResult.intent.data.reason || harnessResult.intent.data.featureCode || "AI 定制化";
-  const diffs = harnessResult.validation.data;
+  const reason = harnessResult.intent.data?.reason || harnessResult.intent.data?.featureCode || harnessResult.intent.error || "AI 定制化";
+  const diffs = harnessResult.validation.data ?? [];
   const validation = harnessResult.validation.error
     ? { valid: false, errors: [harnessResult.validation.error] }
     : { valid: true, errors: [] as string[] };
-  const draftResults = harnessResult.execution.data;
+  const draftResults = harnessResult.execution.data ?? [];
 
   const result: GenerateResult = {
     type: "dsl_diff",
