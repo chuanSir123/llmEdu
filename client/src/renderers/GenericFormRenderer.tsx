@@ -32,6 +32,8 @@ export function GenericFormRenderer({
   const [openField, setOpenField] = useState<string | null>(null);
   const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const gridClass = columns === 3 ? "md:grid-cols-3" : "md:grid-cols-2";
+  const today = new Date().toISOString().slice(0, 10);
+  const asStringArray = (raw: unknown) => Array.isArray(raw) ? raw.map((item) => String(item)).filter(Boolean) : String(raw ?? "").split(",").map((item) => item.trim()).filter(Boolean);
   const spanClass = (field: FieldDsl) => {
     if (field.span === "full" || field.span === columns) return columns === 3 ? "md:col-span-3" : "md:col-span-2";
     if (field.span === 2) return "md:col-span-2";
@@ -252,6 +254,46 @@ export function GenericFormRenderer({
                 placeholder={field.placeholder}
                 onChange={(event) => onChange({ ...value, [field.key]: event.target.value })}
               />
+            ) : field.type === "multiDate" ? (
+              <div className="space-y-2">
+                {asStringArray(value[field.key]).length ? asStringArray(value[field.key]).map((dateValue, idx) => (
+                  <div key={`${field.key}-${idx}`} className="flex gap-2">
+                    <input
+                      className={`${token.input} flex-1`}
+                      type="date"
+                      min={field.defaultFutureOnly ? today : undefined}
+                      value={dateValue}
+                      onChange={(event) => {
+                        const next = asStringArray(value[field.key]);
+                        next[idx] = event.target.value;
+                        onChange({ ...value, [field.key]: [...new Set(next.filter(Boolean))] });
+                      }}
+                    />
+                    <button type="button" className={token.defaultButton} onClick={() => onChange({ ...value, [field.key]: asStringArray(value[field.key]).filter((_, nextIdx) => nextIdx !== idx) })}>移除</button>
+                  </div>
+                )) : null}
+                <button type="button" className={token.defaultButton} onClick={() => onChange({ ...value, [field.key]: [...asStringArray(value[field.key]), today] })}>添加日期</button>
+              </div>
+            ) : field.type === "multiText" ? (
+              <input
+                className={`${token.input} w-full min-w-0`}
+                value={asStringArray(value[field.key]).join(",")}
+                placeholder={field.placeholder ?? "多个值用逗号分隔"}
+                onChange={(event) => onChange({ ...value, [field.key]: asStringArray(event.target.value) })}
+              />
+            ) : field.type === "performance_split_table" ? (
+              <div className="space-y-2">
+                {(Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : []).map((item, idx) => (
+                  <div key={`${field.key}-${idx}`} className="grid grid-cols-1 gap-2 rounded border border-[#e8edf5] bg-[#fbfcff] p-2 md:grid-cols-5">
+                    <input className={token.input} placeholder="员工ID" value={String(item.personal_performance_user_id ?? "")} onChange={(event) => { const rows = [...(value[field.key] as Record<string, unknown>[] ?? [])]; rows[idx] = { ...rows[idx], personal_performance_user_id: event.target.value }; onChange({ ...value, [field.key]: rows, items: rows }); }} />
+                    <input className={token.input} type="number" placeholder="个人金额" value={String(item.personal_performance_amount ?? "")} onChange={(event) => { const rows = [...(value[field.key] as Record<string, unknown>[] ?? [])]; rows[idx] = { ...rows[idx], personal_performance_amount: Number(event.target.value || 0) }; onChange({ ...value, [field.key]: rows, items: rows }); }} />
+                    <input className={token.input} placeholder="校区ID" value={String(item.organization_performance_organization_id ?? "")} onChange={(event) => { const rows = [...(value[field.key] as Record<string, unknown>[] ?? [])]; rows[idx] = { ...rows[idx], organization_performance_organization_id: event.target.value, organization_id: event.target.value }; onChange({ ...value, [field.key]: rows, items: rows }); }} />
+                    <input className={token.input} type="number" placeholder="校区金额" value={String(item.organization_performance_amount ?? "")} onChange={(event) => { const rows = [...(value[field.key] as Record<string, unknown>[] ?? [])]; rows[idx] = { ...rows[idx], organization_performance_amount: Number(event.target.value || 0) }; onChange({ ...value, [field.key]: rows, items: rows }); }} />
+                    <button type="button" className={token.defaultButton} onClick={() => { const rows = (value[field.key] as Record<string, unknown>[] ?? []).filter((_, nextIdx) => nextIdx !== idx); onChange({ ...value, [field.key]: rows, items: rows }); }}>移除</button>
+                  </div>
+                ))}
+                <button type="button" className={token.defaultButton} onClick={() => { const rows = [...(Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : []), { performance_type: value.performance_type ?? "MANUAL_ADJUST", source_type: value.source_type ?? "MANUAL_ADJUSTMENT", contract_product_id: value.contract_product_id, funds_change_history_id: value.funds_change_history_id, adjustment_reason: value.adjustment_reason }]; onChange({ ...value, [field.key]: rows, items: rows }); }}>添加分摊行</button>
+              </div>
             ) : field.type === "json_textarea" ? (
               <JsonTextarea
                 value={value[field.key]}

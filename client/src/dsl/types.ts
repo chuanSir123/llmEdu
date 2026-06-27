@@ -30,6 +30,7 @@ export type FieldDsl = {
   required?: boolean;
   validation?: Record<string, unknown>;
   options?: Array<{ label: string; value: string }>;
+  defaultFutureOnly?: boolean;
 };
 
 export type WhereCondition = {
@@ -86,6 +87,7 @@ export type ActionDsl = {
   styleToken?: string;
   subActions?: Array<{ actionCode: string; label: string }>;
   targetPageCode?: string;
+  target?: PageTargetDsl;
   targetTab?: string;
   importConfig?: Record<string, unknown>;
   exportConfig?: Record<string, unknown>;

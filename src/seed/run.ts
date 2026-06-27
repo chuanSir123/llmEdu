@@ -97,7 +97,7 @@ async function seedAdmin() {
     expire_time: "2099-12-31T23:59:59Z",
     owner_name: "试用负责人",
     enabled_modules: JSON.stringify(["frontdesk", "recruit", "student", "education", "finance", "report", "system"]),
-    enabled_features: JSON.stringify(["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report"])
+    enabled_features: JSON.stringify(["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "approval_task_list", "approval_task_log_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report"])
   });
 
   for (const [module_code, module_name, module_group, description, sort_no, icon] of modules) {
@@ -164,7 +164,7 @@ async function seedAdmin() {
 
   for (const tenant of ["demo_school", "trial_school"]) {
     const tenantId = tenant === "demo_school" ? "tenant_demo" : "tenant_trial";
-    const tenantFeatures = tenant === "demo_school" ? pages : pages.filter((p) => ["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report"].includes(p.feature));
+    const tenantFeatures = tenant === "demo_school" ? pages : pages.filter((p) => ["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "approval_task_list", "approval_task_log_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report"].includes(p.feature));
     for (const [module_code] of modules) {
       const enabled = tenant === "demo_school" || ["frontdesk", "recruit", "student", "education", "finance", "report", "system"].includes(module_code);
       await upsert("admin.tenant_module_subscription", "id", {
@@ -464,9 +464,9 @@ async function seedTenantData() {
       { id: "follow_002", student_id: "stu_001", follow_user_id: "user_003", follow_type: "VISIT", follow_content: "课后回访，反馈良好" }
     ]],
     ["product", [
-      { id: "prod_001", name: "一对一数学 20 课时", unit_price: 200, default_course_hour: 20, total_amount: 4000, product_type: "ONE_ON_ONE_COURSE", status: "ACTIVE" },
-      { id: "prod_002", name: "小班语文 30 课时", unit_price: 100, default_course_hour: 30, total_amount: 3000, product_type: "SMALL_CLASS", status: "ACTIVE" },
-      { id: "prod_003", name: "一对N英语 24 课时", unit_price: 120, default_course_hour: 24, total_amount: 2880, product_type: "ONE_ON_N_GROUP", status: "ACTIVE" }
+      { id: "prod_001", name: "一对一数学 20 课时", unit_price: 200, default_course_hour: 20, total_amount: 4000, product_type: "ONE_ON_ONE_COURSE", subject_ids: JSON.stringify(["数学"]), grade_ids: JSON.stringify(["三年级", "四年级"]), status: "ACTIVE" },
+      { id: "prod_002", name: "小班语文 30 课时", unit_price: 100, default_course_hour: 30, total_amount: 3000, product_type: "SMALL_CLASS", subject_ids: JSON.stringify(["语文"]), grade_ids: JSON.stringify(["三年级"]), status: "ACTIVE" },
+      { id: "prod_003", name: "一对N英语 24 课时", unit_price: 120, default_course_hour: 24, total_amount: 2880, product_type: "ONE_ON_N_GROUP", subject_ids: JSON.stringify(["英语"]), grade_ids: JSON.stringify(["三年级"]), status: "ACTIVE" }
     ]],
     ["promotion", [
       { id: "promo_reduce_300", name: "报名立减 300", type: "REDUCE", value: 300, status: "ACTIVE" },
@@ -480,8 +480,8 @@ async function seedTenantData() {
       { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 2, plan_real_amount: 4000, plan_promotion_amount: 300, paid_real_hour: 10, paid_promotion_hour: 2, paid_real_amount: 2000, paid_promotion_amount: 300, consumed_real_hour: 2, remaining_real_hour: 8, remaining_promotion_hour: 2, remaining_real_amount: 1600, remaining_promotion_amount: 300 },
       { id: "cp_002", contract_id: "contract_002", product_id: "prod_002", plan_real_hour: 30, paid_real_hour: 30, paid_real_amount: 3000, consumed_real_hour: 3, remaining_real_hour: 27, remaining_real_amount: 2700 }
     ]],
-    ["mini_class", [{ id: "mc_001", name: "三年级语文小班", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", capacity: 12, status: "ACTIVE" }]],
-    ["one_on_n_group", [{ id: "ong_001", name: "英语一对三 A 组", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", capacity: 3, status: "ACTIVE" }]],
+    ["mini_class", [{ id: "mc_001", name: "三年级语文小班", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", product_id: "prod_002", grade: "三年级", subject: "语文", capacity: 12, status: "ACTIVE" }]],
+    ["one_on_n_group", [{ id: "ong_001", name: "英语一对三 A 组", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", grade: "三年级", subject: "英语", capacity: 3, status: "ACTIVE" }]],
     ["generic_course", [
       { id: "course_001", course_type: "ONE_ON_ONE_COURSE", course_date: "2026-06-11", start_time: "09:00", end_time: "10:00", teacher_id: "user_002", study_manager_id: "user_003", course_status: "FINISHED", organization_id: "org_001", course_title: "姚锦鹏一对一数学", course_hour: 1 },
       { id: "course_002", course_type: "SMALL_CLASS", course_date: "2026-06-11", start_time: "14:00", end_time: "15:30", teacher_id: "user_002", study_manager_id: "user_003", course_status: "SCHEDULED", organization_id: "org_001", mini_class_id: "mc_001", course_title: "三年级语文小班", course_hour: 1.5 }

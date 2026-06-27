@@ -5,12 +5,13 @@ import { qIdent } from "../db/schema-resolver.js";
 type CommandDsl = {
   operation: "command";
   command: "contract.create" | "funds.create" | "funds.delete" | "course.create" | "chargeRecord.create" | "refund.create"
-    | "contract.refund" | "refund.delete" | "course.delete"
-    | "attendance.checkIn" | "attendance.cancel"
+    | "contract.refund" | "contract.delete" | "refund.delete" | "course.delete" | "ledger.denyMutation"
+    | "attendance.checkIn" | "attendance.cancel" | "leave.create" | "makeup.create" | "classStudent.transfer" | "class.changeStatus"
     | "miniClass.addStudent" | "miniClass.removeStudent" | "oneOnNGroup.addStudent" | "oneOnNGroup.removeStudent"
     | "chargeRecord.reverse" | "chargeRecord.preview" | "course.cancel" | "course.student.save"
     | "moneyArrange.save" | "promotionArrange.save" | "performanceArrange.save"
     | "student.assignManager" | "product.grant.save" | "product.promotion.save"
+    | "approval.submit" | "approval.approve" | "approval.reject" | "approval.cancel"
     | "role.permission.save" | "user.create" | "user.update" | "user.softDelete" | "user.resetPassword"
     | "audit.list" | "report.student" | "report.finance" | "report.course";
   ruleCode: string;
@@ -42,8 +43,20 @@ function str(value: unknown, fallback = "") {
   return value === undefined || value === null || value === "" ? fallback : String(value);
 }
 
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === "object" && !Array.isArray(item)) as Record<string, unknown>[] : [];
+}
+
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function floorMoney(value: number) {
+  return Math.floor(value * 100) / 100;
 }
 
 async function loadRule(client: pg.PoolClient, schemaName: string, ruleCode: string): Promise<BusinessRule> {
@@ -59,13 +72,164 @@ async function loadRule(client: pg.PoolClient, schemaName: string, ruleCode: str
   return rows[0]?.rule_json ?? {};
 }
 
+function commandApprovalHint(command: CommandDsl["command"]) {
+  const map: Partial<Record<CommandDsl["command"], { flowCode: string; businessType: string; event: string; pageCode: string; actionCode: string; require?: boolean }>> = {
+    "contract.create": { flowCode: "contract_create_approval", businessType: "contract_create", event: "contract_create_submit", pageCode: "contract_list", actionCode: "contract_list.create" },
+    "funds.create": { flowCode: "funds_create_approval", businessType: "funds_create", event: "funds_create_submit", pageCode: "funds_history", actionCode: "funds_history.create" },
+    "refund.create": { flowCode: "refund_create_approval", businessType: "refund_create", event: "refund_create_submit", pageCode: "refund_record", actionCode: "refund_record.create" },
+    "course.create": { flowCode: "course_create_approval", businessType: "course_create", event: "course_create_submit", pageCode: "course_list", actionCode: "course_list.create" },
+    "course.cancel": { flowCode: "course_cancel_approval", businessType: "course_cancel", event: "course_cancel_submit", pageCode: "course_list", actionCode: "course_list.cancel", require: true },
+    "chargeRecord.reverse": { flowCode: "charge_reverse_approval", businessType: "charge_reverse", event: "charge_reverse_submit", pageCode: "charge_record", actionCode: "charge_record.reverse" },
+  };
+  return map[command];
+}
+
+async function resolveApproverUserId(client: pg.PoolClient, schemaName: string, assigneeRole: string, organizationId?: string) {
+  if (!assigneeRole) return null;
+  const values: unknown[] = [assigneeRole];
+  let orgWhere = "";
+  if (organizationId) {
+    values.push(organizationId);
+    orgWhere = `and (u.organization_id = $2 or u.organization_id is null)`;
+  }
+  const { rows } = await client.query(
+    `select u.id
+     from ${table(schemaName, "user")} u
+     left join ${table(schemaName, "user_role")} ur on ur.user_id = u.id and ur.deleted = false
+     left join ${table(schemaName, "role")} r on r.id = ur.role_id and r.deleted = false
+     where u.deleted = false and u.status = 'ACTIVE'
+       and (upper(coalesce(u.staff_type,'')) = upper($1) or upper(coalesce(r.role_code,'')) = upper($1))
+       ${orgWhere}
+     order by case when u.organization_id = ${organizationId ? "$2" : "u.organization_id"} then 0 else 1 end, u.created_at asc
+     limit 1`,
+    values
+  );
+  return rows[0]?.id ? String(rows[0].id) : null;
+}
+
+async function insertApprovalLog(client: pg.PoolClient, schemaName: string, taskId: string, action: string, userId: string, comment: string, step?: Record<string, unknown>, snapshot: Record<string, unknown> = {}) {
+  await client.query(
+    `insert into ${table(schemaName, "approval_task_log")} (id, task_id, step_code, step_name, action, operator_user_id, comment, snapshot_json)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [await nextTextId(client, schemaName, "approval_task_log"), taskId, step?.stepCode ?? null, step?.stepName ?? null, action, userId || null, comment || null, JSON.stringify(snapshot)]
+  );
+}
+
+async function submitApprovalTask(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const userId = str(input.applicant_user_id ?? params.__userId);
+  const flowCode = str(input.flow_code ?? input.flowCode);
+  const businessType = str(input.business_type ?? input.businessType);
+  const event = str(input.event);
+  const values: unknown[] = [];
+  const where = ["deleted = false", "status = 'ACTIVE'"];
+  if (flowCode) { values.push(flowCode); where.push(`flow_code = $${values.length}`); }
+  if (!flowCode && businessType) { values.push(businessType); where.push(`coalesce(config_json->>'businessType', config_json->>'business_type') = $${values.length}`); }
+  if (!flowCode && !businessType && event) { values.push(event); where.push(`config_json->'trigger'->>'event' = $${values.length}`); }
+  const { rows } = await client.query(`select * from ${table(schemaName, "approval_flow")} where ${where.join(" and ")} order by updated_at desc limit 1`, values);
+  const flow = rows[0] as Record<string, unknown> | undefined;
+  if (!flow) throw new Error("未找到启用的审批流");
+  const config = asObject(flow.config_json);
+  const steps = asArray(config.steps);
+  const firstStep = steps[0] ?? {};
+  const organizationId = str(input.organization_id ?? input.organizationId);
+  const approverId = await resolveApproverUserId(client, schemaName, str(firstStep.assigneeRole), organizationId);
+  const taskId = str(input.id, await nextTextId(client, schemaName, "approval_task"));
+  const formJson = {
+    ...asObject(input.form_json),
+    flowCode: flow.flow_code,
+    flowName: flow.name,
+    trigger: asObject(config.trigger),
+    steps,
+    afterApproved: Array.isArray(config.afterApproved) ? config.afterApproved : [],
+    originalCommand: input.originalCommand,
+    originalRuleCode: input.originalRuleCode,
+    originalParams: input.originalParams,
+    submittedAt: new Date().toISOString(),
+  };
+  await client.query(
+    `insert into ${table(schemaName, "approval_task")}
+       (id, flow_id, business_type, business_id, applicant_user_id, current_approver_user_id, status, current_step_index, form_json, organization_id)
+     values ($1,$2,$3,$4,$5,$6,'PENDING',0,$7,$8)`,
+    [taskId, flow.id, str(input.business_type ?? input.businessType ?? config.businessType), str(input.business_id ?? input.businessId), userId || null, approverId, JSON.stringify(formJson), organizationId || null]
+  );
+  await insertApprovalLog(client, schemaName, taskId, "SUBMIT", userId, str(input.comment, "发起审批"), firstStep, { status: "PENDING" });
+  return { approvalRequired: true, taskId, status: "PENDING", flowCode: flow.flow_code, currentApproverUserId: approverId };
+}
+
+async function runCommandInTransaction(client: pg.PoolClient, schemaName: string, dsl: CommandDsl, params: Record<string, unknown>, simpleFn?: (c: pg.PoolClient, s: string, p: Record<string, unknown>) => Promise<unknown>) {
+  if (simpleFn) {
+    return ["miniClass.addStudent", "oneOnNGroup.addStudent", "miniClass.removeStudent", "oneOnNGroup.removeStudent"].includes(dsl.command)
+      ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || "course_create_rule"))
+      : dsl.command === "chargeRecord.reverse"
+        ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || "charge_create_rule"))
+        : ["leave.create", "makeup.create", "classStudent.transfer"].includes(dsl.command)
+          ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || (dsl.command === "leave.create" ? "leave_create_rule" : "makeup_create_rule")))
+          : await simpleFn(client, schemaName, params);
+  }
+  const rule = await loadRule(client, schemaName, dsl.ruleCode);
+  return dsl.command === "contract.create"
+    ? await createContract(client, schemaName, params, rule)
+    : dsl.command === "funds.create"
+      ? await createFunds(client, schemaName, params, rule)
+      : dsl.command === "course.create"
+        ? await createCourse(client, schemaName, params, rule)
+        : dsl.command === "chargeRecord.create"
+          ? await createCharge(client, schemaName, params, rule)
+          : dsl.command === "contract.refund"
+            ? await contract_refund(client, schemaName, params, rule)
+            : dsl.command === "attendance.checkIn"
+              ? await attendance_check_in(client, schemaName, params, rule)
+              : await createRefund(client, schemaName, params, rule);
+}
+
+async function maybeSubmitApprovalTask(client: pg.PoolClient, schemaName: string, dsl: CommandDsl, params: Record<string, unknown>) {
+  if (params.__approvalApproved || dsl.command.startsWith("approval.")) return undefined;
+  const hint = commandApprovalHint(dsl.command);
+  if (!hint) return undefined;
+  const input = dataOf(params);
+  if (dsl.command === "contract.create" && num(input.promotion_amount) > 0) hint.flowCode = "contract_discount_approval";
+  const existingTaskId = str(input.approval_task_id ?? input.approvalTaskId);
+  if (existingTaskId) {
+    const task = await one(client, `select status from ${table(schemaName, "approval_task")} where id = $1 and deleted = false`, [existingTaskId]);
+    if (task?.status === "APPROVED") return undefined;
+    throw new Error("审批未通过，不能执行业务动作");
+  }
+  const { rows } = await client.query(`select id from ${table(schemaName, "approval_flow")} where flow_code = $1 and status = 'ACTIVE' and deleted = false limit 1`, [hint.flowCode]);
+  if (!rows[0]) return undefined;
+  return submitApprovalTask(client, schemaName, {
+    ...params,
+    data: {
+      flow_code: hint.flowCode,
+      business_type: hint.businessType,
+      business_id: str(input.id),
+      organization_id: input.organization_id,
+      event: hint.event,
+      originalCommand: dsl.command,
+      originalRuleCode: dsl.ruleCode,
+      originalParams: { ...params, __userId: undefined },
+      form_json: { actionCode: hint.actionCode, payload: input },
+      comment: str(input.approval_comment, "系统按规则发起审批"),
+    },
+  });
+}
+
 async function one<T extends Record<string, unknown>>(client: pg.PoolClient, sql: string, values: unknown[]) {
   const { rows } = await client.query(sql, values);
   return rows[0] as T | undefined;
 }
 
-async function createContract(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
+async function createContract(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule): Promise<Record<string, unknown>> {
   const input = dataOf(params);
+  const studentIds = Array.isArray(input.student_ids) ? input.student_ids.map((value) => String(value)).filter(Boolean) : [];
+  if (studentIds.length > 1) {
+    const contracts = [];
+    for (const studentId of studentIds) {
+      contracts.push(await createContract(client, schemaName, { ...params, id: undefined, data: { ...input, student_id: studentId, student_ids: undefined } }, rule));
+    }
+    return { batch: true, count: contracts.length, contracts };
+  }
+  const singleStudentId = str(input.student_id, studentIds[0]);
   const contractId = str(params.id, await nextTextId(client, schemaName, "contract"));
   const products = Array.isArray(input.contract_products) ? (input.contract_products as Record<string, unknown>[]) : [];
   const productIds = Array.isArray(input.product_ids) ? input.product_ids.map((value) => String(value)).filter(Boolean) : [];
@@ -77,7 +241,7 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
       : defaultProductId
         ? [input]
         : [];
-  if (!str(input.student_id)) throw new Error("缺少 student_id");
+  if (!singleStudentId) throw new Error("缺少 student_id");
   if (!contractProductInputs.length) throw new Error("创建合同至少需要一个产品");
 
   const productInputs: Array<{ item: Record<string, unknown>; product: Record<string, unknown>; productId: string }> = [];
@@ -114,7 +278,7 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
      returning *`,
     [
       contractId,
-      input.student_id,
+      singleStudentId,
       paidStatus,
       contractType,
       input.organization_id,
@@ -129,7 +293,7 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
 
   await client.query(
     `update ${table(schemaName, "student")} set student_status = 'FORMAL', updated_at = now() where id = $1 and coalesce(student_status,'') = 'LEAD'`,
-    [input.student_id]
+    [singleStudentId]
   );
 
   if (promotionAmount > 0 || promotion) {
@@ -276,6 +440,46 @@ async function arrangePerformance(client: pg.PoolClient, schemaName: string, fun
   }
 }
 
+async function reversePerformanceForSource(client: pg.PoolClient, schemaName: string, sourceType: string, sourceId: string, reason: string) {
+  const where = sourceType === "refund" ? "coalesce((ext_json->>'sourceRefundId'), '') = $1" : "funds_change_history_id = $1";
+  const { rows } = await client.query(`select * from ${table(schemaName, "performance_arrange_log")} where ${where} and deleted = false and coalesce((ext_json->>'reversalOf'),'') = ''`, [sourceId]);
+  for (const row of rows) {
+    const orgAmount = num(row.organization_performance_amount);
+    const personalAmount = num(row.personal_performance_amount);
+    if (orgAmount === 0 && personalAmount === 0) continue;
+    await client.query(
+      `insert into ${table(schemaName, "performance_arrange_log")}
+        (id, contract_product_id, funds_change_history_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id, source_type, source_id, adjustment_reason, ext_json)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [await nextTextId(client, schemaName, "performance_arrange_log"), row.contract_product_id, sourceType === "funds_void" ? sourceId : row.funds_change_history_id, `${str(row.performance_type, "SALES")}_REVERSE`, row.organization_performance_organization_id, -orgAmount, row.personal_performance_user_id, -personalAmount, row.organization_id, sourceType, sourceId, reason, JSON.stringify({ reversalOf: row.id, sourceType, sourceId })]
+    );
+  }
+  return rows.length;
+}
+
+async function arrangeNegativePerformanceForRefund(client: pg.PoolClient, schemaName: string, refundId: string, refund: Record<string, unknown>, rule: BusinessRule) {
+  if (rule.generateNegativePerformance === false) return 0;
+  const amount = num(refund.refund_real_amount);
+  if (amount <= 0) return 0;
+  const cpId = str(refund.contract_product_id);
+  const cp = cpId ? await one(client, `select * from ${table(schemaName, "contract_product")} where id = $1`, [cpId]) : undefined;
+  const contractId = str(refund.contract_id, str(cp?.contract_id));
+  const contract = contractId ? await one(client, `select * from ${table(schemaName, "contract")} where id = $1`, [contractId]) : undefined;
+  const orgId = str(cp?.organization_id, str(contract?.organization_id));
+  const userId = str(contract?.sign_staff_id);
+  await client.query(
+    `insert into ${table(schemaName, "performance_arrange_log")}
+      (id, contract_product_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id, source_type, source_id, adjustment_reason, ext_json)
+     values ($1,$2,'REFUND_REVERSE',$3,$4,$5,$6,$7,'refund',$8,$9,$10)`,
+    [await nextTextId(client, schemaName, "performance_arrange_log"), cpId || null, orgId || null, -amount, userId || null, userId ? -roundMoney(amount * 0.5) : 0, orgId || null, refundId, str(refund.remark, "退费自动冲减业绩"), JSON.stringify({ sourceRefundId: refundId, contractId })]
+  );
+  return 1;
+}
+
+async function denyLedgerMutation() {
+  throw new Error("电子账户流水为不可变流水，禁止新增/修改/删除；如需调整请通过来源单据或冲正流水处理");
+}
+
 async function createFunds(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
   const input = dataOf(params);
   const fundsId = str(params.id, await nextTextId(client, schemaName, "funds_change_history"));
@@ -383,7 +587,7 @@ async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Re
 
   await client.query(`update ${table(schemaName, "money_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = $1 and deleted = false`, [fundsId]);
   await client.query(`update ${table(schemaName, "promotion_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = $1 and deleted = false`, [fundsId]);
-  await client.query(`update ${table(schemaName, "performance_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = $1 and deleted = false`, [fundsId]);
+  const reversedPerformance = await reversePerformanceForSource(client, schemaName, "funds_void", fundsId, str(dataOf(params).void_reason ?? dataOf(params).remark, "收款作废自动冲回业绩"));
 
   const contractId = str(funds.contract_id);
   const amount = num(funds.transaction_amount);
@@ -421,13 +625,34 @@ async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Re
   }
 
   await client.query(`update ${table(schemaName, "funds_change_history")} set deleted = true, updated_at = now() where id = $1`, [fundsId]);
-  return { deleted: true, fundsId, rolledBackMoney: moneyRows.length, rolledBackPromotion: promotionRows.length };
+  return { deleted: true, fundsId, rolledBackMoney: moneyRows.length, rolledBackPromotion: promotionRows.length, reversedPerformance };
+}
+
+async function deleteContract(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const contractId = str(params.id ?? dataOf(params).id ?? dataOf(params).contract_id);
+  if (!contractId) throw new Error("缺少合同 ID");
+  const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [contractId]);
+  if (!contract) throw new Error("合同不存在或已删除");
+  const funds = await one(client, `select id from ${table(schemaName, "funds_change_history")} where contract_id = $1 and deleted = false limit 1`, [contractId]);
+  if (funds || num(contract.paid_amount) > 0) throw new Error("合同已有收款，不可删除，请走合同退费或作废流程");
+  const charge = await one(client,
+    `select acr.id from ${table(schemaName, "account_charge_records")} acr
+     join ${table(schemaName, "contract_product")} cp on acr.contract_product_id = cp.id
+     where cp.contract_id = $1 and acr.deleted = false and acr.charge_status = 'CONFIRMED' limit 1`,
+    [contractId]
+  );
+  if (charge) throw new Error("合同已有扣费记录，不可删除");
+  const refund = await one(client, `select id from ${table(schemaName, "refund_record")} where contract_id = $1 and deleted = false limit 1`, [contractId]);
+  if (refund) throw new Error("合同已有退费记录，不可删除");
+  await client.query(`update ${table(schemaName, "contract_product")} set deleted = true, updated_at = now() where contract_id = $1 and deleted = false`, [contractId]);
+  await client.query(`update ${table(schemaName, "contract")} set deleted = true, contract_status = 'CANCELLED', updated_at = now() where id = $1`, [contractId]);
+  return { deleted: true, contractId };
 }
 
 async function changeStudentEleAccount(
   client: pg.PoolClient,
   schemaName: string,
-  input: { studentId: string; amount: number; changeType: string; sourceFundsId?: string; sourceRefundId?: string; contractId?: string; remark?: string }
+  input: { studentId: string; amount: number; changeType: string; sourceFundsId?: string; sourceRefundId?: string; contractId?: string; remark?: string; operatorId?: string }
 ) {
   let account = await one(client, `select * from ${table(schemaName, "student_ele_account")} where student_id = $1 and deleted = false for update`, [input.studentId]);
   if (!account) {
@@ -445,9 +670,9 @@ async function changeStudentEleAccount(
   );
   await client.query(
     `insert into ${table(schemaName, "student_ele_account_record")}
-      (id, student_id, account_id, change_type, change_amount, balance_after, source_funds_id, source_refund_id, contract_id, remark)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [await nextTextId(client, schemaName, "student_ele_account_record"), input.studentId, account?.id, input.changeType, input.amount, nextBalance, input.sourceFundsId, input.sourceRefundId, input.contractId, input.remark]
+      (id, student_id, account_id, change_type, change_amount, balance_after, source_funds_id, source_refund_id, contract_id, remark, source_type, source_id, operator_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [await nextTextId(client, schemaName, "student_ele_account_record"), input.studentId, account?.id, input.changeType, input.amount, nextBalance, input.sourceFundsId, input.sourceRefundId, input.contractId, input.remark, input.sourceRefundId ? "REFUND" : input.sourceFundsId ? "FUNDS" : input.contractId ? "CONTRACT" : input.changeType, input.sourceRefundId ?? input.sourceFundsId ?? input.contractId ?? null, input.operatorId ?? null]
   );
   return nextBalance;
 }
@@ -457,11 +682,115 @@ function timeToMinutes(value: unknown) {
   return hour * 60 + minute;
 }
 
-async function createCourse(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
+async function assertStudentsNoTimeConflict(
+  client: pg.PoolClient,
+  schemaName: string,
+  input: Record<string, unknown>,
+  studentIds: string[],
+  excludeCourseId?: string
+) {
+  if (!studentIds.length) return;
+  const { rows } = await client.query(
+    `select gcs.student_id, gc.id as course_id, gc.course_title, gc.course_date, gc.start_time, gc.end_time
+     from ${table(schemaName, "generic_course_student")} gcs
+     join ${table(schemaName, "generic_course")} gc on gcs.course_id = gc.id
+     where gcs.deleted = false and gc.deleted = false and gc.course_status <> 'CANCELLED'
+       and gc.course_date = $1 and gc.start_time < $2 and gc.end_time > $3
+       and gcs.student_id = any($4::text[])
+       and ($5 = '' or gc.id <> $5)
+     limit 1`,
+    [input.course_date, input.end_time, input.start_time, studentIds, excludeCourseId ?? ""]
+  );
+  if (rows[0]) throw new Error(`学员该时间段已有课程: ${rows[0].student_id}`);
+}
+
+async function writeClassStudentHistory(
+  client: pg.PoolClient,
+  schemaName: string,
+  input: { targetType: "mini_class" | "one_on_n_group"; targetId: string; studentId: string; changeType: "JOIN" | "LEAVE"; reason?: unknown; ext?: Record<string, unknown> }
+) {
+  await client.query(
+    `insert into ${table(schemaName, "class_student_change_history")}
+      (id, target_type, target_id, student_id, change_type, reason, ext_json)
+     values ($1,$2,$3,$4,$5,$6,$7)`,
+    [await nextTextId(client, schemaName, "class_student_change_history"), input.targetType, input.targetId, input.studentId, input.changeType, str(input.reason), JSON.stringify(input.ext ?? {})]
+  );
+}
+
+async function cleanupRemovedStudentCourses(
+  client: pg.PoolClient,
+  schemaName: string,
+  input: { studentId: string; miniClassId?: string; oneOnNGroupId?: string; policy: string }
+) {
+  const byMiniClass = Boolean(input.miniClassId);
+  const { rows } = await client.query(
+    `select gcs.*, gc.course_date
+     from ${table(schemaName, "generic_course_student")} gcs
+     join ${table(schemaName, "generic_course")} gc on gcs.course_id = gc.id
+     where gcs.deleted = false and gc.deleted = false and gcs.student_id = $1
+       and ${byMiniClass ? "gc.mini_class_id = $2" : "gc.one_on_n_group_id = $2"}`,
+    [input.studentId, byMiniClass ? input.miniClassId : input.oneOnNGroupId]
+  );
+  let deletedCourseStudents = 0;
+  let reversedCharges = 0;
+  for (const row of rows) {
+    const { rows: charges } = await client.query(
+      `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false for update`,
+      [row.course_id, input.studentId]
+    );
+    const isAttended = str(row.attendance_status) === "PRESENT";
+    if ((isAttended || charges.length > 0) && ["block_attended", "delete_uncharged_course_students"].includes(input.policy)) throw new Error("该学员存在已考勤或已扣费课程，不可移除");
+    if ((isAttended || charges.length > 0) && input.policy === "cancel_attendance_and_charges") {
+      for (const charge of charges) {
+        await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: "移除学员同步取消扣费" }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
+        reversedCharges += 1;
+      }
+      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`, [row.id]);
+    }
+    if (input.policy === "delete_uncharged_course_students" || input.policy === "cancel_attendance_and_charges") {
+      const { rows: remainingCharges } = await client.query(
+        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false limit 1`,
+        [row.course_id, input.studentId]
+      );
+      if (remainingCharges.length === 0) {
+        await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where id = $1`, [row.id]);
+        deletedCourseStudents += 1;
+      }
+    }
+  }
+  return { deletedCourseStudents, reversedCharges };
+}
+
+async function assertNoCourseHoliday(client: pg.PoolClient, schemaName: string, input: Record<string, unknown>, rule: BusinessRule) {
+  if (rule.preventHolidayScheduling === false) return;
+  const courseDate = str(input.course_date);
+  if (!courseDate) return;
+  const holiday = await one(client,
+    `select id, name from ${table(schemaName, "course_holiday_calendar")}
+     where deleted = false and coalesce(block_course,true) = true
+       and holiday_date <= $1::date and coalesce(end_date, holiday_date) >= $1::date
+       and (organization_id is null or organization_id = '' or organization_id = $2)
+     limit 1`,
+    [courseDate, str(input.organization_id)]
+  );
+  if (holiday) throw new Error(`停课日历已设置停课：${str(holiday.name, String(holiday.id ?? ""))}`);
+}
+
+async function createCourse(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule): Promise<Record<string, unknown>> {
   const input = dataOf(params);
+  const courseDates = Array.isArray(input.course_dates) ? input.course_dates.map((value) => str(value)).filter(Boolean) : [];
+  if (courseDates.length > 1) {
+    const courses = [];
+    for (const courseDate of courseDates) {
+      courses.push(await createCourse(client, schemaName, { ...params, id: undefined, data: { ...input, course_date: courseDate, course_dates: undefined } }, rule));
+    }
+    return { batch: true, count: courses.length, courses };
+  }
+  if (!input.course_date && courseDates.length === 1) input.course_date = courseDates[0];
   const courseId = str(params.id, await nextTextId(client, schemaName, "generic_course"));
   if (!input.course_date || !input.start_time || !input.end_time) throw new Error("排课必须填写日期和时间");
   if (timeToMinutes(input.end_time) <= timeToMinutes(input.start_time)) throw new Error("结束时间必须晚于开始时间");
+  await assertNoCourseHoliday(client, schemaName, input, rule);
   if (rule.preventTeacherTimeConflict !== false && input.teacher_id) {
     const conflict = await one(client,
       `select id from ${table(schemaName, "generic_course")}
@@ -501,13 +830,16 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
   const oneOnNGroupId = str(input.one_on_n_group_id);
 
   if (miniClassId) {
+    const miniClass = await one(client, `select product_id, grade, subject from ${table(schemaName, "mini_class")} where id = $1 and deleted = false`, [miniClassId]);
+    const matchContext = { productId: input.product_id ?? miniClass?.product_id, grade: input.grade ?? miniClass?.grade, subject: input.subject ?? miniClass?.subject };
     const { rows: classStudents } = await client.query(
       `select mcs.student_id, mcs.mini_class_id from ${table(schemaName, "mini_class_student")} mcs where mcs.mini_class_id = $1 and mcs.deleted = false`,
       [miniClassId]
     );
+    if (rule.preventStudentTimeConflict !== false) await assertStudentsNoTimeConflict(client, schemaName, input, classStudents.map((row) => str(row.student_id)), courseId);
     for (const cs of classStudents) {
       const matched = studentsWithCp.find((s) => str(s.student_id) === str(cs.student_id));
-      const cpId = matched ? str(matched.contract_product_id) : await autoSelectCp(client, schemaName, str(cs.student_id), input.product_id);
+      const cpId = matched ? str(matched.contract_product_id) : await autoSelectCp(client, schemaName, str(cs.student_id), matchContext, rule);
       await client.query(
         `insert into ${table(schemaName, "generic_course_student")}
           (id, course_id, student_id, attendance_status, contract_product_id, mini_class_id)
@@ -519,13 +851,16 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
   }
 
   if (oneOnNGroupId) {
+    const group = await one(client, `select product_id, grade, subject from ${table(schemaName, "one_on_n_group")} where id = $1 and deleted = false`, [oneOnNGroupId]);
+    const matchContext = { productId: input.product_id ?? group?.product_id, grade: input.grade ?? group?.grade, subject: input.subject ?? group?.subject };
     const { rows: groupStudents } = await client.query(
       `select ogs.student_id, ogs.one_on_n_group_id from ${table(schemaName, "one_on_n_group_student")} ogs where ogs.one_on_n_group_id = $1 and ogs.deleted = false`,
       [oneOnNGroupId]
     );
+    if (rule.preventStudentTimeConflict !== false) await assertStudentsNoTimeConflict(client, schemaName, input, groupStudents.map((row) => str(row.student_id)), courseId);
     for (const gs of groupStudents) {
       const matched = studentsWithCp.find((s) => str(s.student_id) === str(gs.student_id));
-      const cpId = matched ? str(matched.contract_product_id) : await autoSelectCp(client, schemaName, str(gs.student_id), input.product_id);
+      const cpId = matched ? str(matched.contract_product_id) : await autoSelectCp(client, schemaName, str(gs.student_id), matchContext, rule);
       await client.query(
         `insert into ${table(schemaName, "generic_course_student")}
           (id, course_id, student_id, attendance_status, contract_product_id, one_on_n_group_id)
@@ -536,9 +871,11 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
     return { course, studentCount: groupStudents.length, autoLinked: true, source: "one_on_n_group" };
   }
 
-  for (const stu of studentsWithCp.length ? studentsWithCp : studentIds.map((sid) => ({ student_id: sid }))) {
+  const directCourseStudents = studentsWithCp.length ? studentsWithCp : studentIds.map((sid) => ({ student_id: sid }));
+  if (rule.preventStudentTimeConflict !== false) await assertStudentsNoTimeConflict(client, schemaName, input, directCourseStudents.map((row) => str(row.student_id)), courseId);
+  for (const stu of directCourseStudents) {
     const sid = str(stu.student_id);
-    const cpId = str((stu as Record<string, unknown>).contract_product_id) || str(input.contract_product_id);
+    const cpId = str((stu as Record<string, unknown>).contract_product_id) || str(input.contract_product_id) || await autoSelectCp(client, schemaName, sid, { productId: input.product_id, grade: input.grade, subject: input.subject }, rule);
     await client.query(
       `insert into ${table(schemaName, "generic_course_student")}
         (id, course_id, student_id, attendance_status, contract_product_id)
@@ -549,16 +886,42 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
   return { course, studentCount: studentsWithCp.length || studentIds.length };
 }
 
-async function autoSelectCp(client: pg.PoolClient, schemaName: string, studentId: string, productId?: unknown): Promise<string | null> {
-  const pid = productId ? str(productId) : null;
+async function autoSelectCp(
+  client: pg.PoolClient,
+  schemaName: string,
+  studentId: string,
+  context: { productId?: unknown; grade?: unknown; subject?: unknown } = {},
+  rule: BusinessRule = {}
+): Promise<string | null> {
+  const productId = str(context.productId);
+  const grade = str(context.grade);
+  const subject = str(context.subject);
+  const matchRule = (rule.contractProductMatch && typeof rule.contractProductMatch === "object" ? rule.contractProductMatch : {}) as Record<string, unknown>;
+  const requireRemaining = matchRule.requireRemainingRealHour !== false;
+  const matchBy = Array.isArray(matchRule.matchBy) ? matchRule.matchBy.map(String) : ["product_id", "grade", "subject"];
+  const useProductMatch = matchBy.includes("product_id");
+  const useGradeMatch = matchBy.includes("grade");
+  const useSubjectMatch = matchBy.includes("subject");
+  const sortMode = str(matchRule.sortBy, "recent_charge_desc_then_sign_time_desc");
+  const orderBy = sortMode === "sign_time_desc"
+    ? "c.sign_time desc nulls last, cp.created_at asc"
+    : sortMode === "sign_time_asc"
+      ? "c.sign_time asc nulls last, cp.created_at asc"
+      : "last_charge_at desc nulls last, c.sign_time desc nulls last, cp.created_at asc";
   const cp = await one(client,
-    `select cp.id from ${table(schemaName, "contract_product")} cp
+    `select cp.id, max(acr.created_at) as last_charge_at, c.sign_time
+     from ${table(schemaName, "contract_product")} cp
      join ${table(schemaName, "contract")} c on cp.contract_id = c.id
+     join ${table(schemaName, "product")} p on cp.product_id = p.id and p.deleted = false
+     left join ${table(schemaName, "account_charge_records")} acr on acr.contract_product_id = cp.id and acr.charge_status = 'CONFIRMED' and acr.deleted = false
      where c.student_id = $1 and cp.deleted = false and c.deleted = false and c.contract_status = 'ACTIVE'
-       and coalesce(cp.remaining_real_hour,0) > 0
-       ${pid ? "and cp.product_id = $2" : ""}
-     order by cp.created_at asc limit 1`,
-    pid ? [studentId, pid] : [studentId]
+       ${requireRemaining ? "and coalesce(cp.remaining_real_hour,0) > 0" : ""}
+       and ($2 = '' or $5 = false or cp.product_id = $2)
+       and ($3 = '' or $6 = false or coalesce(p.grade_ids, '[]'::jsonb) ? $3)
+       and ($4 = '' or $7 = false or coalesce(p.subject_ids, '[]'::jsonb) ? $4)
+     group by cp.id, c.sign_time, cp.created_at
+     order by ${orderBy} limit 1`,
+    [studentId, productId, grade, subject, useProductMatch, useGradeMatch, useSubjectMatch]
   );
   return cp ? str(cp.id) : null;
 }
@@ -571,8 +934,9 @@ async function createCharge(client: pg.PoolClient, schemaName: string, params: R
   if (!cp) throw new Error("合同产品不存在");
   const chargeType = str(input.charge_type, str(rule.defaultChargeType, "NORMAL"));
   const chargeHour = num(input.charge_hour);
-  const chargeAmount = num(input.charge_amount);
+  let chargeAmount = num(input.charge_amount);
   if (chargeType === "NORMAL") {
+    if (chargeHour >= num(cp.remaining_real_hour) && num(cp.remaining_real_amount) > 0) chargeAmount = num(cp.remaining_real_amount);
     if (rule.allowNegativeBalance !== true && (chargeHour > num(cp.remaining_real_hour) || chargeAmount > num(cp.remaining_real_amount))) {
       throw new Error("实收课时或金额余额不足");
     }
@@ -675,24 +1039,30 @@ async function createRefund(client: pg.PoolClient, schemaName: string, params: R
     const allZero = allCps.every((r) => num(r.rh) <= 0 && num(r.ra) <= 0 && num(r.ph) <= 0 && num(r.pa) <= 0);
     if (allZero) await client.query(`update ${table(schemaName, "contract")} set contract_status = 'REFUNDED', updated_at = now() where id = $1`, [contractId]);
   }
+  if (refund) await arrangeNegativePerformanceForRefund(client, schemaName, str(refund.id), refund, rule);
   return refund;
 }
 
-async function reverseCharge(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
-  const chargeId = str(params.id ?? (dataOf(params)).charge_id);
+async function reverseCharge(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
+  const input = dataOf(params);
+  const chargeId = str(params.id ?? input.charge_id);
   if (!chargeId) throw new Error("缺少扣费记录 ID");
+  const cancelReason = str(input.cancel_reason ?? input.reason ?? input.remark);
+  if (rule.requireCancelReason !== false && !cancelReason) throw new Error("取消扣费必须填写取消原因");
+  const operatorId = str(params.__userId ?? input.operator_id);
   const charge = await one(client, `select * from ${table(schemaName, "account_charge_records")} where id = $1 and deleted = false for update`, [chargeId]);
   if (!charge) throw new Error("扣费记录不存在");
   if (str(charge.charge_status) === "REVERSED") throw new Error("该扣费记录已撤销");
   const cpId = str(charge.contract_product_id);
   const reverseId = await nextTextId(client, schemaName, "account_charge_records");
+  const cancelMeta = { reversedFrom: chargeId, cancelReason, operatorId, cancelledAt: new Date().toISOString(), syncAttendance: rule.cancelAttendanceOnChargeReverse !== false };
   await client.query(
     `insert into ${table(schemaName, "account_charge_records")}
-      (id, course_id, charge_type, charge_hour, charge_amount, contract_product_id, organization_id, student_id, charge_status, reversed_record_id, ext_json)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,'REVERSED',$9,$10)`,
-    [reverseId, charge.course_id, charge.charge_type, -num(charge.charge_hour), -num(charge.charge_amount), cpId, charge.organization_id, charge.student_id, chargeId, JSON.stringify({ reversedFrom: chargeId })]
+      (id, course_id, charge_type, charge_hour, charge_amount, contract_product_id, organization_id, student_id, charge_status, reversed_record_id, cancel_reason, cancel_user_id, cancel_time, ext_json)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,'REVERSED',$9,$10,$11,now(),$12)`,
+    [reverseId, charge.course_id, charge.charge_type, -num(charge.charge_hour), -num(charge.charge_amount), cpId, charge.organization_id, charge.student_id, chargeId, cancelReason || null, operatorId || null, JSON.stringify(cancelMeta)]
   );
-  await client.query(`update ${table(schemaName, "account_charge_records")} set charge_status = 'REVERSED', updated_at = now() where id = $1`, [chargeId]);
+  await client.query(`update ${table(schemaName, "account_charge_records")} set charge_status = 'REVERSED', cancel_reason = $2, cancel_user_id = $3, cancel_time = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $4::jsonb, updated_at = now() where id = $1`, [chargeId, cancelReason || null, operatorId || null, JSON.stringify(cancelMeta)]);
   if (cpId) {
     const chargeType = str(charge.charge_type);
     const hour = num(charge.charge_hour);
@@ -705,8 +1075,14 @@ async function reverseCharge(client: pg.PoolClient, schemaName: string, params: 
       await client.query(`update ${table(schemaName, "contract_product")} set consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $1, remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $1, updated_at = now() where id = $2`, [hour, cpId]);
     }
   }
-  return { reversed: true, originalChargeId: chargeId, reverseRecordId: reverseId };
+  let attendanceReset = false;
+  if (str(charge.course_id) && str(charge.student_id) && rule.cancelAttendanceOnChargeReverse !== false) {
+    await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where course_id = $1 and student_id = $2 and deleted = false`, [charge.course_id, charge.student_id]);
+    attendanceReset = true;
+  }
+  return { reversed: true, originalChargeId: chargeId, reverseRecordId: reverseId, cancelReason, operatorId, attendanceReset };
 }
+
 
 async function previewCharge(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
   const input = dataOf(params);
@@ -812,6 +1188,7 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
       ]
     );
     refundRecords.push(refund);
+    if (refund) await arrangeNegativePerformanceForRefund(client, schemaName, str(refund.id), refund, rule);
 
     await client.query(
       `update ${table(schemaName, "contract_product")}
@@ -938,7 +1315,7 @@ async function course_delete(client: pg.PoolClient, schemaName: string, params: 
     [courseId]
   );
   for (const charge of charges) {
-    await reverseCharge(client, schemaName, { id: charge.id });
+    await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: str(dataOf(params).cancel_reason ?? dataOf(params).reason, "删除课程同步取消扣费"), __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
   }
 
   const { rows: students } = await client.query(
@@ -985,6 +1362,17 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     );
     if (!courseStudent) { failed.push({ studentId, reason: "学员不在课程中" }); continue; }
     if (str(courseStudent.attendance_status) === "PRESENT") { succeeded.push({ studentId, skipped: true }); continue; }
+    const targetStatus = str(stu.attendance_status ?? stu.status, "PRESENT");
+    const shouldCharge = targetStatus === "PRESENT" || (targetStatus === "ABSENT" && rule.absentCharge !== false) || (targetStatus === "LEAVE" && rule.leaveCharge === true);
+    if (!["PRESENT", "ABSENT", "LEAVE"].includes(targetStatus)) { failed.push({ studentId, reason: "不支持的考勤状态" }); continue; }
+    if (!shouldCharge) {
+      await client.query(
+        `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), updated_at = now() where id = $2`,
+        [targetStatus, courseStudent.id]
+      );
+      succeeded.push({ studentId, attendanceStatus: targetStatus, chargeHour: 0, chargeAmount: 0 });
+      continue;
+    }
     if (!cpId) { failed.push({ studentId, reason: "未选择合同产品" }); continue; }
 
     const cp = await one(client, `select * from ${table(schemaName, "contract_product")} where id = $1 and deleted = false for update`, [cpId]);
@@ -993,17 +1381,19 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     const cpContract = await one(client, `select student_id from ${table(schemaName, "contract")} where id = $1 and deleted = false`, [cp.contract_id]);
     if (str(cpContract?.student_id) !== studentId) { failed.push({ studentId, reason: "合同产品不属于该学员" }); continue; }
 
-    const chargeAmount = num(cp.plan_real_amount) > 0 && num(cp.plan_real_hour) > 0
-      ? roundMoney(courseHour * (num(cp.plan_real_amount) / num(cp.plan_real_hour)))
-      : roundMoney(courseHour * num(cp.unit_price ?? 0));
+    const rawChargeAmount = num(cp.plan_real_amount) > 0 && num(cp.plan_real_hour) > 0
+      ? courseHour * (num(cp.plan_real_amount) / num(cp.plan_real_hour))
+      : courseHour * num(cp.unit_price ?? 0);
+    const isFinalRealHourCharge = num(cp.remaining_real_hour) <= courseHour;
+    const chargeAmount = isFinalRealHourCharge ? num(cp.remaining_real_amount) : floorMoney(rawChargeAmount);
 
     if (rule.allowNegativeBalance !== true && (num(cp.remaining_real_hour) < courseHour || num(cp.remaining_real_amount) < chargeAmount)) {
       failed.push({ studentId, reason: "合同产品余额不足" }); continue;
     }
 
     await client.query(
-      `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PRESENT', attendance_time = now(), contract_product_id = $1, updated_at = now() where id = $2`,
-      [cpId, courseStudent.id]
+      `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), contract_product_id = $2, updated_at = now() where id = $3`,
+      [targetStatus, cpId, courseStudent.id]
     );
 
     await createCharge(client, schemaName, {
@@ -1016,9 +1406,11 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
       organization_id: course.organization_id
     }, rule);
 
-    succeeded.push({ studentId, contractProductId: cpId, chargeHour: courseHour, chargeAmount });
+    succeeded.push({ studentId, attendanceStatus: targetStatus, contractProductId: cpId, chargeHour: courseHour, chargeAmount });
   }
 
+  const pending = await one(client, `select count(*)::int as cnt from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false and coalesce(attendance_status,'PENDING') = 'PENDING'`, [courseId]);
+  if (num(pending?.cnt) === 0) await client.query(`update ${table(schemaName, "generic_course")} set course_status = 'FINISHED', updated_at = now() where id = $1 and course_status <> 'CANCELLED'`, [courseId]);
   return { courseId, succeeded, failed };
 }
 
@@ -1040,7 +1432,7 @@ async function attendance_cancel(client: pg.PoolClient, schemaName: string, para
     [courseId, studentId]
   );
   for (const charge of charges) {
-    await reverseCharge(client, schemaName, { id: charge.id });
+    await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: str(dataOf(params).cancel_reason ?? dataOf(params).reason, "取消考勤同步取消扣费"), __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
   }
 
   await client.query(
@@ -1051,12 +1443,121 @@ async function attendance_cancel(client: pg.PoolClient, schemaName: string, para
   return { cancelled: true, courseId, studentId, reversedCharges: charges.length };
 }
 
-async function mini_class_add_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+async function createLeaveRecord(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
+  const input = dataOf(params);
+  const studentId = str(input.student_id);
+  if (!studentId) throw new Error("请假必须选择学员");
+  const courseId = str(input.course_id);
+  const leaveId = str(params.id, await nextTextId(client, schemaName, "course_leave_record"));
+  const row = await one(client,
+    `insert into ${table(schemaName, "course_leave_record")}
+      (id, course_id, student_id, leave_type, leave_time, leave_reason, status, organization_id, created_by, ext_json)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
+    [leaveId, courseId || null, studentId, str(input.leave_type, "PERSONAL"), str(input.leave_time, new Date().toISOString()), input.leave_reason, str(input.status, "APPROVED"), input.organization_id, str(params.__userId) || null, JSON.stringify({ ruleCode: "leave_create_rule", rule })]
+  );
+  if (courseId && str(row?.status) === "APPROVED" && rule.approvedLeaveUpdatesAttendance !== false) {
+    await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'LEAVE', attendance_time = now(), updated_at = now() where course_id = $1 and student_id = $2 and deleted = false`, [courseId, studentId]);
+  }
+  return row;
+}
+
+async function createMakeupRecord(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
+  const input = dataOf(params);
+  const studentId = str(input.student_id ?? (Array.isArray(input.student_ids) ? input.student_ids[0] : undefined));
+  if (!studentId) throw new Error("补课必须选择学员");
+  const originalCourseId = str(input.original_course_id);
+  const courseResult = await createCourse(client, schemaName, { ...params, id: undefined, data: { ...input, student_ids: [studentId], course_type: str(input.course_type, "MAKEUP"), course_status: str(input.course_status, "SCHEDULED"), course_title: str(input.course_title, "补课") } }, rule);
+  const makeupCourse = courseResult.course as Record<string, unknown> | undefined;
+  const row = await one(client,
+    `insert into ${table(schemaName, "makeup_course_record")}
+      (id, original_course_id, makeup_course_id, student_id, makeup_reason, status, organization_id, created_by, ext_json)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
+    [await nextTextId(client, schemaName, "makeup_course_record"), originalCourseId || null, str(makeupCourse?.id), studentId, input.makeup_reason, str(input.status, "SCHEDULED"), input.organization_id, str(params.__userId) || null, JSON.stringify({ ruleCode: "makeup_create_rule", rule })]
+  );
+  return { makeup: row, course: makeupCourse };
+}
+
+async function linkStudentToFutureCourses(
+  client: pg.PoolClient,
+  schemaName: string,
+  studentId: string,
+  scope: { miniClassId?: string; oneOnNGroupId?: string; productId?: unknown; grade?: unknown; subject?: unknown },
+  rule: BusinessRule = {}
+) {
+  const byMiniClass = Boolean(scope.miniClassId);
+  const { rows: courses } = await client.query(
+    `select id from ${table(schemaName, "generic_course")}
+     where deleted = false and course_status <> 'CANCELLED' and course_date >= current_date
+       and ${byMiniClass ? "mini_class_id = $1" : "one_on_n_group_id = $1"}`,
+    [byMiniClass ? scope.miniClassId : scope.oneOnNGroupId]
+  );
+  let linked = 0;
+  for (const course of courses) {
+    const exists = await one(client, `select id from ${table(schemaName, "generic_course_student")} where course_id = $1 and student_id = $2 and deleted = false`, [course.id, studentId]);
+    if (exists) continue;
+    const cpId = await autoSelectCp(client, schemaName, studentId, { productId: scope.productId, grade: scope.grade, subject: scope.subject }, rule);
+    await client.query(
+      `insert into ${table(schemaName, "generic_course_student")}
+        (id, course_id, student_id, attendance_status, contract_product_id, mini_class_id, one_on_n_group_id)
+       values ($1,$2,$3,'PENDING',$4,$5,$6)`,
+      [await nextTextId(client, schemaName, "generic_course_student"), course.id, studentId, cpId, scope.miniClassId ?? null, scope.oneOnNGroupId ?? null]
+    );
+    linked += 1;
+  }
+  return linked;
+}
+
+async function transferClassStudents(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
+  const input = dataOf(params);
+  const targetType = str(input.target_type, "mini_class");
+  const studentIds = (Array.isArray(input.student_ids) ? input.student_ids : [input.student_id]).map(String).filter(Boolean);
+  if (!studentIds.length) throw new Error("批量调班必须选择学员");
+  const fromId = str(input.from_target_id ?? input.from_class_id ?? input.from_group_id);
+  const toId = str(input.to_target_id ?? input.to_class_id ?? input.to_group_id);
+  if (!fromId || !toId) throw new Error("批量调班必须选择原班级/小组和目标班级/小组");
+  if (fromId === toId) throw new Error("原班级/小组和目标班级/小组不能相同");
+  const isMini = targetType !== "one_on_n_group";
+  const memberTable = isMini ? "mini_class_student" : "one_on_n_group_student";
+  const targetColumn = isMini ? "mini_class_id" : "one_on_n_group_id";
+  const target = await one(client, `select * from ${table(schemaName, isMini ? "mini_class" : "one_on_n_group")} where id = $1 and deleted = false for update`, [toId]);
+  if (!target) throw new Error("目标班级/小组不存在");
+  if (["CLOSED", "FULL"].includes(str(target.status))) throw new Error("目标班级/小组已满班或已结班");
+  const count = await one(client, `select count(*)::int as cnt from ${table(schemaName, memberTable)} where ${targetColumn} = $1 and deleted = false`, [toId]);
+  if (num(count?.cnt) + studentIds.length > num(target.capacity, 999)) throw new Error("目标班级/小组容量不足");
+  let transferred = 0;
+  for (const studentId of studentIds) {
+    const record = await one(client, `select * from ${table(schemaName, memberTable)} where ${targetColumn} = $1 and student_id = $2 and deleted = false`, [fromId, studentId]);
+    if (!record) continue;
+    await cleanupRemovedStudentCourses(client, schemaName, { studentId, miniClassId: isMini ? fromId : undefined, oneOnNGroupId: isMini ? undefined : fromId, policy: str(rule.transferFutureCoursePolicy, "delete_uncharged_course_students") });
+    await client.query(`update ${table(schemaName, memberTable)} set deleted = true, updated_at = now() where id = $1`, [record.id]);
+    await client.query(`insert into ${table(schemaName, memberTable)} (id, ${targetColumn}, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`, [await nextTextId(client, schemaName, memberTable), toId, studentId]);
+    const historyType = isMini ? "mini_class" : "one_on_n_group";
+    await writeClassStudentHistory(client, schemaName, { targetType: historyType, targetId: fromId, studentId, changeType: "LEAVE", reason: input.reason, ext: { transferTo: toId, linkedBy: "classStudent.transfer" } });
+    await writeClassStudentHistory(client, schemaName, { targetType: historyType, targetId: toId, studentId, changeType: "JOIN", reason: input.reason, ext: { transferFrom: fromId, linkedBy: "classStudent.transfer" } });
+    await linkStudentToFutureCourses(client, schemaName, studentId, { miniClassId: isMini ? toId : undefined, oneOnNGroupId: isMini ? undefined : toId, productId: target.product_id, grade: target.grade, subject: target.subject }, rule);
+    transferred += 1;
+  }
+  return { transferred, targetType, fromId, toId };
+}
+
+async function changeClassStatus(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const targetType = str(input.target_type, String(params.target_type ?? "mini_class"));
+  const id = str(input.id ?? params.id ?? input.target_id);
+  const status = str(input.target_status ?? input.status);
+  if (!id || !status) throw new Error("缺少班级/小组 ID 或状态");
+  const targetTable = targetType === "one_on_n_group" ? "one_on_n_group" : "mini_class";
+  await client.query(`update ${table(schemaName, targetTable)} set status = $1, updated_at = now() where id = $2 and deleted = false`, [status, id]);
+  return { updated: true, targetType, id, status };
+}
+
+async function mini_class_add_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
   const input = dataOf(params);
   const miniClassId = str(input.mini_class_id);
   if (!miniClassId) throw new Error("缺少班级 ID");
   const miniClass = await one(client, `select * from ${table(schemaName, "mini_class")} where id = $1 and deleted = false for update`, [miniClassId]);
   if (!miniClass) throw new Error("班级不存在");
+  if (["CLOSED", "FULL"].includes(str(miniClass.status))) throw new Error("班级已满班或已结班，不能继续添加学员");
 
   const studentIds = (Array.isArray(input.student_ids) ? input.student_ids : []).map(String).filter(Boolean);
   if (!studentIds.length) throw new Error("至少选择一个学员");
@@ -1066,18 +1567,21 @@ async function mini_class_add_student(client: pg.PoolClient, schemaName: string,
   if (existingSet.size + studentIds.length > num(miniClass.capacity, 999)) throw new Error("超出班级容量");
 
   const added: string[] = [];
+  let linkedCourses = 0;
   for (const studentId of studentIds) {
     if (existingSet.has(studentId)) continue;
     await client.query(
       `insert into ${table(schemaName, "mini_class_student")} (id, mini_class_id, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`,
       [await nextTextId(client, schemaName, "mini_class_student"), miniClassId, studentId]
     );
+    await writeClassStudentHistory(client, schemaName, { targetType: "mini_class", targetId: miniClassId, studentId, changeType: "JOIN", reason: input.reason, ext: { linkedBy: "miniClass.addStudent" } });
+    linkedCourses += await linkStudentToFutureCourses(client, schemaName, studentId, { miniClassId, productId: miniClass.product_id, grade: miniClass.grade, subject: miniClass.subject }, rule);
     added.push(studentId);
   }
-  return { miniClassId, added: added.length };
+  return { miniClassId, added: added.length, linkedCourses };
 }
 
-async function mini_class_remove_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+async function mini_class_remove_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
   const input = dataOf(params);
   const miniClassId = str(input.mini_class_id);
   const studentId = str(input.student_id);
@@ -1086,24 +1590,20 @@ async function mini_class_remove_student(client: pg.PoolClient, schemaName: stri
   const record = await one(client, `select * from ${table(schemaName, "mini_class_student")} where mini_class_id = $1 and student_id = $2 and deleted = false`, [miniClassId, studentId]);
   if (!record) throw new Error("学员不在该班级中");
 
-  const { rows: attendance } = await client.query(
-    `select gcs.id from ${table(schemaName, "generic_course_student")} gcs
-     join ${table(schemaName, "generic_course")} gc on gcs.course_id = gc.id
-     where gc.mini_class_id = $1 and gcs.student_id = $2 and gcs.attendance_status = 'PRESENT' and gcs.deleted = false and gc.deleted = false`,
-    [miniClassId, studentId]
-  );
-  if (attendance.length > 0) throw new Error("该学员存在未完成考勤，不可移除");
-
+  const policy = str(rule.removeAttendedStudentPolicy, "block_attended");
+  const cleanup = await cleanupRemovedStudentCourses(client, schemaName, { studentId, miniClassId, policy });
   await client.query(`update ${table(schemaName, "mini_class_student")} set deleted = true, updated_at = now() where id = $1`, [record.id]);
-  return { removed: true, miniClassId, studentId };
+  await writeClassStudentHistory(client, schemaName, { targetType: "mini_class", targetId: miniClassId, studentId, changeType: "LEAVE", reason: input.reason, ext: { policy, ...cleanup } });
+  return { removed: true, miniClassId, studentId, ...cleanup };
 }
 
-async function one_on_n_group_add_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+async function one_on_n_group_add_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
   const input = dataOf(params);
   const groupId = str(input.one_on_n_group_id);
   if (!groupId) throw new Error("缺少1对N小组 ID");
   const group = await one(client, `select * from ${table(schemaName, "one_on_n_group")} where id = $1 and deleted = false for update`, [groupId]);
   if (!group) throw new Error("1对N小组不存在");
+  if (["CLOSED", "FULL"].includes(str(group.status))) throw new Error("1对N小组已满组或已结组，不能继续添加学员");
 
   const studentIds = (Array.isArray(input.student_ids) ? input.student_ids : []).map(String).filter(Boolean);
   if (!studentIds.length) throw new Error("至少选择一个学员");
@@ -1113,18 +1613,21 @@ async function one_on_n_group_add_student(client: pg.PoolClient, schemaName: str
   if (existingSet.size + studentIds.length > num(group.capacity, 999)) throw new Error("超出小组容量");
 
   const added: string[] = [];
+  let linkedCourses = 0;
   for (const studentId of studentIds) {
     if (existingSet.has(studentId)) continue;
     await client.query(
       `insert into ${table(schemaName, "one_on_n_group_student")} (id, one_on_n_group_id, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`,
       [await nextTextId(client, schemaName, "one_on_n_group_student"), groupId, studentId]
     );
+    await writeClassStudentHistory(client, schemaName, { targetType: "one_on_n_group", targetId: groupId, studentId, changeType: "JOIN", reason: input.reason, ext: { linkedBy: "oneOnNGroup.addStudent" } });
+    linkedCourses += await linkStudentToFutureCourses(client, schemaName, studentId, { oneOnNGroupId: groupId, grade: group.grade, subject: group.subject }, rule);
     added.push(studentId);
   }
-  return { oneOnNGroupId: groupId, added: added.length };
+  return { oneOnNGroupId: groupId, added: added.length, linkedCourses };
 }
 
-async function one_on_n_group_remove_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+async function one_on_n_group_remove_student(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
   const input = dataOf(params);
   const groupId = str(input.one_on_n_group_id);
   const studentId = str(input.student_id);
@@ -1133,16 +1636,11 @@ async function one_on_n_group_remove_student(client: pg.PoolClient, schemaName: 
   const record = await one(client, `select * from ${table(schemaName, "one_on_n_group_student")} where one_on_n_group_id = $1 and student_id = $2 and deleted = false`, [groupId, studentId]);
   if (!record) throw new Error("学员不在该小组中");
 
-  const { rows: attendance } = await client.query(
-    `select gcs.id from ${table(schemaName, "generic_course_student")} gcs
-     join ${table(schemaName, "generic_course")} gc on gcs.course_id = gc.id
-     where gc.one_on_n_group_id = $1 and gcs.student_id = $2 and gcs.attendance_status = 'PRESENT' and gcs.deleted = false and gc.deleted = false`,
-    [groupId, studentId]
-  );
-  if (attendance.length > 0) throw new Error("该学员存在未完成考勤，不可移除");
-
+  const policy = str(rule.removeAttendedStudentPolicy, "block_attended");
+  const cleanup = await cleanupRemovedStudentCourses(client, schemaName, { studentId, oneOnNGroupId: groupId, policy });
   await client.query(`update ${table(schemaName, "one_on_n_group_student")} set deleted = true, updated_at = now() where id = $1`, [record.id]);
-  return { removed: true, oneOnNGroupId: groupId, studentId };
+  await writeClassStudentHistory(client, schemaName, { targetType: "one_on_n_group", targetId: groupId, studentId, changeType: "LEAVE", reason: input.reason, ext: { policy, ...cleanup } });
+  return { removed: true, oneOnNGroupId: groupId, studentId, ...cleanup };
 }
 
 async function cancelCourse(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
@@ -1174,7 +1672,8 @@ async function saveCourseStudents(client: pg.PoolClient, schemaName: string, par
 async function saveMoneyArrange(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
   const input = dataOf(params);
   const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
-  for (const item of items) {
+  for (const rawItem of items) {
+    const item = { ...input, ...rawItem };
     await client.query(`insert into ${table(schemaName, "money_arrange_log")} (id, contract_product_id, arrange_real_hour, arrange_real_amount, funds_change_history_id, organization_id) values ($1,$2,$3,$4,$5,$6)`, [await nextTextId(client, schemaName, "money_arrange_log"), item.contract_product_id, num(item.arrange_real_hour), num(item.arrange_real_amount), item.funds_change_history_id, item.organization_id]);
   }
   return { saved: items.length };
@@ -1183,7 +1682,8 @@ async function saveMoneyArrange(client: pg.PoolClient, schemaName: string, param
 async function savePromotionArrange(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
   const input = dataOf(params);
   const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
-  for (const item of items) {
+  for (const rawItem of items) {
+    const item = { ...input, ...rawItem };
     await client.query(`insert into ${table(schemaName, "promotion_arrange_log")} (id, contract_product_id, arrange_promotion_hour, arrange_promotion_amount, funds_change_history_id, organization_id) values ($1,$2,$3,$4,$5,$6)`, [await nextTextId(client, schemaName, "promotion_arrange_log"), item.contract_product_id, num(item.arrange_promotion_hour), num(item.arrange_promotion_amount), item.funds_change_history_id, item.organization_id]);
   }
   return { saved: items.length };
@@ -1191,9 +1691,15 @@ async function savePromotionArrange(client: pg.PoolClient, schemaName: string, p
 
 async function savePerformanceArrange(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
   const input = dataOf(params);
-  const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
-  for (const item of items) {
-    await client.query(`insert into ${table(schemaName, "performance_arrange_log")} (id, contract_product_id, funds_change_history_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [await nextTextId(client, schemaName, "performance_arrange_log"), item.contract_product_id, item.funds_change_history_id, item.performance_type, item.organization_performance_organization_id, num(item.organization_performance_amount), item.personal_performance_user_id, num(item.personal_performance_amount), item.organization_id]);
+  const items = Array.isArray(input.items) && input.items.length ? input.items as Record<string, unknown>[] : [input];
+  for (const rawItem of items) {
+    const item = { ...input, ...rawItem };
+    await client.query(
+      `insert into ${table(schemaName, "performance_arrange_log")}
+        (id, contract_product_id, funds_change_history_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id, source_type, source_id, adjustment_reason, ext_json)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [await nextTextId(client, schemaName, "performance_arrange_log"), item.contract_product_id, item.funds_change_history_id, str(item.performance_type, "MANUAL_ADJUST"), item.organization_performance_organization_id, num(item.organization_performance_amount), item.personal_performance_user_id, num(item.personal_performance_amount), item.organization_id, str(item.source_type, "MANUAL_ADJUSTMENT"), item.source_id, item.adjustment_reason, JSON.stringify({ operatorId: params.__userId ?? null, manual: true })]
+    );
   }
   return { saved: items.length };
 }
@@ -1212,7 +1718,8 @@ async function saveProductGrant(client: pg.PoolClient, schemaName: string, param
   const productId = str(input.product_id);
   const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
   await client.query(`update ${table(schemaName, "product_grant")} set deleted = true, updated_at = now() where product_id = $1 and deleted = false`, [productId]);
-  for (const item of items) {
+  for (const rawItem of items) {
+    const item = { ...input, ...rawItem };
     await client.query(`insert into ${table(schemaName, "product_grant")} (id, product_id, organization_id) values ($1,$2,$3) on conflict (id) do update set deleted = false, updated_at = now()`, [await nextTextId(client, schemaName, "product_grant"), productId, item.organization_id]);
   }
   return { saved: items.length };
@@ -1250,7 +1757,8 @@ async function saveRolePermission(client: pg.PoolClient, schemaName: string, par
   }
   const items = Array.isArray(input.items) ? input.items as Record<string, unknown>[] : [];
   await client.query(`update ${table(schemaName, "role_resource")} set deleted = true, updated_at = now() where role_id = $1 and deleted = false`, [roleId]);
-  for (const item of items) {
+  for (const rawItem of items) {
+    const item = { ...input, ...rawItem };
     await client.query(`insert into ${table(schemaName, "role_resource")} (id, role_id, resource_code, resource_type, page_code, action_code, page_permission, button_permission, data_permission, field_permission) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [await nextTextId(client, schemaName, "role_resource"), roleId, item.resource_code ?? null, item.resource_type ?? "page", item.page_code, item.action_code ?? null, item.page_permission ?? "read", JSON.stringify(item.button_permission ?? []), item.data_permission ?? "all", JSON.stringify(item.field_permission ?? {})]);
   }
   return { saved: items.length, roleId };
@@ -1330,14 +1838,81 @@ async function reportCourse(client: pg.PoolClient, schemaName: string, params: R
   return { data: rows };
 }
 
+async function approveApprovalTask(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const taskId = str(input.id ?? input.task_id ?? input.taskId ?? params.id);
+  const userId = str(params.__userId ?? input.operator_user_id);
+  if (!taskId) throw new Error("缺少审批任务 ID");
+  const task = await one(client, `select * from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [taskId]);
+  if (!task) throw new Error("审批任务不存在");
+  if (task.status !== "PENDING") throw new Error("审批任务不是待审批状态");
+  if (task.current_approver_user_id && userId && String(task.current_approver_user_id) !== userId) throw new Error("当前用户不是此节点审批人");
+  const form = asObject(task.form_json);
+  const steps = asArray(form.steps);
+  const stepIndex = num(task.current_step_index);
+  const currentStep = steps[stepIndex] ?? {};
+  const nextStep = steps[stepIndex + 1];
+  await insertApprovalLog(client, schemaName, taskId, "APPROVE", userId, str(input.comment, "同意"), currentStep, { stepIndex });
+  if (nextStep) {
+    const nextApprover = await resolveApproverUserId(client, schemaName, str(nextStep.assigneeRole), str(task.organization_id));
+    await client.query(`update ${table(schemaName, "approval_task")} set current_step_index = $1, current_approver_user_id = $2, updated_at = now() where id = $3`, [stepIndex + 1, nextApprover, taskId]);
+    return { taskId, status: "PENDING", currentStepIndex: stepIndex + 1, currentApproverUserId: nextApprover };
+  }
+  await client.query(`update ${table(schemaName, "approval_task")} set status = 'APPROVED', current_approver_user_id = null, approved_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId]);
+  let businessResult: unknown;
+  const originalCommand = str(form.originalCommand) as CommandDsl["command"];
+  if (originalCommand) {
+    businessResult = await runCommandInTransaction(client, schemaName, {
+      operation: "command",
+      command: originalCommand,
+      ruleCode: str(form.originalRuleCode),
+    }, { ...asObject(form.originalParams), __approvalApproved: true, approval_task_id: taskId, __userId: userId });
+  }
+  return { taskId, status: "APPROVED", businessResult, afterApproved: form.afterApproved ?? [] };
+}
+
+async function rejectApprovalTask(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const taskId = str(input.id ?? input.task_id ?? input.taskId ?? params.id);
+  const userId = str(params.__userId ?? input.operator_user_id);
+  if (!taskId) throw new Error("缺少审批任务 ID");
+  const task = await one(client, `select * from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [taskId]);
+  if (!task) throw new Error("审批任务不存在");
+  if (task.status !== "PENDING") throw new Error("审批任务不是待审批状态");
+  const form = asObject(task.form_json);
+  await insertApprovalLog(client, schemaName, taskId, "REJECT", userId, str(input.comment ?? input.reason, "驳回"), asArray(form.steps)[num(task.current_step_index)], {});
+  await client.query(`update ${table(schemaName, "approval_task")} set status = 'REJECTED', current_approver_user_id = null, rejected_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId]);
+  return { taskId, status: "REJECTED" };
+}
+
+async function cancelApprovalTask(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const taskId = str(input.id ?? input.task_id ?? input.taskId ?? params.id);
+  const userId = str(params.__userId ?? input.operator_user_id);
+  if (!taskId) throw new Error("缺少审批任务 ID");
+  const task = await one(client, `select * from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [taskId]);
+  if (!task) throw new Error("审批任务不存在");
+  if (task.status !== "PENDING") throw new Error("只有待审批任务可撤回");
+  if (task.applicant_user_id && userId && String(task.applicant_user_id) !== userId) throw new Error("只有申请人可以撤回审批");
+  await insertApprovalLog(client, schemaName, taskId, "CANCEL", userId, str(input.comment ?? input.reason, "撤回"), undefined, {});
+  await client.query(`update ${table(schemaName, "approval_task")} set status = 'CANCELED', current_approver_user_id = null, canceled_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId]);
+  return { taskId, status: "CANCELED" };
+}
+
 export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, params: Record<string, unknown>) {
   const simpleCommands: Partial<Record<CommandDsl["command"], (c: pg.PoolClient, s: string, p: Record<string, unknown>) => Promise<unknown>>> = {
     "chargeRecord.reverse": reverseCharge,
+    "ledger.denyMutation": denyLedgerMutation,
     "funds.delete": deleteFunds,
+    "contract.delete": deleteContract,
     "refund.delete": refund_delete,
     "course.delete": course_delete,
 
     "attendance.cancel": attendance_cancel,
+    "classStudent.transfer": transferClassStudents,
+    "class.changeStatus": changeClassStatus,
+    "leave.create": createLeaveRecord,
+    "makeup.create": createMakeupRecord,
     "miniClass.addStudent": mini_class_add_student,
     "miniClass.removeStudent": mini_class_remove_student,
     "oneOnNGroup.addStudent": one_on_n_group_add_student,
@@ -1351,6 +1926,10 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
     "student.assignManager": assignManager,
     "product.grant.save": saveProductGrant,
     "product.promotion.save": saveProductPromotion,
+    "approval.submit": submitApprovalTask,
+    "approval.approve": approveApprovalTask,
+    "approval.reject": rejectApprovalTask,
+    "approval.cancel": cancelApprovalTask,
     "role.permission.save": saveRolePermission,
     "user.create": createUser,
     "user.update": updateUser,
@@ -1364,11 +1943,12 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
 
   const simpleFn = simpleCommands[dsl.command];
   if (simpleFn) {
-    if (["chargeRecord.reverse", "funds.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "student.assignManager", "product.grant.save", "product.promotion.save", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
+    if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "funds.delete", "contract.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
       return withClient(async (client) => {
         await client.query("begin");
         try {
-          const result = await simpleFn(client, schemaName, params);
+          const approval = await maybeSubmitApprovalTask(client, schemaName, dsl, params);
+          const result = approval ?? await runCommandInTransaction(client, schemaName, dsl, params, simpleFn);
           await client.query("commit");
           return result;
         } catch (error) {
@@ -1383,21 +1963,8 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
   return withClient(async (client) => {
     await client.query("begin");
     try {
-      const rule = await loadRule(client, schemaName, dsl.ruleCode);
-      const result =
-        dsl.command === "contract.create"
-          ? await createContract(client, schemaName, params, rule)
-          : dsl.command === "funds.create"
-            ? await createFunds(client, schemaName, params, rule)
-            : dsl.command === "course.create"
-              ? await createCourse(client, schemaName, params, rule)
-              : dsl.command === "chargeRecord.create"
-                ? await createCharge(client, schemaName, params, rule)
-                : dsl.command === "contract.refund"
-                  ? await contract_refund(client, schemaName, params, rule)
-                  : dsl.command === "attendance.checkIn"
-                    ? await attendance_check_in(client, schemaName, params, rule)
-                    : await createRefund(client, schemaName, params, rule);
+      const approval = await maybeSubmitApprovalTask(client, schemaName, dsl, params);
+      const result = approval ?? await runCommandInTransaction(client, schemaName, dsl, params);
       await client.query("commit");
       return result;
     } catch (error) {

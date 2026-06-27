@@ -373,7 +373,7 @@ export async function migrate() {
       );
       create table if not exists "${schema}".product (
         id text primary key, name text not null, unit_price numeric default 0, default_course_hour numeric default 0,
-        total_amount numeric default 0, product_type text, status text default 'ACTIVE', ext_json jsonb not null default '{}',
+        total_amount numeric default 0, product_type text, subject_ids jsonb not null default '[]', grade_ids jsonb not null default '[]', status text default 'ACTIVE', ext_json jsonb not null default '{}',
         created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text,
         deleted boolean not null default false
       );
@@ -439,7 +439,7 @@ export async function migrate() {
       );
       create table if not exists "${schema}".student_ele_account_record (
         id text primary key, student_id text not null, account_id text not null, change_type text not null,
-        change_amount numeric default 0, balance_after numeric default 0, source_funds_id text, contract_id text,
+        change_amount numeric default 0, balance_after numeric default 0, source_funds_id text, source_refund_id text, contract_id text, source_type text, source_id text, operator_id text,
         remark text, ext_json jsonb default '{}',
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
@@ -457,7 +457,7 @@ export async function migrate() {
         id text primary key, contract_product_id text, funds_change_history_id text, performance_type text,
         organization_performance_organization_id text, organization_performance_amount numeric default 0,
         personal_performance_user_id text, personal_performance_amount numeric default 0,
-        organization_id text, ext_json jsonb default '{}',
+        organization_id text, source_type text, source_id text, adjustment_reason text, ext_json jsonb default '{}',
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
       create table if not exists "${schema}".refund_record (
@@ -466,7 +466,7 @@ export async function migrate() {
         remark text, ext_json jsonb default '{}', created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
       create table if not exists "${schema}".mini_class (
-        id text primary key, name text not null, organization_id text, teacher_id text, study_manager_id text, capacity int, status text,
+        id text primary key, name text not null, organization_id text, teacher_id text, study_manager_id text, product_id text, capacity int, status text,
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
       create table if not exists "${schema}".mini_class_student (
@@ -475,13 +475,36 @@ export async function migrate() {
         created_by text, updated_by text, deleted boolean not null default false
       );
       create table if not exists "${schema}".one_on_n_group (
-        id text primary key, name text not null, organization_id text, teacher_id text, study_manager_id text, capacity int, status text,
+        id text primary key, name text not null, organization_id text, teacher_id text, study_manager_id text, product_id text, capacity int, status text,
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
       create table if not exists "${schema}".one_on_n_group_student (
         id text primary key, one_on_n_group_id text not null, student_id text not null, join_date date, status text not null default 'ACTIVE',
         ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
         created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".class_student_change_history (
+        id text primary key, target_type text not null, target_id text not null, student_id text not null, change_type text not null,
+        reason text, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+        created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".course_leave_record (
+        id text primary key, course_id text, student_id text not null, leave_type text default 'PERSONAL',
+        leave_time timestamptz default now(), leave_reason text, status text default 'APPROVED', organization_id text,
+        created_by text, updated_by text, ext_json jsonb not null default '{}',
+        created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
+      );
+      create table if not exists "${schema}".makeup_course_record (
+        id text primary key, original_course_id text, makeup_course_id text, student_id text not null,
+        makeup_reason text, status text default 'SCHEDULED', organization_id text,
+        created_by text, updated_by text, ext_json jsonb not null default '{}',
+        created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
+      );
+      create table if not exists "${schema}".course_holiday_calendar (
+        id text primary key, name text not null, holiday_date date not null, end_date date, organization_id text,
+        holiday_type text default 'CAMPUS_CLOSED', block_course boolean default true, remark text,
+        created_by text, updated_by text, ext_json jsonb not null default '{}',
+        created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
       create table if not exists "${schema}".pay_way_config (
         id text primary key, name text not null, pay_way_type text, status text default 'ACTIVE',
@@ -514,6 +537,11 @@ export async function migrate() {
         form_json jsonb default '{}', organization_id text,
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
+      create table if not exists "${schema}".approval_task_log (
+        id text primary key, task_id text not null, step_code text, step_name text, action text not null,
+        operator_user_id text, comment text, snapshot_json jsonb default '{}',
+        created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
+      );
       create table if not exists "${schema}".report_config (
         id text primary key, report_code text not null, report_name text not null, module_code text,
         api_code text, page_code text, config_json jsonb default '{}', status text default 'ACTIVE',
@@ -533,10 +561,34 @@ export async function migrate() {
     await exec(`ALTER TABLE IF EXISTS "${schema}".organization ADD COLUMN IF NOT EXISTS parent_id text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}"."user" ADD COLUMN IF NOT EXISTS management_organization_ids jsonb NOT NULL DEFAULT '[]'`);
     await exec(`ALTER TABLE IF EXISTS "${schema}"."user" ADD COLUMN IF NOT EXISTS last_login_time timestamptz`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS current_step_index int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS approved_at timestamptz`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS rejected_at timestamptz`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS canceled_at timestamptz`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS completed_at timestamptz`);
+    await exec(`CREATE INDEX IF NOT EXISTS approval_task_pending_approver_idx ON "${schema}".approval_task(current_approver_user_id, status)`);
+    await exec(`CREATE INDEX IF NOT EXISTS approval_task_applicant_idx ON "${schema}".approval_task(applicant_user_id, status)`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".login_session ADD COLUMN IF NOT EXISTS ip text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".login_session ADD COLUMN IF NOT EXISTS device_info text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".login_session ADD COLUMN IF NOT EXISTS logout_time timestamptz`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".login_session ADD COLUMN IF NOT EXISTS login_time timestamptz NOT NULL DEFAULT now()`);
+
+    await exec(`ALTER TABLE IF EXISTS "${schema}".product ADD COLUMN IF NOT EXISTS subject_ids jsonb NOT NULL DEFAULT '[]'`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".product ADD COLUMN IF NOT EXISTS grade_ids jsonb NOT NULL DEFAULT '[]'`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mini_class ADD COLUMN IF NOT EXISTS product_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mini_class ADD COLUMN IF NOT EXISTS grade text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mini_class ADD COLUMN IF NOT EXISTS subject text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".one_on_n_group ADD COLUMN IF NOT EXISTS product_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".one_on_n_group ADD COLUMN IF NOT EXISTS grade text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".one_on_n_group ADD COLUMN IF NOT EXISTS subject text`);
+
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".class_student_change_history (id text primary key, target_type text not null, target_id text not null, student_id text not null, change_type text not null, reason text, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false)`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".course_leave_record (id text primary key, course_id text, student_id text not null, leave_type text default 'PERSONAL', leave_time timestamptz default now(), leave_reason text, status text default 'APPROVED', organization_id text, created_by text, updated_by text, ext_json jsonb not null default '{}', created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false)`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".makeup_course_record (id text primary key, original_course_id text, makeup_course_id text, student_id text not null, makeup_reason text, status text default 'SCHEDULED', organization_id text, created_by text, updated_by text, ext_json jsonb not null default '{}', created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false)`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".course_holiday_calendar (id text primary key, name text not null, holiday_date date not null, end_date date, organization_id text, holiday_type text default 'CAMPUS_CLOSED', block_course boolean default true, remark text, created_by text, updated_by text, ext_json jsonb not null default '{}', created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false)`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_course_leave_course_student ON "${schema}".course_leave_record(course_id, student_id) WHERE deleted = false`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_makeup_course_student ON "${schema}".makeup_course_record(student_id, original_course_id) WHERE deleted = false`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_course_holiday_date_org ON "${schema}".course_holiday_calendar(holiday_date, organization_id) WHERE deleted = false`);
 
     await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_mini_class_student_unique ON "${schema}".mini_class_student(mini_class_id, student_id) WHERE deleted = false`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_mini_class_student_class ON "${schema}".mini_class_student(mini_class_id) WHERE deleted = false`);
@@ -552,6 +604,16 @@ export async function migrate() {
     await exec(`ALTER TABLE IF EXISTS "${schema}".generic_course_student ADD COLUMN IF NOT EXISTS one_on_n_group_id text`);
 
     await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account_record ADD COLUMN IF NOT EXISTS source_refund_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".account_charge_records ADD COLUMN IF NOT EXISTS cancel_reason text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".account_charge_records ADD COLUMN IF NOT EXISTS cancel_user_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".account_charge_records ADD COLUMN IF NOT EXISTS cancel_time timestamptz`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account_record ADD COLUMN IF NOT EXISTS source_type text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account_record ADD COLUMN IF NOT EXISTS source_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account_record ADD COLUMN IF NOT EXISTS operator_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS source_type text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS source_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS adjustment_reason text`);
+
   }
 
   await exec(`

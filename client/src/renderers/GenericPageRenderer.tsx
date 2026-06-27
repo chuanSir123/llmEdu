@@ -256,6 +256,11 @@ export function GenericPageRenderer({
       onOpenAiCustomization?.();
       return;
     }
+    if (action.type === "open_page" || action.actionType === "open_page") {
+      const target = action.target ?? (action.targetPageCode ? { pageCode: action.targetPageCode, title: action.label } : undefined);
+      openTarget(target, action.label ?? "打开页面");
+      return;
+    }
     if (action.actionCode.endsWith(".create")) {
       setModal({ type: "create", value: action.defaultValues ?? {}, action });
       return;
@@ -283,6 +288,11 @@ export function GenericPageRenderer({
     }
     if (action.actionCode.endsWith(".edit")) {
       setModal({ type: "edit", value: row });
+      return;
+    }
+    if (action.type === "open_page" || action.actionType === "open_page") {
+      const target = action.target ?? (action.targetPageCode ? { pageCode: action.targetPageCode, title: action.label } : undefined);
+      openTarget(target, action.label ?? "打开页面");
       return;
     }
     if (action.type === "open_modal" && action.fields?.length) {
