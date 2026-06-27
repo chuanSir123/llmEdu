@@ -265,6 +265,35 @@ async function saveApprovalFlow(schemaName: string, params: Record<string, unkno
   return { id: values[0], flowCode };
 }
 
+async function queryApprovalTasks(schemaName: string, params: Record<string, unknown>, user?: SessionUser) {
+  const filters = asObject(params.filters);
+  const values: unknown[] = [];
+  const where = ["t.deleted = false"];
+  if (filters.status) { values.push(filters.status); where.push(`t.status = $${values.length}`); }
+  if (filters.business_type) { values.push(filters.business_type); where.push(`t.business_type = $${values.length}`); }
+  if (params.view === "pending" && user?.userId) { values.push(user.userId); where.push(`t.current_approver_user_id = $${values.length}`); where.push("t.status = 'PENDING'"); }
+  if (params.view === "submitted" && user?.userId) { values.push(user.userId); where.push(`t.applicant_user_id = $${values.length}`); }
+  if (params.view === "done") { where.push("t.status in ('APPROVED','REJECTED','CANCELED')"); }
+  const page = Math.max(Number(params.page ?? 1), 1);
+  const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
+  values.push(pageSize, (page - 1) * pageSize);
+  const { rows } = await pool.query(
+    `select t.id, t.business_type, t.business_id, t.status, t.current_step_index, t.organization_id,
+            t.applicant_user_id, applicant.name as applicant_name,
+            t.current_approver_user_id, approver.name as current_approver_name,
+            f.name as flow_name, f.flow_code, t.form_json, t.created_at, t.updated_at, count(*) over() as __total
+     from ${qIdent(schemaName)}.approval_task t
+     left join ${qIdent(schemaName)}.approval_flow f on f.id = t.flow_id
+     left join ${qIdent(schemaName)}."user" applicant on applicant.id = t.applicant_user_id
+     left join ${qIdent(schemaName)}."user" approver on approver.id = t.current_approver_user_id
+     where ${where.join(" and ")}
+     order by t.updated_at desc
+     limit $${values.length - 1} offset $${values.length}`,
+    values
+  );
+  return { rows: rows.map(({ __total, ...row }) => row), total: Number(rows[0]?.__total ?? 0), page, pageSize };
+}
+
 async function queryBusinessRules(schemaName: string, params: Record<string, unknown>) {
   const filters = asObject(params.filters);
   const values: unknown[] = [schemaName];
@@ -317,7 +346,7 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
   return { id, ruleCode };
 }
 
-async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>) {
+async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>, user?: SessionUser) {
   if (scope !== "tenant") return undefined;
   const businessCommandMap: Record<string, { command: string; ruleCode: string }> = {
     "course_list.create": { command: "course.create", ruleCode: "course_create_rule" },
@@ -329,10 +358,13 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     "refund_record.create": { command: "refund.create", ruleCode: "refund_create_rule" },
     "refund.delete": { command: "refund.delete", ruleCode: "refund_create_rule" },
     "contract.refund": { command: "contract.refund", ruleCode: "contract_refund_rule" },
+    "approvalTask.approve": { command: "approval.approve", ruleCode: "approval_task_rule" },
+    "approvalTask.reject": { command: "approval.reject", ruleCode: "approval_task_rule" },
+    "approvalTask.cancel": { command: "approval.cancel", ruleCode: "approval_task_rule" },
   };
   const businessCommand = businessCommandMap[apiCode];
   if (businessCommand) {
-    return executeCommandDsl(schemaName, { operation: "command", ...businessCommand } as never, params);
+    return executeCommandDsl(schemaName, { operation: "command", ...businessCommand } as never, { ...params, __userId: user?.userId });
   }
   if (apiCode === "permission_config.meta") return listPermissionConfig(schemaName, String(params.roleId ?? params.id ?? ""));
   if (apiCode === "approval_flow_list.query") return queryApprovalFlows(schemaName, params);
@@ -341,6 +373,10 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     await pool.query(`update ${qIdent(schemaName)}.approval_flow set deleted = true, updated_at = now() where id = $1`, [params.id]);
     return { deleted: true, id: params.id };
   }
+  if (apiCode === "approval_task_list.query") return queryApprovalTasks(schemaName, params, user);
+  if (apiCode === "my_pending_approval.query") return queryApprovalTasks(schemaName, { ...params, view: "pending" }, user);
+  if (apiCode === "my_submitted_approval.query") return queryApprovalTasks(schemaName, { ...params, view: "submitted" }, user);
+  if (apiCode === "done_approval.query") return queryApprovalTasks(schemaName, { ...params, view: "done" }, user);
   if (apiCode === "business_rule_list.query") return queryBusinessRules(schemaName, params);
   if (apiCode === "business_rule_list.create" || apiCode === "business_rule_list.update") return saveBusinessRule(schemaName, params);
   if (apiCode === "business_rule_list.delete") {
@@ -356,7 +392,7 @@ export async function executeGatewayApi(scope: "admin" | "tenant", schemaName: s
     if (versionResult !== undefined) return versionResult;
   }
 
-  const configResult = await executeConfigApi(scope, schemaName, apiCode, params);
+  const configResult = await executeConfigApi(scope, schemaName, apiCode, params, user);
   if (configResult !== undefined) return configResult;
 
   const dsl = await loadApiDsl(scope, apiCode, scope === "tenant" ? schemaName : undefined);
@@ -382,7 +418,7 @@ export async function executeGatewayApi(scope: "admin" | "tenant", schemaName: s
 
   let data: unknown;
   if (dsl.operation === "command") {
-    data = await executeCommandDsl(scope === "admin" ? "admin" : schemaName, dsl, params);
+    data = await executeCommandDsl(scope === "admin" ? "admin" : schemaName, dsl, { ...params, __userId: user?.userId });
   } else {
     data = await executeApiDsl(scope === "admin" ? "admin" : schemaName, dsl, params, user);
   }
