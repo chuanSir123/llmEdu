@@ -3,7 +3,7 @@ import { env } from "../config/env.js";
 
 export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
-  ["recruit", "招生", "business", "线索、跟进和转化", 20, "Megaphone"],
+  ["recruit", "招生", "business", "意向学员、跟进和转化", 20, "Megaphone"],
   ["student", "学员", "business", "学员档案和回访", 30, "GraduationCap"],
   ["education", "教务", "business", "排课、上课和扣费", 40, "CalendarDays"],
   ["finance", "财务", "business", "收款、分配和退费", 50, "Wallet"],
@@ -88,7 +88,7 @@ const statusMap = {
 };
 
 const valueLabels = {
-  student_status: { FORMAL: "正式", LEAD: "线索", LOST: "流失" },
+  student_status: { FORMAL: "正式", LEAD: "意向", LOST: "流失" },
   paid_status: { PAID: "已付清", PART_PAID: "部分付款", UNPAID: "未付款", REFUNDED: "已退费" },
   contract_status: { ACTIVE: "生效中", CLOSED: "已结清", CANCELLED: "已取消", REFUNDED: "已退费" },
   course_status: { SCHEDULED: "待上课", FINISHED: "已完成", CANCELLED: "已取消" },
@@ -178,8 +178,33 @@ const contextPreStoreFields = preStoreFields.filter((field) => !["student_id"].i
 const followupCreateFields = [
   { key: "student_id", label: "学员", type: "text", hidden: true },
   { key: "follow_type", label: "跟进方式", type: "text", defaultValue: "PHONE" },
+  { key: "follow_result", label: "跟进结果", type: "text", defaultValue: "CONTACTED" },
   { key: "follow_content", label: "跟进内容", type: "textarea", span: "full" as const, rows: 4 },
   { key: "next_follow_time", label: "下次跟进时间", type: "datetime" }
+];
+
+const leadCreateFields = [
+  { key: "name", label: "学员姓名", type: "text", required: true },
+  { key: "contact", label: "联系电话", type: "text", required: true },
+  { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect, searchable: true },
+  { key: "owner_user_id", label: "招生顾问", type: "text", optionSource: userSelect, searchable: true },
+  { key: "channel_id", label: "招生渠道", type: "text" },
+  { key: "source_type", label: "来源", type: "text", defaultValue: "MANUAL" },
+  { key: "school_name", label: "学校", type: "text" },
+  { key: "grade", label: "年级", type: "text" },
+  { key: "next_follow_time", label: "下次跟进时间", type: "datetime" },
+  { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
+];
+
+const trialLessonCreateFields = [
+  { key: "student_id", label: "学员", type: "text", hidden: true },
+  { key: "course_title", label: "试听课程", type: "text", required: true },
+  { key: "trial_time", label: "试听时间", type: "datetime", required: true },
+  { key: "teacher_id", label: "试听老师", type: "text", optionSource: userSelect, searchable: true },
+  { key: "sales_user_id", label: "邀约顾问", type: "text", optionSource: userSelect, searchable: true },
+  { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect, searchable: true },
+  { key: "course_hour", label: "试听课时", type: "number", defaultValue: 1 },
+  { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
 
 const fundsCreateFields = [
@@ -754,6 +779,7 @@ export const pages: PageSeed[] = [
     ]
   },
 
+
   {
     module: "marketing",
     feature: "wechat_account_binding",
@@ -885,7 +911,10 @@ export const pages: PageSeed[] = [
       { key: "order_no", label: "订单号", filter: true },
       { key: "student_name", label: "学员" },
       { key: "goods_name", label: "商品" },
+      { key: "original_amount", label: "原价金额", type: "number" },
+      { key: "coupon_discount_amount", label: "优惠券抵扣", type: "number" },
       { key: "pay_amount", label: "付款金额", type: "number" },
+      { key: "coupon_claim_id", label: "使用优惠券" },
       { key: "order_status", label: "订单状态", filter: true },
       { key: "payment_status", label: "支付状态", filter: true },
       { key: "contract_id", label: "生成合同" },
@@ -1008,6 +1037,7 @@ export const pages: PageSeed[] = [
       { key: "school_name", label: "学校" }
     ]
   },
+
   {
     module: "system",
     feature: "organization_list",
@@ -1038,6 +1068,77 @@ export const pages: PageSeed[] = [
       { key: "status", label: "状态" }
     ]
   },
+
+  {
+    module: "marketing",
+    feature: "coupon_template_list",
+    page: "coupon_template_list",
+    name: "优惠券模板",
+    table: "coupon_template",
+    group: "营销增长",
+    fields: [
+      { key: "coupon_name", label: "券名称", filter: true },
+      { key: "coupon_type", label: "券类型", filter: true },
+      { key: "discount_amount", label: "优惠金额", type: "number" },
+      { key: "discount_rate", label: "折扣", type: "number" },
+      { key: "valid_from", label: "有效开始", type: "datetime" },
+      { key: "valid_to", label: "有效结束", type: "datetime" },
+      { key: "total_qty", label: "发行量", type: "number" },
+      { key: "status", label: "状态", filter: true }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "coupon_claim_list",
+    page: "coupon_claim_list",
+    name: "优惠券领取",
+    table: "coupon_claim",
+    group: "营销增长",
+    fields: [
+      { key: "coupon_template_id", label: "优惠券模板", filter: true },
+      { key: "student_id", label: "领取学员", filter: true },
+      { key: "coupon_code", label: "券码", filter: true },
+      { key: "claim_time", label: "领取时间", type: "datetime" },
+      { key: "use_status", label: "使用状态", filter: true },
+      { key: "used_order_id", label: "使用订单" },
+      { key: "used_at", label: "使用时间", type: "datetime" }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "landing_page_list",
+    page: "landing_page_list",
+    name: "活动落地页",
+    table: "marketing_landing_page",
+    group: "营销增长",
+    fields: [
+      { key: "page_title", label: "页面标题", filter: true },
+      { key: "campaign_id", label: "关联活动" },
+      { key: "channel_id", label: "投放渠道" },
+      { key: "form_schema_json", label: "表单配置", type: "json_textarea" },
+      { key: "pv_count", label: "访问量", type: "number" },
+      { key: "lead_count", label: "意向学员数", type: "number" },
+      { key: "publish_status", label: "发布状态", filter: true }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "referral_reward_list",
+    page: "referral_reward_list",
+    name: "转介绍奖励",
+    table: "referral_reward",
+    group: "营销增长",
+    fields: [
+      { key: "referrer_student_id", label: "推荐人", filter: true },
+      { key: "referred_student_id", label: "被推荐人", filter: true },
+      { key: "reward_type", label: "奖励类型", filter: true },
+      { key: "reward_amount", label: "奖励金额", type: "number" },
+      { key: "reward_status", label: "奖励状态", filter: true },
+      { key: "issued_at", label: "发放时间", type: "datetime" },
+      { key: "remark", label: "备注" }
+    ]
+  },
+
   {
     module: "finance",
     feature: "pay_way_list",
@@ -1183,9 +1284,11 @@ export const pages: PageSeed[] = [
     table: "student_followup",
     group: "跟进管理",
     fields: [
-      { key: "student_id", label: "学员" },
+      { key: "student_id", label: "学员", filter: true },
+      { key: "lead_stage_id", label: "关联招生阶段" },
       { key: "follow_type", label: "跟进方式" },
       { key: "follow_content", label: "跟进内容" },
+      { key: "follow_result", label: "跟进结果", filter: true },
       { key: "next_follow_time", label: "下次跟进时间", type: "datetime" }
     ]
   },
@@ -1205,6 +1308,130 @@ export const pages: PageSeed[] = [
       { key: "school_name", label: "学校" }
     ],
     fixedFilters: [{ field: "student_status", op: "eq", value: "LEAD" }]
+  },
+  {
+    module: "recruit",
+    feature: "recruit_channel_list",
+    page: "recruit_channel_list",
+    name: "招生渠道",
+    table: "recruit_channel",
+    group: "招生CRM",
+    fields: [
+      { key: "channel_name", label: "渠道名称", filter: true },
+      { key: "channel_type", label: "渠道类型", filter: true },
+      { key: "owner_user_id", label: "负责人" },
+      { key: "cost_amount", label: "投放成本", type: "number" },
+      { key: "lead_count", label: "意向学员数", type: "number" },
+      { key: "conversion_count", label: "转化数", type: "number" },
+      { key: "roi_amount", label: "产出金额", type: "number" },
+      { key: "status", label: "状态", filter: true }
+    ]
+  },
+  {
+    module: "recruit",
+    feature: "lead_stage_list",
+    page: "lead_stage_list",
+    name: "招生漏斗",
+    table: "lead_stage_record",
+    group: "招生CRM",
+    fields: [
+      { key: "student_id", label: "意向学员", filter: true },
+      { key: "stage", label: "当前阶段", filter: true },
+      { key: "owner_user_id", label: "顾问" },
+      { key: "channel_id", label: "来源渠道" },
+      { key: "next_action", label: "下一步动作" },
+      { key: "next_follow_time", label: "下次跟进", type: "datetime" },
+      { key: "lost_reason", label: "流失原因" },
+      { key: "status", label: "状态", filter: true }
+    ]
+  },
+  {
+    module: "recruit",
+    feature: "trial_lesson_list",
+    page: "trial_lesson_list",
+    name: "试听邀约",
+    table: "trial_lesson",
+    group: "招生CRM",
+    fields: [
+      { key: "student_id", label: "试听学员", filter: true },
+      { key: "course_id", label: "生成课次" },
+      { key: "course_title", label: "试听课程", filter: true },
+      { key: "trial_time", label: "试听时间", type: "datetime", filter: true },
+      { key: "teacher_id", label: "试听老师" },
+      { key: "sales_user_id", label: "邀约顾问" },
+      { key: "trial_status", label: "试听状态", filter: true },
+      { key: "feedback", label: "试听反馈" },
+      { key: "conversion_status", label: "转化状态", filter: true }
+    ]
+  },
+  {
+    module: "recruit",
+    feature: "sales_task_list",
+    page: "sales_task_list",
+    name: "销售任务",
+    table: "sales_task",
+    group: "招生CRM",
+    fields: [
+      { key: "task_title", label: "任务标题", filter: true },
+      { key: "student_id", label: "关联学员" },
+      { key: "owner_user_id", label: "负责人", filter: true },
+      { key: "task_type", label: "任务类型", filter: true },
+      { key: "due_time", label: "截止时间", type: "datetime", filter: true },
+      { key: "complete_time", label: "完成时间", type: "datetime" },
+      { key: "task_status", label: "任务状态", filter: true },
+      { key: "remark", label: "备注" }
+    ]
+  },
+
+  {
+    module: "recruit",
+    feature: "lead_assignment_history_list",
+    page: "lead_assignment_history_list",
+    name: "意向学员分配历史",
+    table: "lead_assignment_history",
+    group: "招生CRM",
+    softDelete: false,
+    fields: [
+      { key: "student_id", label: "意向学员", filter: true },
+      { key: "from_user_id", label: "原负责人" },
+      { key: "to_user_id", label: "新负责人" },
+      { key: "action_type", label: "分配动作", filter: true },
+      { key: "reason", label: "原因" },
+      { key: "operator_id", label: "操作人" },
+      { key: "created_at", label: "操作时间", type: "datetime" }
+    ]
+  },
+  {
+    module: "recruit",
+    feature: "recruit_channel_cost_list",
+    page: "recruit_channel_cost_list",
+    name: "渠道成本",
+    table: "recruit_channel_cost",
+    group: "招生CRM",
+    fields: [
+      { key: "channel_id", label: "招生渠道", filter: true },
+      { key: "cost_date", label: "投放日期", type: "date", filter: true },
+      { key: "cost_amount", label: "投放成本", type: "number" },
+      { key: "cost_type", label: "成本类型", filter: true },
+      { key: "remark", label: "备注" }
+    ]
+  },
+  {
+    module: "recruit",
+    feature: "sales_target_list",
+    page: "sales_target_list",
+    name: "销售目标",
+    table: "sales_target",
+    group: "招生CRM",
+    fields: [
+      { key: "owner_user_id", label: "顾问", filter: true },
+      { key: "target_month", label: "目标月份", filter: true },
+      { key: "target_leads", label: "目标意向学员", type: "number" },
+      { key: "target_trials", label: "目标试听", type: "number" },
+      { key: "target_contracts", label: "目标报名", type: "number" },
+      { key: "target_amount", label: "目标金额", type: "number" },
+      { key: "status", label: "状态", filter: true }
+    ]
   },
   {
     module: "education",
@@ -1671,10 +1898,10 @@ export const actionDslSeeds: Array<{ actionCode: string; actionName: string; act
   { actionCode: "student_list.followup", actionName: "新增跟进", actionType: "open_modal", pageCode: "student_list", module: "student", feature: "student_list", dsl: { actionCode: "student_list.followup", actionName: "新增跟进", actionType: "open_modal", afterSuccess: [{ type: "toast", message: "跟进已记录" }, { type: "refreshPage" }] } },
   { actionCode: "student_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "student_list", module: "student", feature: "student_list", dsl: { actionCode: "student_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "student_list.query" } },
   { actionCode: "lead_list.enroll", actionName: "新增报名", actionType: "open_modal", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.enroll", actionName: "新增报名", actionType: "open_modal", modalCode: "contract_add_modal", afterSuccess: [{ type: "toast", message: "报名成功" }, { type: "refreshPage" }] } },
-  { actionCode: "lead_list.create", actionName: "新增线索", actionType: "open_modal", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.create", actionName: "新增线索", actionType: "open_modal", modalCode: "student_add_modal", afterSuccess: [{ type: "toast", message: "线索创建成功" }, { type: "refreshPage" }] } },
-  { actionCode: "lead_list.edit", actionName: "编辑线索", actionType: "open_modal", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.edit", actionName: "编辑线索", actionType: "open_modal", modalCode: "student_edit_modal", afterSuccess: [{ type: "toast", message: "线索更新成功" }, { type: "refreshPage" }] } },
-  { actionCode: "lead_list.detail", actionName: "线索详情", actionType: "open_modal", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.detail", actionName: "线索详情", actionType: "open_modal", modalCode: "student_detail_modal" } },
-  { actionCode: "lead_list.delete", actionName: "删除线索", actionType: "execute_api", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.delete", actionName: "删除线索", actionType: "execute_api", apiCode: "lead_list.delete", confirm: true, afterSuccess: [{ type: "toast", message: "线索已删除" }, { type: "refreshPage" }] } },
+  { actionCode: "lead_list.create", actionName: "新增意向学员", actionType: "open_modal", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.create", actionName: "新增意向学员", actionType: "open_modal", apiCode: "lead_list.create", modalCode: "student_add_modal", defaultValues: { student_status: "LEAD", source_type: "MANUAL" }, afterSuccess: [{ type: "toast", message: "意向学员创建成功" }, { type: "refreshPage" }] } },
+  { actionCode: "lead_list.edit", actionName: "编辑意向学员", actionType: "open_modal", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.edit", actionName: "编辑意向学员", actionType: "open_modal", modalCode: "student_edit_modal", afterSuccess: [{ type: "toast", message: "意向学员更新成功" }, { type: "refreshPage" }] } },
+  { actionCode: "lead_list.detail", actionName: "意向学员详情", actionType: "open_modal", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.detail", actionName: "意向学员详情", actionType: "open_modal", modalCode: "student_detail_modal" } },
+  { actionCode: "lead_list.delete", actionName: "删除意向学员", actionType: "execute_api", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.delete", actionName: "删除意向学员", actionType: "execute_api", apiCode: "lead_list.delete", confirm: true, afterSuccess: [{ type: "toast", message: "意向学员已删除" }, { type: "refreshPage" }] } },
   { actionCode: "lead_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "lead_list", module: "recruit", feature: "lead_list", dsl: { actionCode: "lead_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "lead_list.query" } },
   { actionCode: "contract_list.create", actionName: "新增合同", actionType: "open_page", pageCode: "contract_list", module: "finance", feature: "contract_list", dsl: { actionCode: "contract_list.create", actionName: "新增合同", actionType: "open_page", targetPageCode: "lead_list", target: { pageCode: "lead_list", title: "新生报名" } } },
   { actionCode: "contract_list.edit", actionName: "编辑合同", actionType: "open_modal", pageCode: "contract_list", module: "finance", feature: "contract_list", dsl: { actionCode: "contract_list.edit", actionName: "编辑合同", actionType: "open_modal", modalCode: "contract_add_modal", afterSuccess: [{ type: "toast", message: "合同更新成功" }, { type: "refreshPage" }] } },
@@ -2359,10 +2586,21 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.presentation.modal.size = "fullscreen";
     baseDsl.toolbar = [
       {
+        actionCode: "lead_list.create",
+        label: "新增意向学员",
+        type: "open_modal",
+        variant: "primary",
+        apiCode: "lead_list.create",
+        modalTitle: "新增意向学员",
+        fields: leadCreateFields,
+        defaultValues: { source_type: "MANUAL" },
+        modalSize: "large"
+      },
+      {
         actionCode: "lead_list.enroll",
         label: "新增报名",
         type: "open_modal",
-        variant: "primary",
+        variant: "default",
         apiCode: "contract_list.create",
         modalTitle: "新生报名",
         fields: contractCreateFields,
@@ -2374,7 +2612,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.table.rowActions = [
       {
         actionCode: "lead_list.enroll",
-        label: "批量新增合同",
+        label: "新增合同",
         type: "open_modal",
         apiCode: "contract_list.create",
         modalTitle: "新生报名",
@@ -2383,11 +2621,31 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         mapRowToValue: { student_id: "id", organization_id: "organization_id" },
         modalSize: "large"
       },
+      {
+        actionCode: "lead_list.followup",
+        label: "跟进",
+        type: "open_modal",
+        apiCode: "student_followup_list.create",
+        modalTitle: "新增跟进",
+        fields: followupCreateFields,
+        defaultValues: { follow_type: "PHONE", follow_result: "CONTACTED" },
+        mapRowToValue: { student_id: "id" }
+      },
+      {
+        actionCode: "lead_list.trial",
+        label: "邀约试听",
+        type: "open_modal",
+        apiCode: "trial_lesson_list.create",
+        modalTitle: "邀约试听",
+        fields: trialLessonCreateFields,
+        defaultValues: { course_hour: 1 },
+        mapRowToValue: { student_id: "id", organization_id: "organization_id", sales_user_id: "owner_user_id" }
+      },
       { actionCode: "lead_list.detail", label: "详情", type: "open_modal" },
       { actionCode: "lead_list.edit", label: "编辑", type: "open_modal" },
       { actionCode: "lead_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["lead_list.enroll", "lead_list.detail", "lead_list.edit", "lead_list.delete"];
+    baseDsl.presentation.table.primaryRowActions = ["lead_list.enroll", "lead_list.followup", "lead_list.trial", "lead_list.detail", "lead_list.edit", "lead_list.delete"];
   }
 
   if (page.page === "course_list") {
@@ -2592,6 +2850,8 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.presentation.table.primaryRowActions = ["wechat_push_rule.detail", "wechat_push_rule.testSend", "wechat_push_rule.retry", "wechat_push_rule.processOutbox", "wechat_push_rule.edit", "wechat_push_rule.delete"];
   }
 
+
+
   if (page.page === "mall_goods") {
     baseDsl.table.rowActions = [
       { actionCode: "mall_goods.detail", label: "详情", type: "open_modal" },
@@ -2613,6 +2873,17 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "mall_order.edit", label: "编辑", type: "open_modal" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["mall_order.detail", "mall_order.status", "mall_order.reconcile", "mall_order.fulfillRetry", "mall_order.refund", "mall_order.close", "mall_order.edit"];
+  }
+
+
+  if (page.page === "lead_stage_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "lead_stage_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "lead_stage_list.claim", label: "领取", type: "execute_api", apiCode: "lead.claim", mapRowToValue: { student_id: "student_id" } },
+      { actionCode: "lead_stage_list.recycle", label: "回收", type: "execute_api", apiCode: "lead.recycle", mapRowToValue: { student_id: "student_id" } },
+      { actionCode: "lead_stage_list.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["lead_stage_list.detail", "lead_stage_list.claim", "lead_stage_list.recycle", "lead_stage_list.edit"];
   }
 
   if (standardImportPageCodes.has(page.page)) {
@@ -2658,7 +2929,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
               value: "LEAD",
               target: { pageCode: "lead_list", title: "新生报名" }
             },
-            { label: "客户总数", source: "total", target: { pageCode: "frontdesk_home", title: "运营首页" } }
+            { label: "学员总数", source: "total", target: { pageCode: "frontdesk_home", title: "运营首页" } }
           ]
         },
         dashboard: {
@@ -3356,9 +3627,9 @@ export const llmSeed = {
 
 export const skillContentMap: Record<string, string> = {
   frontdesk_home: "# 运营首页\n\n## 功能描述\n汇总今日待办、学员检索和关键运营入口，提供仪表盘视图展示学员总数、新生报名等核心指标。\n\n## 使用说明\n- 顶部指标卡片可点击跳转至对应页面\n- 右侧边栏展示校区公告和待办提醒\n- 中间面板展示最近学员列表\n\n## 注意事项\n- 指标数据实时查询，数据量大时可能较慢\n- 新增可查询、筛选、排序、统计字段时必须基于真实表结构生成变更",
-  lead_list: "# 新生报名\n\n## 功能描述\n按报名流程完成学员信息、报读课程、业务属性和结算，支持线索跟进和转化。\n\n## 使用说明\n- 点击「新增报名」打开全屏报名弹窗\n- 填写学员信息、选择报读课程和优惠方案\n- 线索状态学员可通过行操作「新增合同」完成转化\n\n## 注意事项\n- 线索学员不会出现在学员列表中\n- 合同创建后自动关联优惠分配规则",
-  student_list: "# 学员列表\n\n## 功能描述\n统一维护学员档案、校区归属、学校年级和跟进入口，支持预存操作。\n\n## 使用说明\n- 支持按姓名、电话、状态、学校筛选\n- 行操作支持详情、编辑、预存、删除\n- 预存操作直接为学员充值电子账户\n\n## 注意事项\n- 正式学员和线索学员分开管理\n- 删除操作为软删除",
-  student_followup_list: "# 跟进记录\n\n## 功能描述\n记录学员跟进历史，包括电话、到访、微信等多种跟进方式。\n\n## 使用说明\n- 按学员维度查看跟进记录\n- 支持设置下次跟进时间\n\n## 注意事项\n- 跟进记录不可删除，仅可新增",
+  lead_list: "# 新生报名\n\n## 功能描述\n按报名流程完成意向学员信息、跟进、试听邀约、报读课程和结算，支持从意向学员转化为正式学员。\n\n## 使用说明\n- 点击「新增意向学员」创建 student_status=LEAD 的意向学员，并自动生成招生阶段\n- 行操作「跟进」会写入跟进记录并同步招生阶段\n- 行操作「邀约试听」会生成试听课次并同步阶段为已邀约试听\n- 行操作「新增合同」完成报名转化\n\n## 注意事项\n- 意向学员与正式学员统一使用学员档案，使用 student_status 区分\n- 合同创建后自动关联优惠分配规则",
+  student_list: "# 学员列表\n\n## 功能描述\n统一维护学员档案、校区归属、学校年级和跟进入口，支持预存操作。\n\n## 使用说明\n- 支持按姓名、电话、状态、学校筛选\n- 行操作支持详情、编辑、预存、删除\n- 预存操作直接为学员充值电子账户\n\n## 注意事项\n- 正式学员和意向学员使用同一学员档案，通过状态区分\n- 删除操作为软删除",
+  student_followup_list: "# 学员跟进记录\n\n## 功能描述\n记录意向学员和正式学员的沟通历史，包括电话、到访、微信等多种跟进方式；招生阶段页只保存当前漏斗状态，跟进记录保存每次沟通明细。\n\n## 使用说明\n- 意向学员和正式学员统一使用 student 数据，student_status=LEAD 表示意向学员\n- 跟进记录通过 student_id 关联学员，并通过 lead_stage_id 关联当时的招生阶段\n- 新增跟进时会按跟进结果同步更新当前招生阶段，并可自动生成下次跟进任务\n\n## 注意事项\n- 跟进记录不可删除，仅可新增",
   leave_record: "# 请假管理\n\n## 功能描述\n记录学员请假，审批通过后可自动把课程学员考勤状态标记为请假。",
   makeup_course_record: "# 补课管理\n\n## 功能描述\n为缺勤、请假或临时调整的学员安排补课，并自动生成对应补课排课。",
   course_holiday_calendar: "# 停课日历\n\n## 功能描述\n维护校区停课日；开启禁止排课后，排课会按规则拦截停课日期。",

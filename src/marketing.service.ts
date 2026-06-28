@@ -287,6 +287,9 @@ async function fulfillMallOrder(schemaName: string, client: { query: typeof pool
       `update ${table(schemaName, "mall_order")} set order_status = 'PAID', payment_status = 'PAID', payment_trade_no = $2, paid_at = coalesce(paid_at, now()), contract_id = $3, funds_change_history_id = $4, fulfillment_status = 'SUCCESS', fulfillment_error = null, callback_payload = callback_payload || $5::jsonb, updated_at = now() where id = $1`,
       [orderId, str(payData.transaction_id ?? payData.out_trade_no, ""), contractId, fundsId, JSON.stringify({ fulfillmentPayData: payData })]
     );
+    if (order.coupon_claim_id) {
+      await client.query(`update ${table(schemaName, "coupon_claim")} set use_status = 'USED', used_at = now(), updated_at = now() where id = $1 and used_order_id = $2`, [order.coupon_claim_id, orderId]);
+    }
     await savePayOrderIndex(schemaName, str(jsonObject(order.ext_json).bindingId, "wx_bind_public"), orderId, "PAID");
     return { orderId, contractId, fundsId, paymentStatus: "PAID" };
   } catch (error) {
@@ -702,18 +705,195 @@ export async function retryWechatPushFailures(schemaName: string) {
   return { retried };
 }
 
-export async function createMallOrder(schemaName: string, params: Row) {
-  const goodsIdForLock = str(params.goods_id ?? params.goodsId, "");
-  const activityIdForLock = str(params.activity_id ?? params.activityId, "none");
-  const session = await getWechatSession(schemaName, params.session_token ?? params.sessionToken);
-  const bindingId = str(params.binding_id ?? session.binding_id, "wx_bind_public");
-  const { rows: fanRows } = await pool.query(
+
+function couponDiscount(template: Row, amount: number) {
+  const rule = jsonObject(template.rule_json);
+  const minAmount = num(rule.minAmount ?? rule.min_amount, 0);
+  if (minAmount > 0 && amount < minAmount) throw Object.assign(new Error(`订单金额未达到优惠券使用门槛 ${minAmount}`), { statusCode: 400 });
+  const couponType = str(template.coupon_type, "AMOUNT");
+  const discountAmount = num(template.discount_amount, 0);
+  const discountRate = num(template.discount_rate, 0);
+  if (couponType === "DISCOUNT" && discountRate > 0) return Math.min(amount, Math.max(amount - amount * discountRate / 10, 0));
+  return Math.min(amount, Math.max(discountAmount, 0));
+}
+
+function assertCouponApplies(template: Row, context: { goodsId: string; activityId?: string; productId?: string }) {
+  const rule = jsonObject(template.rule_json);
+  const goodsIds = Array.isArray(rule.goodsIds) ? rule.goodsIds.map(String) : Array.isArray(rule.goods_ids) ? rule.goods_ids.map(String) : [];
+  const activityIds = Array.isArray(rule.activityIds) ? rule.activityIds.map(String) : Array.isArray(rule.activity_ids) ? rule.activity_ids.map(String) : [];
+  const productIds = Array.isArray(rule.productIds) ? rule.productIds.map(String) : Array.isArray(rule.product_ids) ? rule.product_ids.map(String) : [];
+  if (goodsIds.length && !goodsIds.includes(context.goodsId)) throw Object.assign(new Error("优惠券不适用于该商品"), { statusCode: 400 });
+  if (activityIds.length && (!context.activityId || !activityIds.includes(context.activityId))) throw Object.assign(new Error("优惠券不适用于该活动"), { statusCode: 400 });
+  if (productIds.length && (!context.productId || !productIds.includes(context.productId))) throw Object.assign(new Error("优惠券不适用于该产品"), { statusCode: 400 });
+}
+
+async function resolveStudentByWechatSession(schemaName: string, sessionToken: unknown) {
+  const session = await getWechatSession(schemaName, sessionToken);
+  const bindingId = str(session.binding_id, "wx_bind_public");
+  const { rows } = await pool.query(
     `select * from ${table(schemaName, "wechat_student_fan")} where binding_id = $1 and openid = $2 and deleted = false limit 1`,
     [bindingId, session.openid]
   );
-  const fan = fanRows[0];
-  if (!fan?.student_id) throw Object.assign(new Error("请先完成微信 openid 与学员绑定后再购买"), { statusCode: 401 });
-  const studentIdForLock = str(fan.student_id, "");
+  const fan = rows[0];
+  if (!fan?.student_id) throw Object.assign(new Error("请先完成微信 openid 与学员绑定"), { statusCode: 401 });
+  return { session, bindingId, studentId: str(fan.student_id) };
+}
+
+export async function claimCoupon(schemaName: string, params: Row) {
+  const templateId = str(params.coupon_template_id ?? params.couponTemplateId ?? params.template_id ?? params.templateId, "");
+  if (!templateId) throw Object.assign(new Error("缺少优惠券模板"), { statusCode: 400 });
+  const studentId = str(params.student_id ?? params.studentId, "") || (await resolveStudentByWechatSession(schemaName, params.session_token ?? params.sessionToken)).studentId;
+  return withRedisLock(`lock:${schemaName}:coupon:claim:${templateId}:${studentId}`, () => withClient(async (client) => {
+    await client.query("begin");
+    try {
+      const { rows } = await client.query(`select * from ${table(schemaName, "coupon_template")} where id = $1 and deleted = false and status = 'ACTIVE' for update`, [templateId]);
+      const template = rows[0];
+      if (!template) throw Object.assign(new Error("优惠券不存在或未启用"), { statusCode: 404 });
+      const now = Date.now();
+      if (template.valid_from && new Date(String(template.valid_from)).getTime() > now) throw Object.assign(new Error("优惠券尚未开始领取"), { statusCode: 400 });
+      if (template.valid_to && new Date(String(template.valid_to)).getTime() < now) throw Object.assign(new Error("优惠券已过期"), { statusCode: 400 });
+      const rule = jsonObject(template.rule_json);
+      const perStudentLimit = num(rule.perStudentLimit ?? rule.per_student_limit, 1);
+      if (perStudentLimit > 0) {
+        const claimed = await client.query(`select count(*)::int as count from ${table(schemaName, "coupon_claim")} where coupon_template_id = $1 and student_id = $2 and deleted = false`, [templateId, studentId]);
+        if (Number(claimed.rows[0]?.count ?? 0) >= perStudentLimit) throw Object.assign(new Error("已达到该优惠券领取上限"), { statusCode: 400 });
+      }
+      if (Number(template.total_qty ?? 0) > 0 && Number(template.claimed_qty ?? 0) >= Number(template.total_qty ?? 0)) throw Object.assign(new Error("优惠券已领完"), { statusCode: 400 });
+      const claimId = str(params.id, randomUUID());
+      const couponCode = str(params.coupon_code ?? params.couponCode, `CP${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}`);
+      const inserted = await client.query(
+        `insert into ${table(schemaName, "coupon_claim")}(id, coupon_template_id, student_id, coupon_code, claim_time, use_status, ext_json)
+         values($1,$2,$3,$4,now(),'UNUSED',$5::jsonb) returning *`,
+        [claimId, templateId, studentId, couponCode, JSON.stringify({ source: params.source ?? "manual" })]
+      );
+      await client.query(`update ${table(schemaName, "coupon_template")} set claimed_qty = coalesce(claimed_qty,0) + 1, updated_at = now() where id = $1`, [templateId]);
+      await client.query("commit");
+      return { coupon: inserted.rows[0] };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    }
+  }));
+}
+
+export async function listAvailableCoupons(schemaName: string, params: Row) {
+  const studentId = str(params.student_id ?? params.studentId, "") || (await resolveStudentByWechatSession(schemaName, params.session_token ?? params.sessionToken)).studentId;
+  const goodsId = str(params.goods_id ?? params.goodsId, "");
+  const activityId = str(params.activity_id ?? params.activityId, "");
+  const orderAmount = num(params.amount ?? params.orderAmount, 0);
+  const productId = goodsId ? str((await pool.query(`select product_id from ${table(schemaName, "mall_goods")} where id = $1 and deleted = false limit 1`, [goodsId])).rows[0]?.product_id, "") : "";
+  const { rows } = await pool.query(
+    `select cc.*, ct.coupon_name, ct.coupon_type, ct.discount_amount, ct.discount_rate, ct.valid_from, ct.valid_to, ct.rule_json
+     from ${table(schemaName, "coupon_claim")} cc
+     join ${table(schemaName, "coupon_template")} ct on ct.id = cc.coupon_template_id and ct.deleted = false
+     where cc.student_id = $1 and cc.deleted = false and cc.use_status = 'UNUSED' and ct.status = 'ACTIVE'
+       and (ct.valid_from is null or ct.valid_from <= now()) and (ct.valid_to is null or ct.valid_to >= now())
+     order by ct.valid_to nulls last, cc.claim_time desc`,
+    [studentId]
+  );
+  const coupons = rows.map((row) => {
+    try {
+      if (goodsId) assertCouponApplies(row, { goodsId, activityId, productId });
+      const discountAmount = orderAmount > 0 ? couponDiscount(row, orderAmount) : num(row.discount_amount, 0);
+      return { ...row, available: true, discountAmount };
+    } catch (error) {
+      return { ...row, available: false, unavailableReason: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  return { coupons };
+}
+
+async function reserveCouponForOrder(client: { query: typeof pool.query }, schemaName: string, input: { couponClaimId?: string; couponCode?: string; studentId: string; goodsId: string; activityId?: string; productId?: string; amount: number; orderId: string }) {
+  if (!input.couponClaimId && !input.couponCode) return { payAmount: input.amount, discountAmount: 0 };
+  const { rows } = await client.query(
+    `select cc.*, ct.coupon_name, ct.coupon_type, ct.discount_amount, ct.discount_rate, ct.valid_from, ct.valid_to, ct.rule_json, ct.status as template_status
+     from ${table(schemaName, "coupon_claim")} cc
+     join ${table(schemaName, "coupon_template")} ct on ct.id = cc.coupon_template_id and ct.deleted = false
+     where cc.deleted = false and cc.student_id = $1 and (($2::text <> '' and cc.id = $2) or ($3::text <> '' and cc.coupon_code = $3))
+     for update of cc`,
+    [input.studentId, input.couponClaimId ?? "", input.couponCode ?? ""]
+  );
+  const coupon = rows[0];
+  if (!coupon) throw Object.assign(new Error("优惠券不存在"), { statusCode: 404 });
+  if (String(coupon.use_status) !== "UNUSED") throw Object.assign(new Error("优惠券已使用或已锁定"), { statusCode: 400 });
+  if (String(coupon.template_status) !== "ACTIVE") throw Object.assign(new Error("优惠券未启用"), { statusCode: 400 });
+  const now = Date.now();
+  if (coupon.valid_from && new Date(String(coupon.valid_from)).getTime() > now) throw Object.assign(new Error("优惠券尚未生效"), { statusCode: 400 });
+  if (coupon.valid_to && new Date(String(coupon.valid_to)).getTime() < now) throw Object.assign(new Error("优惠券已过期"), { statusCode: 400 });
+  assertCouponApplies(coupon, input);
+  const discountAmount = couponDiscount(coupon, input.amount);
+  const payAmount = Math.max(input.amount - discountAmount, 0);
+  await client.query(`update ${table(schemaName, "coupon_claim")} set use_status = 'RESERVED', used_order_id = $2, updated_at = now() where id = $1`, [coupon.id, input.orderId]);
+  return { couponClaimId: str(coupon.id), couponCode: str(coupon.coupon_code), couponName: str(coupon.coupon_name), discountAmount, payAmount };
+}
+
+
+export async function submitLandingLead(schemaName: string, params: Row) {
+  const pageId = str(params.page_id ?? params.pageId ?? params.landing_page_id ?? params.landingPageId, "");
+  const name = str(params.name ?? params.student_name ?? params.studentName, "");
+  const contact = str(params.contact ?? params.phone ?? params.mobile, "");
+  if (!pageId) throw Object.assign(new Error("缺少活动落地页"), { statusCode: 400 });
+  if (!name || !contact) throw Object.assign(new Error("提交意向学员必须填写姓名和电话"), { statusCode: 400 });
+  return withRedisLock(`lock:${schemaName}:landing:lead:${pageId}:${contact}`, () => withClient(async (client) => {
+    await client.query("begin");
+    try {
+      const { rows: pageRows } = await client.query(`select * from ${table(schemaName, "marketing_landing_page")} where id = $1 and deleted = false for update`, [pageId]);
+      const landing = pageRows[0];
+      if (!landing) throw Object.assign(new Error("活动落地页不存在"), { statusCode: 404 });
+      if (!["PUBLISHED", "ACTIVE"].includes(str(landing.publish_status, "DRAFT"))) throw Object.assign(new Error("活动落地页未发布"), { statusCode: 400 });
+      const channelId = str(params.channel_id ?? params.channelId ?? landing.channel_id, "");
+      const { rows: existingRows } = await client.query(
+        `select id from ${table(schemaName, "student")} where contact = $1 and deleted = false order by created_at desc limit 1`,
+        [contact]
+      );
+      const studentId = str(existingRows[0]?.id, `lead_${Date.now()}`);
+      if (existingRows[0]) {
+        await client.query(
+          `update ${table(schemaName, "student")}
+           set name = coalesce(nullif($2,''), name), student_status = case when student_status = 'FORMAL' then student_status else 'LEAD' end,
+               source_type = coalesce(nullif(source_type,''), 'LANDING_PAGE'), school_name = coalesce($3, school_name), grade = coalesce($4, grade), updated_at = now(),
+               ext_json = coalesce(ext_json,'{}'::jsonb) || $5::jsonb
+           where id = $1`,
+          [studentId, name, params.school_name ?? params.schoolName ?? null, params.grade ?? null, JSON.stringify({ landingPageId: pageId, channelId, formData: params.form_data ?? params.formData ?? {} })]
+        );
+      } else {
+        await client.query(
+          `insert into ${table(schemaName, "student")}(id, name, contact, student_status, source_type, school_name, grade, ext_json)
+           values($1,$2,$3,'LEAD','LANDING_PAGE',$4,$5,$6::jsonb)`,
+          [studentId, name, contact, params.school_name ?? params.schoolName ?? null, params.grade ?? null, JSON.stringify({ landingPageId: pageId, channelId, formData: params.form_data ?? params.formData ?? {} })]
+        );
+      }
+      await client.query(
+        `insert into ${table(schemaName, "lead_stage_record")}(id, student_id, stage, channel_id, next_action, status, ext_json)
+         values($1,$2,'NEW',$3,'首次跟进','OPEN',$4::jsonb)`,
+        [randomUUID(), studentId, channelId || null, JSON.stringify({ source: "landing_page", landingPageId: pageId })]
+      );
+      await client.query(`update ${table(schemaName, "marketing_landing_page")} set lead_count = coalesce(lead_count,0) + 1, updated_at = now() where id = $1`, [pageId]);
+      if (channelId) await client.query(`update ${table(schemaName, "recruit_channel")} set lead_count = coalesce(lead_count,0) + 1, updated_at = now() where id = $1 and deleted = false`, [channelId]);
+      const referrerStudentId = str(params.referrer_student_id ?? params.referrerStudentId, "");
+      if (referrerStudentId && referrerStudentId !== studentId) {
+        await client.query(
+          `insert into ${table(schemaName, "referral_reward")}(id, referrer_student_id, referred_student_id, reward_type, reward_status, ext_json)
+           values($1,$2,$3,$4,'PENDING',$5::jsonb)`,
+          [randomUUID(), referrerStudentId, studentId, str(params.reward_type ?? params.rewardType, "COUPON"), JSON.stringify({ source: "landing_page", landingPageId: pageId })]
+        );
+      }
+      await client.query("commit");
+      return { studentId, leadCreated: !existingRows[0], landingPageId: pageId, channelId: channelId || null };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    }
+  }));
+}
+
+export async function createMallOrder(schemaName: string, params: Row) {
+  const goodsIdForLock = str(params.goods_id ?? params.goodsId, "");
+  const activityIdForLock = str(params.activity_id ?? params.activityId, "none");
+  const resolved = await resolveStudentByWechatSession(schemaName, params.session_token ?? params.sessionToken);
+  const session = resolved.session;
+  const bindingId = str(params.binding_id ?? resolved.bindingId, "wx_bind_public");
+  const studentIdForLock = resolved.studentId;
   return withRedisLock(`lock:${schemaName}:mall:order:${goodsIdForLock}:${activityIdForLock}:${studentIdForLock}`, () => withClient(async (client) => {
     await client.query("begin");
     try {
@@ -743,13 +923,25 @@ export async function createMallOrder(schemaName: string, params: Row) {
       }
       const orderId = randomUUID();
       const orderNo = `MO${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}`;
-      const payAmount = num(params.pay_amount, Number(activity?.activity_price ?? goods.sale_price ?? 0) * quantity);
+      const originalAmount = num(params.pay_amount, Number(activity?.activity_price ?? goods.sale_price ?? 0) * quantity);
+      const coupon = await reserveCouponForOrder(client, schemaName, {
+        couponClaimId: str(params.coupon_claim_id ?? params.couponClaimId, ""),
+        couponCode: str(params.coupon_code ?? params.couponCode, ""),
+        studentId,
+        goodsId,
+        activityId,
+        productId: str(goods.product_id, ""),
+        amount: originalAmount,
+        orderId
+      });
+      const payAmount = coupon.payAmount;
+      if (payAmount <= 0) throw Object.assign(new Error("优惠后订单金额必须大于 0"), { statusCode: 400 });
       await client.query(`update ${table(schemaName, "mall_goods")} set stock_qty = stock_qty - $2, updated_at = now() where id = $1`, [goodsId, quantity]);
       if (activity) await client.query(`update ${table(schemaName, "mall_activity")} set sold_qty = sold_qty + $2, updated_at = now() where id = $1`, [activity.id, quantity]);
       await client.query(
-        `insert into ${table(schemaName, "mall_order")}(id, order_no, student_id, goods_id, activity_id, openid, quantity, pay_amount, order_status, payment_status, ext_json)
-         values($1,$2,$3,$4,$5,$6,$7,$8,'CREATED','UNPAID',$9::jsonb)`,
-        [orderId, orderNo, studentId, goodsId, activityId || null, session.openid, quantity, payAmount, JSON.stringify({ bindingId, oauthSessionId: session.id })]
+        `insert into ${table(schemaName, "mall_order")}(id, order_no, student_id, goods_id, activity_id, openid, quantity, original_amount, coupon_claim_id, coupon_discount_amount, pay_amount, order_status, payment_status, ext_json)
+         values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'CREATED','UNPAID',$12::jsonb)`,
+        [orderId, orderNo, studentId, goodsId, activityId || null, session.openid, quantity, originalAmount, coupon.couponClaimId ?? null, coupon.discountAmount, payAmount, JSON.stringify({ bindingId, oauthSessionId: session.id, coupon })]
       );
       let groupId: string | undefined;
       if (activity && String(activity.activity_type) === "GROUP_BUY") {
@@ -768,7 +960,7 @@ export async function createMallOrder(schemaName: string, params: Row) {
       const payment = await createMallPaymentPayload(schemaName, { id: orderId, pay_amount: payAmount, openid: session.openid, description: goods.goods_name }, bindingId);
       await savePayOrderIndex(schemaName, bindingId, orderId, "CREATED");
       await client.query("commit");
-      return { orderId, orderNo, payAmount, paymentStatus: "UNPAID", groupId, payment };
+      return { orderId, orderNo, payAmount, originalAmount: payAmount + Number(coupon.discountAmount ?? 0), coupon, paymentStatus: "UNPAID", groupId, payment };
     } catch (error) {
       await client.query("rollback");
       throw error;
@@ -804,7 +996,7 @@ export async function queryMallOrderStatus(schemaName: string, params: Row) {
   const orderNo = str(params.order_no ?? params.orderNo, "");
   if (!orderId && !orderNo) throw Object.assign(new Error("缺少订单ID或订单号"), { statusCode: 400 });
   const { rows } = await pool.query(
-    `select id, order_no, order_status, payment_status, fulfillment_status, fulfillment_error, fulfillment_retry_count, contract_id, funds_change_history_id, pay_amount, paid_at, updated_at
+    `select id, order_no, order_status, payment_status, fulfillment_status, fulfillment_error, fulfillment_retry_count, contract_id, funds_change_history_id, original_amount, coupon_claim_id, coupon_discount_amount, pay_amount, paid_at, updated_at
      from ${table(schemaName, "mall_order")} where deleted = false and (($1::text <> '' and id = $1) or ($2::text <> '' and order_no = $2)) limit 1`,
     [orderId, orderNo]
   );
@@ -880,6 +1072,7 @@ export async function closeMallOrder(schemaName: string, params: Row) {
       if (!rows[0]) throw Object.assign(new Error("订单关闭失败，请刷新后重试"), { statusCode: 409 });
       await client.query(`update ${table(schemaName, "mall_goods")} set stock_qty = stock_qty + $2, updated_at = now() where id = $1`, [rows[0].goods_id, Number(rows[0].quantity ?? 1)]);
       if (rows[0].activity_id) await client.query(`update ${table(schemaName, "mall_activity")} set sold_qty = greatest(sold_qty - $2, 0), updated_at = now() where id = $1`, [rows[0].activity_id, Number(rows[0].quantity ?? 1)]);
+      if (rows[0].coupon_claim_id) await client.query(`update ${table(schemaName, "coupon_claim")} set use_status = 'UNUSED', used_order_id = null, updated_at = now() where id = $1 and use_status = 'RESERVED'`, [rows[0].coupon_claim_id]);
       await savePayOrderIndex(schemaName, str(ext.bindingId, "wx_bind_public"), orderId, "CLOSED");
       await client.query("commit");
       return { orderId, orderStatus: "CLOSED" };
@@ -910,6 +1103,7 @@ export async function refundMallOrder(schemaName: string, params: Row) {
       }, payConfig);
       await client.query(`insert into ${table(schemaName, "refund_record")}(id, student_id, refund_real_amount, refund_way_config_id, refund_time, remark, ext_json) values($1,$2,$3,'pay_wechat',now(),'商城订单退款',$4::jsonb) on conflict (id) do nothing`, [refundId, order.student_id, order.pay_amount, JSON.stringify({ source: "mall_order", orderId })]);
       await client.query(`update ${table(schemaName, "mall_order")} set order_status = 'REFUNDED', payment_status = 'REFUNDED', updated_at = now() where id = $1`, [orderId]);
+      if (order.coupon_claim_id) await client.query(`update ${table(schemaName, "coupon_claim")} set use_status = 'REFUNDED', updated_at = now() where id = $1 and used_order_id = $2`, [order.coupon_claim_id, orderId]);
       await client.query("commit");
       await processMarketingEvent(schemaName, "mall.order.refunded", orderId, { student_id: order.student_id, amount: order.pay_amount });
       return { orderId, refundId, orderStatus: "REFUNDED" };

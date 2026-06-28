@@ -29,7 +29,7 @@ import { rechargeTenant, listRechargeRecords } from "./tenant/tenant-recharge.se
 import { listCustomizationRecords, getCustomizationRecordDetail } from "./tenant/tenant-customization-record.service.js";
 import { listTenantDslChanges, previewCopyToTemplate, executeCopyToTemplate } from "./tenant/tenant-copy-template.service.js";
 import type { AuthedRequest, SessionUser } from "./types.js";
-import { bindWechatOpenid, completeWechatAuthorization, completeWechatOauth, createMallOrder, createWechatOauthLoginUrl, handleMallPayCallback, loadWechatPortal, processWechatComponentCallback, queryMallOrderStatus, reconcileMallOrder } from "./marketing.service.js";
+import { bindWechatOpenid, completeWechatAuthorization, completeWechatOauth, claimCoupon, createMallOrder, createWechatOauthLoginUrl, handleMallPayCallback, listAvailableCoupons, loadWechatPortal, processWechatComponentCallback, queryMallOrderStatus, reconcileMallOrder, submitLandingLead } from "./marketing.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -203,10 +203,28 @@ export async function buildServer() {
     return completeWechatAuthorization(schema, { bindingId: query.bindingId, auth_code: query.auth_code ?? query.authorization_code, expires_in: query.expires_in });
   });
 
-  app.post("/api/wechat/mall/order", async (request) => {
-    const body = z.object({ schemaName: z.string(), sessionToken: z.string(), goodsId: z.string(), quantity: z.number().optional(), activityId: z.string().optional(), groupId: z.string().optional() }).parse(request.body);
+  app.post("/api/wechat/landing/lead", async (request) => {
+    const body = z.object({ schemaName: z.string(), pageId: z.string(), name: z.string(), contact: z.string(), schoolName: z.string().optional(), grade: z.string().optional(), channelId: z.string().optional(), referrerStudentId: z.string().optional(), formData: z.record(z.string(), z.unknown()).optional() }).parse(request.body);
     const schema = await resolveTenantSchema(body.schemaName);
-    return createMallOrder(schema, { session_token: body.sessionToken, goods_id: body.goodsId, quantity: body.quantity ?? 1, activity_id: body.activityId, group_id: body.groupId });
+    return submitLandingLead(schema, { page_id: body.pageId, name: body.name, contact: body.contact, school_name: body.schoolName, grade: body.grade, channel_id: body.channelId, referrer_student_id: body.referrerStudentId, form_data: body.formData ?? {} });
+  });
+
+  app.get("/api/wechat/coupons", async (request) => {
+    const query = z.object({ schemaName: z.string(), sessionToken: z.string(), goodsId: z.string().optional(), activityId: z.string().optional(), amount: z.coerce.number().optional() }).parse(request.query);
+    const schema = await resolveTenantSchema(query.schemaName);
+    return listAvailableCoupons(schema, { session_token: query.sessionToken, goods_id: query.goodsId, activity_id: query.activityId, amount: query.amount });
+  });
+
+  app.post("/api/wechat/coupon/claim", async (request) => {
+    const body = z.object({ schemaName: z.string(), sessionToken: z.string(), couponTemplateId: z.string() }).parse(request.body);
+    const schema = await resolveTenantSchema(body.schemaName);
+    return claimCoupon(schema, { session_token: body.sessionToken, coupon_template_id: body.couponTemplateId, source: "wechat_portal" });
+  });
+
+  app.post("/api/wechat/mall/order", async (request) => {
+    const body = z.object({ schemaName: z.string(), sessionToken: z.string(), goodsId: z.string(), quantity: z.number().optional(), activityId: z.string().optional(), groupId: z.string().optional(), couponClaimId: z.string().optional(), couponCode: z.string().optional() }).parse(request.body);
+    const schema = await resolveTenantSchema(body.schemaName);
+    return createMallOrder(schema, { session_token: body.sessionToken, goods_id: body.goodsId, quantity: body.quantity ?? 1, activity_id: body.activityId, group_id: body.groupId, coupon_claim_id: body.couponClaimId, coupon_code: body.couponCode });
   });
 
   app.get("/api/wechat/mall/order/status", async (request) => {
