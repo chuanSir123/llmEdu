@@ -7,6 +7,7 @@ import { publishVersionAndSyncSkillMd, rollbackVersion, rejectVersion, tenantRol
 import { rollbackTestSchemaDsl } from "../tenant/test-schema.service.js";
 import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
+import { bindWechatOpenid, closeMallOrder, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -347,7 +348,12 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
 }
 
 async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>, user?: SessionUser) {
-  if (scope !== "tenant") return undefined;
+  if (scope === "admin") {
+    if (apiCode === "wechat_third_platform_app.query") return queryWechatThirdPlatformApps(params);
+    if (apiCode === "wechat_third_platform_app.create" || apiCode === "wechat_third_platform_app.update") return saveWechatThirdPlatformApp(params);
+    if (apiCode === "wechat_third_platform_app.delete") return deleteWechatThirdPlatformApp(params);
+    return undefined;
+  }
   const businessCommandMap: Record<string, { command: string; ruleCode: string }> = {
     "course_list.create": { command: "course.create", ruleCode: "course_create_rule" },
     "charge_record.create": { command: "chargeRecord.create", ruleCode: "charge_create_rule" },
@@ -383,6 +389,24 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     await pool.query(`update admin.business_rule set deleted = true, updated_at = now() where id = $1 and schema_scope = 'tenant' and schema_name = $2`, [params.id, schemaName]);
     return { deleted: true, id: params.id };
   }
+  if (apiCode === "wechat.authorizeUrl.create") return createWechatAuthorizeUrl(schemaName, params);
+  if (apiCode === "wechat.authorization.callback") return completeWechatAuthorization(schemaName, params);
+  if (apiCode === "wechat.menu.publish") return publishWechatMenu(schemaName, params);
+  if (apiCode === "wechat.binding.setDefault") return setDefaultWechatBinding(schemaName, params);
+  if (apiCode === "wechat.binding.unbind") return unbindWechatAccount(schemaName, params);
+  if (apiCode === "wechat.token.refresh") return refreshWechatToken(schemaName, params);
+  if (apiCode === "wechat.status.sync") return syncWechatAuthorizationStatus(schemaName, params);
+  if (apiCode === "wechat.openid.bind") return bindWechatOpenid(schemaName, params);
+  if (apiCode === "wechat.template.send") return sendWechatTemplate(schemaName, params);
+  if (apiCode === "wechat.push.retry") return retryWechatPushFailures(schemaName);
+  if (apiCode === "wechat.push.outbox.process") return processMarketingOutbox(schemaName, params);
+  if (apiCode === "mall.order.create") return createMallOrder(schemaName, params);
+  if (apiCode === "mall.order.status") return queryMallOrderStatus(schemaName, params);
+  if (apiCode === "mall.order.reconcile") return reconcileMallOrder(schemaName, params);
+  if (apiCode === "mall.order.fulfillRetry") return retryMallOrderFulfillment(schemaName, params);
+  if (apiCode === "mall.order.payCallback") return handleMallPayCallback(schemaName, params);
+  if (apiCode === "mall.order.close") return closeMallOrder(schemaName, params);
+  if (apiCode === "mall.order.refund") return refundMallOrder(schemaName, params);
   return undefined;
 }
 
@@ -421,6 +445,22 @@ export async function executeGatewayApi(scope: "admin" | "tenant", schemaName: s
     data = await executeCommandDsl(scope === "admin" ? "admin" : schemaName, dsl, { ...params, __userId: user?.userId });
   } else {
     data = await executeApiDsl(scope === "admin" ? "admin" : schemaName, dsl, params, user);
+  }
+
+  if (scope === "tenant") {
+    const eventMap: Record<string, string> = {
+      "contract_list.create": "contract.created",
+      "funds_history.create": "funds.created",
+      "funds_history.delete": "funds.deleted",
+      "funds.delete": "funds.deleted",
+      "charge_record.create": "charge.created",
+      "chargeRecord.reverse": "charge.deleted",
+      "refund_record.create": "refund.created",
+      "refund_record.delete": "refund.deleted",
+      "refund.delete": "refund.deleted",
+    };
+    const event = eventMap[apiCode];
+    if (event) await processMarketingEvent(schemaName, event, params.id ?? (data as Record<string, unknown> | undefined)?.id, { ...params, table: apiCode.split(".")[0] });
   }
 
   if (dsl.outputSchema) {

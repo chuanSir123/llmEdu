@@ -307,6 +307,22 @@ export async function migrate() {
       deleted boolean not null default false
     );
     create unique index if not exists business_rule_active_key on admin.business_rule(schema_scope, coalesce(schema_name,''), rule_code) where status = 'active' and deleted = false;
+
+    create table if not exists admin.wechat_third_platform_app (
+      id text primary key, app_name text not null, component_appid text not null unique, component_appsecret text, token text, encoding_aes_key text,
+      auth_redirect_domain text, callback_domain text, status text not null default 'ACTIVE', ext_json jsonb not null default '{}',
+      created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+    );
+    create table if not exists admin.public_wechat_account (
+      id text primary key, account_name text not null, appid text not null unique, component_appid text, authorizer_appid text, oauth_domain text,
+      menu_json jsonb not null default '{}', is_default boolean not null default false, status text not null default 'ACTIVE', ext_json jsonb not null default '{}',
+      created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+    );
+    create table if not exists admin.wechat_pay_order_index (
+      out_trade_no text primary key, schema_name text not null, binding_id text not null, mall_order_id text not null,
+      order_status text not null default 'CREATED', ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+    );
+    create index if not exists idx_wechat_pay_order_index_schema on admin.wechat_pay_order_index(schema_name, mall_order_id) where deleted = false;
     create table if not exists admin.audit_log (
       id text primary key,
       schema_name text,
@@ -514,6 +530,73 @@ export async function migrate() {
         id text primary key, name text not null, account_type text, status text default 'ACTIVE',
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
       );
+
+      create table if not exists "${schema}".wechat_account_binding (
+        id text primary key, account_name text not null, appid text, authorizer_appid text, service_type text default 'SERVICE_ACCOUNT', binding_type text not null default 'PUBLIC',
+        authorized_status text not null default 'AUTHORIZED', public_account_id text, component_appid text, oauth_domain text, qr_auth_url text, access_token_expires_at timestamptz,
+        is_default boolean not null default false, menu_json jsonb not null default '{}', ext_json jsonb not null default '{}',
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".wechat_menu_config (
+        id text primary key, binding_id text not null, menu_name text not null, menu_json jsonb not null default '{}', publish_status text not null default 'DRAFT',
+        last_published_at timestamptz, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".wechat_student_fan (
+        id text primary key, binding_id text, student_id text not null, openid text not null, unionid text, nickname text, avatar_url text, subscribe_status text default 'SUBSCRIBED',
+        bound_at timestamptz default now(), last_login_at timestamptz, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false,
+        unique(binding_id, openid)
+      );
+      create table if not exists "${schema}".wechat_oauth_session (
+        id text primary key, binding_id text not null, openid text not null, unionid text, nickname text, avatar_url text, state text,
+        session_token text not null unique, expires_at timestamptz not null, ext_json jsonb not null default '{}',
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".mall_goods (
+        id text primary key, goods_name text not null, product_id text, cover_url text, sale_price numeric default 0, stock_qty int default 0, goods_status text default 'DRAFT', activity_type text default 'NORMAL',
+        detail_json jsonb not null default '{}', ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".mall_activity (
+        id text primary key, activity_name text not null, activity_type text not null, goods_id text not null, start_time timestamptz, end_time timestamptz, activity_price numeric default 0,
+        group_size int default 0, quota_qty int default 0, sold_qty int default 0, status text default 'DRAFT', rule_json jsonb not null default '{}',
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".mall_order (
+        id text primary key, order_no text not null unique, student_id text not null, goods_id text not null, activity_id text, openid text, quantity int default 1, pay_amount numeric default 0,
+        order_status text default 'CREATED', payment_status text default 'UNPAID', payment_trade_no text, paid_at timestamptz, contract_id text, funds_change_history_id text, callback_payload jsonb not null default '{}',
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".mall_group_buy (
+        id text primary key, activity_id text not null, goods_id text not null, leader_student_id text not null, group_status text default 'OPEN', group_size int default 2,
+        joined_count int default 1, expires_at timestamptz, success_at timestamptz, ext_json jsonb not null default '{}',
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".mall_group_member (
+        id text primary key, group_id text not null, order_id text not null, student_id text not null, member_status text default 'JOINED',
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".wechat_push_rule (
+        id text primary key, rule_name text not null, business_event text not null, template_id text, receiver_scope text default 'student', rule_json jsonb not null default '{}', status text default 'ACTIVE',
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".wechat_push_log (
+        id text primary key, rule_id text, business_event text not null, business_id text, student_id text, openid text, template_id text, payload_json jsonb not null default '{}',
+        send_status text default 'PENDING', error_message text, retry_count int default 0, next_retry_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".marketing_event_outbox (
+        id text primary key, event_type text not null, business_id text, student_id text, payload_json jsonb not null default '{}',
+        event_status text not null default 'PENDING', retry_count int not null default 0, next_retry_at timestamptz default now(), locked_at timestamptz, error_message text,
+        created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create index if not exists idx_wechat_binding_appid on "${schema}".wechat_account_binding(appid) where deleted = false;
+      create index if not exists idx_wechat_fan_student on "${schema}".wechat_student_fan(student_id) where deleted = false;
+      create index if not exists idx_wechat_oauth_session_token on "${schema}".wechat_oauth_session(session_token) where deleted = false;
+      create index if not exists idx_mall_goods_product on "${schema}".mall_goods(product_id) where deleted = false;
+      create index if not exists idx_mall_activity_goods_status on "${schema}".mall_activity(goods_id, status, start_time, end_time) where deleted = false;
+      create index if not exists idx_mall_order_student_status on "${schema}".mall_order(student_id, order_status, payment_status) where deleted = false;
+      create index if not exists idx_mall_group_activity_status on "${schema}".mall_group_buy(activity_id, group_status) where deleted = false;
+      create index if not exists idx_mall_group_member_group on "${schema}".mall_group_member(group_id, student_id) where deleted = false;
+      create index if not exists idx_wechat_push_log_event on "${schema}".wechat_push_log(business_event, business_id) where deleted = false;
+      create index if not exists idx_marketing_event_outbox_pending on "${schema}".marketing_event_outbox(event_status, next_retry_at) where deleted = false;
       create table if not exists "${schema}".notice (
         id text primary key, title text not null, content text, status text default 'PUBLISHED',
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
@@ -610,6 +693,20 @@ export async function migrate() {
     await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account_record ADD COLUMN IF NOT EXISTS source_type text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account_record ADD COLUMN IF NOT EXISTS source_id text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account_record ADD COLUMN IF NOT EXISTS operator_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".contract ADD COLUMN IF NOT EXISTS lock_version int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".contract_product ADD COLUMN IF NOT EXISTS lock_version int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".generic_course ADD COLUMN IF NOT EXISTS lock_version int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".generic_course_student ADD COLUMN IF NOT EXISTS lock_version int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".account_charge_records ADD COLUMN IF NOT EXISTS lock_version int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".refund_record ADD COLUMN IF NOT EXISTS lock_version int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".student_ele_account ADD COLUMN IF NOT EXISTS lock_version int NOT NULL DEFAULT 0`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".wechat_oauth_session (id text primary key, binding_id text not null, openid text not null, unionid text, nickname text, avatar_url text, state text, session_token text not null unique, expires_at timestamptz not null, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false)`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".marketing_event_outbox (id text primary key, event_type text not null, business_id text, student_id text, payload_json jsonb not null default '{}', event_status text not null default 'PENDING', retry_count int not null default 0, next_retry_at timestamptz default now(), locked_at timestamptz, error_message text, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false)`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS fulfillment_status text NOT NULL DEFAULT 'PENDING'`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS fulfillment_error text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS fulfillment_retry_count int NOT NULL DEFAULT 0`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_marketing_event_outbox_pending ON "${schema}".marketing_event_outbox(event_status, next_retry_at) WHERE deleted = false`);
+
     await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS source_type text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS source_id text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS adjustment_reason text`);

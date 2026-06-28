@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { withClient } from "../db/pool.js";
 import { qIdent } from "../db/schema-resolver.js";
+import { withRedisLock } from "../redis-lock.service.js";
 
 type CommandDsl = {
   operation: "command";
@@ -57,6 +58,43 @@ function roundMoney(value: number) {
 
 function floorMoney(value: number) {
   return Math.floor(value * 100) / 100;
+}
+
+
+async function assertUpdated(result: pg.QueryResult, message = "数据已被其他操作修改，请刷新后重试") {
+  if (result.rowCount !== 1) throw Object.assign(new Error(message), { statusCode: 409 });
+}
+
+
+function commandLockKey(schemaName: string, command: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const ids = [
+    input.contract_product_id,
+    input.contract_id,
+    input.course_id,
+    input.student_id,
+    input.mini_class_id,
+    input.one_on_n_group_id,
+    input.id,
+    params.id,
+  ].map((value) => str(value)).filter(Boolean).join(":") || "global";
+  return `lock:${schemaName}:command:${command}:${ids}`;
+}
+
+function shouldRedisLockCommand(command: string) {
+  return [
+    "contract.create", "funds.create", "funds.delete", "refund.create", "contract.refund", "contract.delete", "refund.delete",
+    "course.create", "course.delete", "course.cancel", "course.student.save",
+    "chargeRecord.create", "chargeRecord.reverse", "attendance.checkIn", "attendance.cancel",
+    "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent",
+    "classStudent.transfer", "class.changeStatus", "moneyArrange.save", "promotionArrange.save", "performanceArrange.save",
+    "product.grant.save", "product.promotion.save"
+  ].includes(command);
+}
+
+async function withCommandRedisLock<T>(schemaName: string, command: string, params: Record<string, unknown>, fn: () => Promise<T>) {
+  if (!shouldRedisLockCommand(command)) return fn();
+  return withRedisLock(commandLockKey(schemaName, command, params), fn, 20_000);
 }
 
 async function loadRule(client: pg.PoolClient, schemaName: string, ruleCode: string): Promise<BusinessRule> {
@@ -664,10 +702,10 @@ async function changeStudentEleAccount(
   }
   const nextBalance = roundMoney(num(account?.balance_amount) + input.amount);
   if (nextBalance < 0) throw new Error("电子账户余额不足");
-  await client.query(
-    `update ${table(schemaName, "student_ele_account")} set balance_amount = $1, updated_at = now() where id = $2`,
-    [nextBalance, account?.id]
-  );
+  await assertUpdated(await client.query(
+    `update ${table(schemaName, "student_ele_account")} set balance_amount = $1, lock_version = coalesce(lock_version,0) + 1, updated_at = now() where id = $2 and coalesce(lock_version,0) = $3`,
+    [nextBalance, account?.id, num(account?.lock_version)]
+  ));
   await client.query(
     `insert into ${table(schemaName, "student_ele_account_record")}
       (id, student_id, account_id, change_type, change_amount, balance_after, source_funds_id, source_refund_id, contract_id, remark, source_type, source_id, operator_id)
@@ -949,36 +987,39 @@ async function createCharge(client: pg.PoolClient, schemaName: string, params: R
     [str(params.id, await nextTextId(client, schemaName, "account_charge_records")), input.course_id, chargeType, chargeHour, chargeAmount, cpId, input.organization_id, input.student_id, JSON.stringify({ ruleCode: "charge_create_rule", rule })]
   );
   if (chargeType === "NORMAL") {
-    await client.query(
+    await assertUpdated(await client.query(
       `update ${table(schemaName, "contract_product")}
        set consumed_real_hour = coalesce(consumed_real_hour,0) + $1,
            consumed_real_amount = coalesce(consumed_real_amount,0) + $2,
            remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
            remaining_real_amount = coalesce(remaining_real_amount,0) - $2,
+           lock_version = coalesce(lock_version,0) + 1,
            updated_at = now()
-       where id = $3`,
-      [chargeHour, chargeAmount, cpId]
-    );
+       where id = $3 and coalesce(lock_version,0) = $4`,
+      [chargeHour, chargeAmount, cpId, num(cp.lock_version)]
+    ));
   } else if (chargeType === "PROMOTION_HOUR") {
     if (rule.allowNegativeBalance !== true && chargeHour > num(cp.remaining_promotion_hour)) throw new Error("赠送课时余额不足");
-    await client.query(
+    await assertUpdated(await client.query(
       `update ${table(schemaName, "contract_product")}
        set consumed_promotion_hour = coalesce(consumed_promotion_hour,0) + $1,
            remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $1,
+           lock_version = coalesce(lock_version,0) + 1,
            updated_at = now()
-       where id = $2`,
-      [chargeHour, cpId]
-    );
+       where id = $2 and coalesce(lock_version,0) = $3`,
+      [chargeHour, cpId, num(cp.lock_version)]
+    ));
   } else if (chargeType === "PROMOTION") {
     if (rule.allowNegativeBalance !== true && chargeAmount > num(cp.remaining_promotion_amount)) throw new Error("优惠金额余额不足");
-    await client.query(
+    await assertUpdated(await client.query(
       `update ${table(schemaName, "contract_product")}
        set consumed_promotion_amount = coalesce(consumed_promotion_amount,0) + $1,
            remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $1,
+           lock_version = coalesce(lock_version,0) + 1,
            updated_at = now()
-       where id = $2`,
-      [chargeAmount, cpId]
-    );
+       where id = $2 and coalesce(lock_version,0) = $3`,
+      [chargeAmount, cpId, num(cp.lock_version)]
+    ));
   }
   return charge;
 }
@@ -1016,16 +1057,17 @@ async function createRefund(client: pg.PoolClient, schemaName: string, params: R
       JSON.stringify({ ruleCode: "refund_create_rule", rule })
     ]
   );
-  await client.query(
+  await assertUpdated(await client.query(
     `update ${table(schemaName, "contract_product")}
      set remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
          remaining_real_amount = coalesce(remaining_real_amount,0) - $2,
          remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $3,
          remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $4,
+         lock_version = coalesce(lock_version,0) + 1,
          updated_at = now()
-     where id = $5`,
-    [refundHour, refundAmount, refundPromotionHour, refundPromotionAmount, cpId]
-  );
+     where id = $5 and coalesce(lock_version,0) = $6`,
+    [refundHour, refundAmount, refundPromotionHour, refundPromotionAmount, cpId, num(cp.lock_version)]
+  ));
   const contractId = str(cp.contract_id);
   if (contractId && refundAmount > 0) {
     const contract = await one(client, `select paid_amount, total_amount, promotion_amount from ${table(schemaName, "contract")} where id = $1`, [contractId]);
@@ -1064,15 +1106,17 @@ async function reverseCharge(client: pg.PoolClient, schemaName: string, params: 
   );
   await client.query(`update ${table(schemaName, "account_charge_records")} set charge_status = 'REVERSED', cancel_reason = $2, cancel_user_id = $3, cancel_time = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $4::jsonb, updated_at = now() where id = $1`, [chargeId, cancelReason || null, operatorId || null, JSON.stringify(cancelMeta)]);
   if (cpId) {
+    const cp = await one(client, `select lock_version from ${table(schemaName, "contract_product")} where id = $1 and deleted = false for update`, [cpId]);
+    if (!cp) throw new Error("合同产品不存在");
     const chargeType = str(charge.charge_type);
     const hour = num(charge.charge_hour);
     const amount = num(charge.charge_amount);
     if (chargeType === "NORMAL") {
-      await client.query(`update ${table(schemaName, "contract_product")} set consumed_real_hour = coalesce(consumed_real_hour,0) - $1, consumed_real_amount = coalesce(consumed_real_amount,0) - $2, remaining_real_hour = coalesce(remaining_real_hour,0) + $1, remaining_real_amount = coalesce(remaining_real_amount,0) + $2, updated_at = now() where id = $3`, [hour, amount, cpId]);
+      await assertUpdated(await client.query(`update ${table(schemaName, "contract_product")} set consumed_real_hour = coalesce(consumed_real_hour,0) - $1, consumed_real_amount = coalesce(consumed_real_amount,0) - $2, remaining_real_hour = coalesce(remaining_real_hour,0) + $1, remaining_real_amount = coalesce(remaining_real_amount,0) + $2, lock_version = coalesce(lock_version,0) + 1, updated_at = now() where id = $3 and coalesce(lock_version,0) = $4`, [hour, amount, cpId, num(cp.lock_version)]));
     } else if (chargeType === "PROMOTION") {
-      await client.query(`update ${table(schemaName, "contract_product")} set consumed_promotion_amount = coalesce(consumed_promotion_amount,0) - $1, remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $1, updated_at = now() where id = $2`, [amount, cpId]);
+      await assertUpdated(await client.query(`update ${table(schemaName, "contract_product")} set consumed_promotion_amount = coalesce(consumed_promotion_amount,0) - $1, remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $1, lock_version = coalesce(lock_version,0) + 1, updated_at = now() where id = $2 and coalesce(lock_version,0) = $3`, [amount, cpId, num(cp.lock_version)]));
     } else if (chargeType === "PROMOTION_HOUR") {
-      await client.query(`update ${table(schemaName, "contract_product")} set consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $1, remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $1, updated_at = now() where id = $2`, [hour, cpId]);
+      await assertUpdated(await client.query(`update ${table(schemaName, "contract_product")} set consumed_promotion_hour = coalesce(consumed_promotion_hour,0) - $1, remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $1, lock_version = coalesce(lock_version,0) + 1, updated_at = now() where id = $2 and coalesce(lock_version,0) = $3`, [hour, cpId, num(cp.lock_version)]));
     }
   }
   let attendanceReset = false;
@@ -1944,7 +1988,7 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
   const simpleFn = simpleCommands[dsl.command];
   if (simpleFn) {
     if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "funds.delete", "contract.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
-      return withClient(async (client) => {
+      return withCommandRedisLock(schemaName, dsl.command, params, () => withClient(async (client) => {
         await client.query("begin");
         try {
           const approval = await maybeSubmitApprovalTask(client, schemaName, dsl, params);
@@ -1955,12 +1999,12 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
           await client.query("rollback");
           throw error;
         }
-      });
+      }));
     }
     return withClient(async (client) => simpleFn(client, schemaName, params));
   }
 
-  return withClient(async (client) => {
+  return withCommandRedisLock(schemaName, dsl.command, params, () => withClient(async (client) => {
     await client.query("begin");
     try {
       const approval = await maybeSubmitApprovalTask(client, schemaName, dsl, params);
@@ -1971,5 +2015,5 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
       await client.query("rollback");
       throw error;
     }
-  });
+  }));
 }

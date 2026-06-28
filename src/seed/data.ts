@@ -7,6 +7,7 @@ export const modules = [
   ["student", "学员", "business", "学员档案和回访", 30, "GraduationCap"],
   ["education", "教务", "business", "排课、上课和扣费", 40, "CalendarDays"],
   ["finance", "财务", "business", "收款、分配和退费", 50, "Wallet"],
+  ["marketing", "营销", "business", "公众号、微商城、活动和微信推送", 55, "ShoppingBag"],
   ["oa", "OA", "business", "通知、审批和任务", 60, "Bell"],
   ["report", "报表", "business", "经营数据分析", 70, "BarChart3"],
   ["system", "系统", "business", "组织、角色和权限", 80, "Settings"],
@@ -750,6 +751,182 @@ export const pages: PageSeed[] = [
     ],
     joins: [
       { table: "student", alias: "stu", on: { left: "student_id", right: "id" }, fields: [{ source: "name", as: "student_name" }] }
+    ]
+  },
+
+  {
+    module: "marketing",
+    feature: "wechat_account_binding",
+    page: "wechat_account_binding",
+    name: "公众号绑定",
+    table: "wechat_account_binding",
+    group: "公众号",
+    fields: [
+      { key: "account_name", label: "公众号名称", filter: true },
+      { key: "appid", label: "AppID" },
+      { key: "service_type", label: "账号类型", filter: true },
+      { key: "binding_type", label: "绑定类型", filter: true },
+      { key: "authorized_status", label: "授权状态", filter: true },
+      { key: "is_default", label: "默认服务号", type: "boolean" },
+      { key: "oauth_domain", label: "统一回调域名" },
+      { key: "updated_at", label: "更新时间", type: "datetime" }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "wechat_menu_config",
+    page: "wechat_menu_config",
+    name: "公众号菜单",
+    table: "wechat_menu_config",
+    group: "公众号",
+    fields: [
+      { key: "binding_id", label: "公众号绑定" },
+      { key: "menu_name", label: "菜单名称", filter: true },
+      { key: "menu_json", label: "菜单DSL", type: "textarea" },
+      { key: "publish_status", label: "发布状态", filter: true },
+      { key: "last_published_at", label: "发布时间", type: "datetime" }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "wechat_student_fan",
+    page: "wechat_student_fan",
+    name: "学员微信绑定",
+    table: "wechat_student_fan",
+    group: "公众号",
+    fields: [
+      { key: "student_name", label: "学员" },
+      { key: "openid", label: "OpenID" },
+      { key: "nickname", label: "微信名", filter: true },
+      { key: "avatar_url", label: "头像" },
+      { key: "subscribe_status", label: "关注状态", filter: true },
+      { key: "bound_at", label: "绑定时间", type: "datetime" }
+    ],
+    joins: [{ table: "student", alias: "stu", on: { left: "student_id", right: "id" }, fields: [{ source: "name", as: "student_name" }] }]
+  },
+  {
+    module: "marketing",
+    feature: "mall_goods",
+    page: "mall_goods",
+    name: "商城商品",
+    table: "mall_goods",
+    group: "微商城",
+    fields: [
+      { key: "goods_name", label: "商品名称", filter: true },
+      { key: "product_id", label: "绑定产品" },
+      { key: "sale_price", label: "售价", type: "number" },
+      { key: "stock_qty", label: "库存", type: "number" },
+      { key: "goods_status", label: "上下架", filter: true },
+      { key: "activity_type", label: "活动类型", filter: true },
+      { key: "updated_at", label: "更新时间", type: "datetime" }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "mall_activity",
+    page: "mall_activity",
+    name: "营销活动",
+    table: "mall_activity",
+    group: "微商城",
+    fields: [
+      { key: "activity_name", label: "活动名称", filter: true },
+      { key: "activity_type", label: "活动类型", filter: true },
+      { key: "goods_id", label: "活动商品" },
+      { key: "start_time", label: "开始时间", type: "datetime" },
+      { key: "end_time", label: "结束时间", type: "datetime" },
+      { key: "activity_price", label: "活动价", type: "number" },
+      { key: "group_size", label: "成团人数", type: "number" },
+      { key: "status", label: "状态", filter: true }
+    ]
+  },
+
+  {
+    module: "marketing",
+    feature: "mall_group_buy",
+    page: "mall_group_buy",
+    name: "团购团单",
+    table: "mall_group_buy",
+    group: "微商城",
+    fields: [
+      { key: "activity_id", label: "团购活动", filter: true },
+      { key: "goods_id", label: "团购商品" },
+      { key: "leader_student_id", label: "团长学员" },
+      { key: "group_status", label: "团单状态", filter: true },
+      { key: "group_size", label: "成团人数", type: "number" },
+      { key: "joined_count", label: "已参团人数", type: "number" },
+      { key: "expires_at", label: "过期时间", type: "datetime" },
+      { key: "success_at", label: "成团时间", type: "datetime" }
+    ]
+  },
+
+  {
+    module: "marketing",
+    feature: "mall_group_member",
+    page: "mall_group_member",
+    name: "团购成员",
+    table: "mall_group_member",
+    group: "微商城",
+    fields: [
+      { key: "group_id", label: "团单", filter: true },
+      { key: "order_id", label: "订单" },
+      { key: "student_id", label: "学员" },
+      { key: "member_status", label: "成员状态", filter: true },
+      { key: "created_at", label: "参团时间", type: "datetime" }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "mall_order",
+    page: "mall_order",
+    name: "商城订单",
+    table: "mall_order",
+    group: "微商城",
+    fields: [
+      { key: "order_no", label: "订单号", filter: true },
+      { key: "student_name", label: "学员" },
+      { key: "goods_name", label: "商品" },
+      { key: "pay_amount", label: "付款金额", type: "number" },
+      { key: "order_status", label: "订单状态", filter: true },
+      { key: "payment_status", label: "支付状态", filter: true },
+      { key: "contract_id", label: "生成合同" },
+      { key: "created_at", label: "下单时间", type: "datetime" }
+    ],
+    joins: [
+      { table: "student", alias: "stu", on: { left: "student_id", right: "id" }, fields: [{ source: "name", as: "student_name" }] },
+      { table: "mall_goods", alias: "mg", on: { left: "goods_id", right: "id" }, fields: [{ source: "goods_name", as: "goods_name" }] }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "wechat_push_rule",
+    page: "wechat_push_rule",
+    name: "微信推送规则",
+    table: "wechat_push_rule",
+    group: "微信推送",
+    fields: [
+      { key: "rule_name", label: "规则名称", filter: true },
+      { key: "business_event", label: "业务事件", filter: true },
+      { key: "template_id", label: "模板ID" },
+      { key: "receiver_scope", label: "接收人" },
+      { key: "rule_json", label: "规则DSL", type: "textarea" },
+      { key: "status", label: "状态", filter: true }
+    ]
+  },
+  {
+    module: "marketing",
+    feature: "wechat_push_log",
+    page: "wechat_push_log",
+    name: "微信推送日志",
+    table: "wechat_push_log",
+    group: "微信推送",
+    softDelete: false,
+    fields: [
+      { key: "business_event", label: "业务事件", filter: true },
+      { key: "student_id", label: "学员" },
+      { key: "openid", label: "OpenID" },
+      { key: "send_status", label: "发送状态", filter: true },
+      { key: "error_message", label: "错误信息" },
+      { key: "created_at", label: "发送时间", type: "datetime" }
     ]
   },
   {
@@ -1751,10 +1928,46 @@ export const optionApiDslSeeds: Array<{ apiCode: string; apiName: string; module
 
 export const adminModules = [
   ["tenant_mgmt", "租户管理", "platform", "租户运营与充值", 91, "Building2"],
-  ["dsl_mgmt", "DSL 管理", "platform", "版本与AI变更", 92, "FileCode2"]
+  ["dsl_mgmt", "DSL 管理", "platform", "版本与AI变更", 92, "FileCode2"],
+  ["wechat_platform", "微信平台", "platform", "第三方平台应用与公有服务号配置", 93, "MessageCircle"]
 ] as const;
 
 export const adminPages: PageSeed[] = [
+
+  {
+    module: "wechat_platform",
+    feature: "wechat_third_platform_app",
+    page: "wechat_third_platform_app",
+    name: "第三方平台应用",
+    table: "wechat_third_platform_app",
+    fields: [
+      { key: "app_name", label: "应用名称", filter: true },
+      { key: "component_appid", label: "Component AppID" },
+      { key: "component_appsecret", label: "Component AppSecret" },
+      { key: "token", label: "消息校验 Token" },
+      { key: "encoding_aes_key", label: "EncodingAESKey" },
+      { key: "auth_redirect_domain", label: "授权发起域名" },
+      { key: "callback_domain", label: "统一回调域名" },
+      { key: "ext_json", label: "扩展配置(JSON)", type: "json" },
+      { key: "status", label: "状态", filter: true }
+    ]
+  },
+  {
+    module: "wechat_platform",
+    feature: "public_wechat_account",
+    page: "public_wechat_account",
+    name: "公有服务号",
+    table: "public_wechat_account",
+    fields: [
+      { key: "account_name", label: "服务号名称", filter: true },
+      { key: "appid", label: "AppID" },
+      { key: "component_appid", label: "第三方平台" },
+      { key: "oauth_domain", label: "网页授权域名" },
+      { key: "ext_json", label: "扩展配置/支付配置(JSON)", type: "json" },
+      { key: "is_default", label: "默认绑定", type: "boolean" },
+      { key: "status", label: "状态", filter: true }
+    ]
+  },
   {
     module: "tenant_mgmt",
     feature: "tenant_manage",
@@ -2335,6 +2548,71 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     ];
     baseDsl.presentation.table.primaryRowActions = ["funds_history.detail", "funds_history.delete"];
     baseDsl.modal.fields = fundsCreateFields;
+  }
+
+
+
+  if (page.page === "wechat_account_binding") {
+    baseDsl.toolbar = [
+      { actionCode: "wechat_account_binding.authorize", label: "扫码授权", type: "execute_api", apiCode: "wechat.authorizeUrl.create", variant: "primary", defaultValues: { account_name: "待授权服务号" } },
+      { actionCode: "wechat_account_binding.refresh", label: "刷新", type: "execute_api", variant: "default" }
+    ];
+    baseDsl.table.rowActions = [
+      { actionCode: "wechat_account_binding.detail", label: "详情", type: "open_modal" },
+      { actionCode: "wechat_account_binding.authComplete", label: "授权回调补录", type: "execute_api", apiCode: "wechat.authorization.callback" },
+      { actionCode: "wechat_account_binding.setDefault", label: "设为默认", type: "execute_api", apiCode: "wechat.binding.setDefault" },
+      { actionCode: "wechat_account_binding.sync", label: "同步状态", type: "execute_api", apiCode: "wechat.status.sync" },
+      { actionCode: "wechat_account_binding.refreshToken", label: "刷新Token", type: "execute_api", apiCode: "wechat.token.refresh" },
+      { actionCode: "wechat_account_binding.unbind", label: "解绑", type: "execute_api", apiCode: "wechat.binding.unbind", confirm: "确认解绑该公众号？" },
+      { actionCode: "wechat_account_binding.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "wechat_account_binding.delete", label: "删除", type: "execute_api", confirm: "确认删除该绑定？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["wechat_account_binding.detail", "wechat_account_binding.authComplete", "wechat_account_binding.setDefault", "wechat_account_binding.sync", "wechat_account_binding.refreshToken", "wechat_account_binding.unbind", "wechat_account_binding.edit", "wechat_account_binding.delete"];
+  }
+
+  if (page.page === "wechat_menu_config") {
+    baseDsl.table.rowActions = [
+      { actionCode: "wechat_menu_config.detail", label: "详情", type: "open_modal" },
+      { actionCode: "wechat_menu_config.publish", label: "发布菜单", type: "execute_api", apiCode: "wechat.menu.publish", confirm: "确认发布菜单到公众号？" },
+      { actionCode: "wechat_menu_config.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "wechat_menu_config.delete", label: "删除", type: "execute_api", confirm: "确认删除该菜单？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["wechat_menu_config.detail", "wechat_menu_config.publish", "wechat_menu_config.edit", "wechat_menu_config.delete"];
+  }
+
+  if (page.page === "wechat_push_rule") {
+    baseDsl.table.rowActions = [
+      { actionCode: "wechat_push_rule.detail", label: "详情", type: "open_modal" },
+      { actionCode: "wechat_push_rule.testSend", label: "测试发送", type: "execute_api", apiCode: "wechat.template.send", defaultValues: { business_event: "manual.test" } },
+      { actionCode: "wechat_push_rule.retry", label: "重试失败", type: "execute_api", apiCode: "wechat.push.retry" },
+      { actionCode: "wechat_push_rule.processOutbox", label: "处理推送队列", type: "execute_api", apiCode: "wechat.push.outbox.process" },
+      { actionCode: "wechat_push_rule.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "wechat_push_rule.delete", label: "删除", type: "execute_api", confirm: "确认删除该规则？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["wechat_push_rule.detail", "wechat_push_rule.testSend", "wechat_push_rule.retry", "wechat_push_rule.processOutbox", "wechat_push_rule.edit", "wechat_push_rule.delete"];
+  }
+
+  if (page.page === "mall_goods") {
+    baseDsl.table.rowActions = [
+      { actionCode: "mall_goods.detail", label: "详情", type: "open_modal" },
+      { actionCode: "mall_goods.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "mall_goods.createOrder", label: "创建订单", type: "execute_api", apiCode: "mall.order.create", defaultValues: { student_id: "stu_001", quantity: 1 }, mapRowToValue: { goods_id: "id" } },
+      { actionCode: "mall_goods.delete", label: "删除", type: "execute_api", confirm: "确认删除该商品？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["mall_goods.detail", "mall_goods.edit", "mall_goods.createOrder", "mall_goods.delete"];
+  }
+
+  if (page.page === "mall_order") {
+    baseDsl.table.rowActions = [
+      { actionCode: "mall_order.detail", label: "详情", type: "open_modal" },
+      { actionCode: "mall_order.status", label: "查询状态", type: "execute_api", apiCode: "mall.order.status" },
+      { actionCode: "mall_order.reconcile", label: "补单", type: "execute_api", apiCode: "mall.order.reconcile" },
+      { actionCode: "mall_order.fulfillRetry", label: "重试履约", type: "execute_api", apiCode: "mall.order.fulfillRetry" },
+      { actionCode: "mall_order.refund", label: "退款", type: "execute_api", apiCode: "mall.order.refund", confirm: "确认退款并关闭关联订单？" },
+      { actionCode: "mall_order.close", label: "关闭", type: "execute_api", apiCode: "mall.order.close", confirm: "确认关闭未支付订单？" },
+      { actionCode: "mall_order.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["mall_order.detail", "mall_order.status", "mall_order.reconcile", "mall_order.fulfillRetry", "mall_order.refund", "mall_order.close", "mall_order.edit"];
   }
 
   if (standardImportPageCodes.has(page.page)) {
