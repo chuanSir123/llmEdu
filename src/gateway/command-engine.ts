@@ -257,6 +257,45 @@ async function one<T extends Record<string, unknown>>(client: pg.PoolClient, sql
   return rows[0] as T | undefined;
 }
 
+
+async function markRecruitConversion(client: pg.PoolClient, schemaName: string, input: { studentId: string; contractId: string; amount: number }) {
+  const { rows } = await client.query(
+    `select id, channel_id from ${table(schemaName, "lead_stage_record")}
+     where student_id = $1 and deleted = false
+     order by updated_at desc nulls last, created_at desc nulls last
+     limit 1`,
+    [input.studentId]
+  );
+  const leadStage = rows[0] as { id?: string; channel_id?: string } | undefined;
+  if (leadStage?.id) {
+    await client.query(
+      `update ${table(schemaName, "lead_stage_record")}
+       set stage = 'CONVERTED', status = 'CONVERTED', next_action = null, updated_at = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $2::jsonb
+       where id = $1`,
+      [leadStage.id, JSON.stringify({ convertedContractId: input.contractId, convertedAmount: input.amount })]
+    );
+  }
+  if (leadStage?.channel_id) {
+    await client.query(
+      `update ${table(schemaName, "recruit_channel")}
+       set conversion_count = coalesce(conversion_count,0) + 1,
+           roi_amount = coalesce(roi_amount,0) + $2,
+           updated_at = now()
+       where id = $1 and deleted = false`,
+      [leadStage.channel_id, input.amount]
+    );
+  }
+  await client.query(
+    `update ${table(schemaName, "referral_reward")}
+     set reward_status = case when reward_status in ('PENDING','LOCKED') then 'ELIGIBLE' else reward_status end,
+         issued_at = case when reward_status = 'ISSUED' then issued_at else issued_at end,
+         updated_at = now(),
+         ext_json = coalesce(ext_json,'{}'::jsonb) || $2::jsonb
+     where referred_student_id = $1 and deleted = false`,
+    [input.studentId, JSON.stringify({ convertedContractId: input.contractId, convertedAmount: input.amount })]
+  );
+}
+
 async function createContract(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule): Promise<Record<string, unknown>> {
   const input = dataOf(params);
   const studentIds = Array.isArray(input.student_ids) ? input.student_ids.map((value) => String(value)).filter(Boolean) : [];
@@ -329,10 +368,13 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
     ]
   );
 
-  await client.query(
-    `update ${table(schemaName, "student")} set student_status = 'FORMAL', updated_at = now() where id = $1 and coalesce(student_status,'') = 'LEAD'`,
+  const convertedStudent = await client.query(
+    `update ${table(schemaName, "student")} set student_status = 'FORMAL', updated_at = now() where id = $1 and coalesce(student_status,'') = 'LEAD' returning id`,
     [singleStudentId]
   );
+  if (convertedStudent.rows[0]) {
+    await markRecruitConversion(client, schemaName, { studentId: singleStudentId, contractId, amount: totalAmount });
+  }
 
   if (promotionAmount > 0 || promotion) {
     await client.query(

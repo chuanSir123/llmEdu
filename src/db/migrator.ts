@@ -383,9 +383,37 @@ export async function migrate() {
         deleted boolean not null default false
       );
       create table if not exists "${schema}".student_followup (
-        id text primary key, student_id text not null, follow_user_id text, follow_type text, follow_content text, next_follow_time timestamptz,
+        id text primary key, student_id text not null, lead_stage_id text, follow_user_id text, follow_type text, follow_content text, follow_result text, next_follow_time timestamptz,
         ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
         created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".recruit_channel (
+        id text primary key, channel_name text not null, channel_type text, owner_user_id text, cost_amount numeric default 0, lead_count int default 0, conversion_count int default 0, roi_amount numeric default 0, status text default 'ACTIVE', remark text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".lead_stage_record (
+        id text primary key, student_id text not null, stage text default 'NEW', owner_user_id text, channel_id text, next_action text, next_follow_time timestamptz, lost_reason text, status text default 'OPEN', remark text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".trial_lesson (
+        id text primary key, student_id text not null, course_id text, course_title text not null, trial_time timestamptz, teacher_id text, sales_user_id text, trial_status text default 'SCHEDULED', feedback text, conversion_status text default 'PENDING', remark text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".sales_task (
+        id text primary key, task_title text not null, student_id text, owner_user_id text, task_type text, due_time timestamptz, complete_time timestamptz, task_status text default 'PENDING', remark text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".lead_assignment_history (
+        id text primary key, student_id text not null, from_user_id text, to_user_id text, action_type text not null, reason text, operator_id text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
+      );
+      create table if not exists "${schema}".recruit_channel_cost (
+        id text primary key, channel_id text not null, cost_date date not null, cost_amount numeric default 0, cost_type text, remark text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".sales_target (
+        id text primary key, owner_user_id text not null, target_month text not null, target_leads int default 0, target_trials int default 0, target_contracts int default 0, target_amount numeric default 0, status text default 'ACTIVE', remark text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
       );
       create table if not exists "${schema}".product (
         id text primary key, name text not null, unit_price numeric default 0, default_course_hour numeric default 0,
@@ -561,7 +589,8 @@ export async function migrate() {
         created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
       );
       create table if not exists "${schema}".mall_order (
-        id text primary key, order_no text not null unique, student_id text not null, goods_id text not null, activity_id text, openid text, quantity int default 1, pay_amount numeric default 0,
+        id text primary key, order_no text not null unique, student_id text not null, goods_id text not null, activity_id text, openid text, quantity int default 1, original_amount numeric default 0,
+        coupon_claim_id text, coupon_discount_amount numeric default 0, pay_amount numeric default 0,
         order_status text default 'CREATED', payment_status text default 'UNPAID', payment_trade_no text, paid_at timestamptz, contract_id text, funds_change_history_id text, callback_payload jsonb not null default '{}',
         ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
       );
@@ -587,16 +616,40 @@ export async function migrate() {
         event_status text not null default 'PENDING', retry_count int not null default 0, next_retry_at timestamptz default now(), locked_at timestamptz, error_message text,
         created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false
       );
+      create table if not exists "${schema}".coupon_template (
+        id text primary key, coupon_name text not null, coupon_type text, discount_amount numeric default 0, discount_rate numeric default 0, valid_from timestamptz, valid_to timestamptz, total_qty int default 0, claimed_qty int default 0, status text default 'ACTIVE', rule_json jsonb not null default '{}',
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".coupon_claim (
+        id text primary key, coupon_template_id text not null, student_id text, coupon_code text not null, claim_time timestamptz default now(), use_status text default 'UNUSED', used_order_id text, used_at timestamptz,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".marketing_landing_page (
+        id text primary key, page_title text not null, campaign_id text, channel_id text, form_schema_json jsonb not null default '{}', content_json jsonb not null default '{}', pv_count int default 0, lead_count int default 0, publish_status text default 'DRAFT', published_at timestamptz,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
+      create table if not exists "${schema}".referral_reward (
+        id text primary key, referrer_student_id text not null, referred_student_id text, reward_type text, reward_amount numeric default 0, reward_status text default 'PENDING', issued_at timestamptz, remark text,
+        ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false
+      );
       create index if not exists idx_wechat_binding_appid on "${schema}".wechat_account_binding(appid) where deleted = false;
       create index if not exists idx_wechat_fan_student on "${schema}".wechat_student_fan(student_id) where deleted = false;
       create index if not exists idx_wechat_oauth_session_token on "${schema}".wechat_oauth_session(session_token) where deleted = false;
       create index if not exists idx_mall_goods_product on "${schema}".mall_goods(product_id) where deleted = false;
       create index if not exists idx_mall_activity_goods_status on "${schema}".mall_activity(goods_id, status, start_time, end_time) where deleted = false;
       create index if not exists idx_mall_order_student_status on "${schema}".mall_order(student_id, order_status, payment_status) where deleted = false;
+      create index if not exists idx_mall_order_coupon on "${schema}".mall_order(coupon_claim_id) where deleted = false;
       create index if not exists idx_mall_group_activity_status on "${schema}".mall_group_buy(activity_id, group_status) where deleted = false;
       create index if not exists idx_mall_group_member_group on "${schema}".mall_group_member(group_id, student_id) where deleted = false;
       create index if not exists idx_wechat_push_log_event on "${schema}".wechat_push_log(business_event, business_id) where deleted = false;
       create index if not exists idx_marketing_event_outbox_pending on "${schema}".marketing_event_outbox(event_status, next_retry_at) where deleted = false;
+      create index if not exists idx_lead_stage_student on "${schema}".lead_stage_record(student_id, stage) where deleted = false;
+      create index if not exists idx_trial_lesson_time on "${schema}".trial_lesson(trial_time, trial_status) where deleted = false;
+      create index if not exists idx_sales_task_owner_due on "${schema}".sales_task(owner_user_id, due_time, task_status) where deleted = false;
+      create index if not exists idx_lead_assignment_student on "${schema}".lead_assignment_history(student_id, created_at) where deleted = false;
+      create index if not exists idx_recruit_channel_cost_channel_date on "${schema}".recruit_channel_cost(channel_id, cost_date) where deleted = false;
+      create index if not exists idx_sales_target_owner_month on "${schema}".sales_target(owner_user_id, target_month) where deleted = false;
+      create index if not exists idx_coupon_claim_code on "${schema}".coupon_claim(coupon_code) where deleted = false;
       create table if not exists "${schema}".notice (
         id text primary key, title text not null, content text, status text default 'PUBLISHED',
         created_at timestamptz default now(), updated_at timestamptz default now(), deleted boolean default false
@@ -705,7 +758,21 @@ export async function migrate() {
     await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS fulfillment_status text NOT NULL DEFAULT 'PENDING'`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS fulfillment_error text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS fulfillment_retry_count int NOT NULL DEFAULT 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS original_amount numeric default 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS coupon_claim_id text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".mall_order ADD COLUMN IF NOT EXISTS coupon_discount_amount numeric default 0`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".student_followup ADD COLUMN IF NOT EXISTS follow_result text`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".student_followup ADD COLUMN IF NOT EXISTS lead_stage_id text`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_student_followup_lead_stage ON "${schema}".student_followup(lead_stage_id, created_at) WHERE deleted = false`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".trial_lesson ADD COLUMN IF NOT EXISTS course_id text`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".lead_assignment_history (id text primary key, student_id text not null, from_user_id text, to_user_id text, action_type text not null, reason text, operator_id text, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted boolean not null default false)`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".recruit_channel_cost (id text primary key, channel_id text not null, cost_date date not null, cost_amount numeric default 0, cost_type text, remark text, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false)`);
+    await exec(`CREATE TABLE IF NOT EXISTS "${schema}".sales_target (id text primary key, owner_user_id text not null, target_month text not null, target_leads int default 0, target_trials int default 0, target_contracts int default 0, target_amount numeric default 0, status text default 'ACTIVE', remark text, ext_json jsonb not null default '{}', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), created_by text, updated_by text, deleted boolean not null default false)`);
     await exec(`CREATE INDEX IF NOT EXISTS idx_marketing_event_outbox_pending ON "${schema}".marketing_event_outbox(event_status, next_retry_at) WHERE deleted = false`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_mall_order_coupon ON "${schema}".mall_order(coupon_claim_id) WHERE deleted = false`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_lead_assignment_student ON "${schema}".lead_assignment_history(student_id, created_at) WHERE deleted = false`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_recruit_channel_cost_channel_date ON "${schema}".recruit_channel_cost(channel_id, cost_date) WHERE deleted = false`);
+    await exec(`CREATE INDEX IF NOT EXISTS idx_sales_target_owner_month ON "${schema}".sales_target(owner_user_id, target_month) WHERE deleted = false`);
 
     await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS source_type text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".performance_arrange_log ADD COLUMN IF NOT EXISTS source_id text`);

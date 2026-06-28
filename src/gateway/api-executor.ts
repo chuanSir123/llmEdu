@@ -7,7 +7,8 @@ import { publishVersionAndSyncSkillMd, rollbackVersion, rejectVersion, tenantRol
 import { rollbackTestSchemaDsl } from "../tenant/test-schema.service.js";
 import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
-import { bindWechatOpenid, closeMallOrder, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
+import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
+import { bindWechatOpenid, claimCoupon, closeMallOrder, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -400,6 +401,15 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
   if (apiCode === "wechat.template.send") return sendWechatTemplate(schemaName, params);
   if (apiCode === "wechat.push.retry") return retryWechatPushFailures(schemaName);
   if (apiCode === "wechat.push.outbox.process") return processMarketingOutbox(schemaName, params);
+  if (apiCode === "lead_list.create") return createLeadStudent(schemaName, params, user);
+  if (apiCode === "lead.assign") return assignLead(schemaName, params, user);
+  if (apiCode === "lead.claim") return claimLead(schemaName, params, user);
+  if (apiCode === "lead.recycle") return recycleLead(schemaName, params, user);
+  if (apiCode === "student_followup_list.create") return createStudentFollowup(schemaName, params, user);
+  if (apiCode === "trial_lesson_list.create") return createTrialLesson(schemaName, params, user);
+  if (apiCode === "landing.lead.submit") return submitLandingLead(schemaName, params);
+  if (apiCode === "coupon.claim") return claimCoupon(schemaName, params);
+  if (apiCode === "coupon.available") return listAvailableCoupons(schemaName, params);
   if (apiCode === "mall.order.create") return createMallOrder(schemaName, params);
   if (apiCode === "mall.order.status") return queryMallOrderStatus(schemaName, params);
   if (apiCode === "mall.order.reconcile") return reconcileMallOrder(schemaName, params);
