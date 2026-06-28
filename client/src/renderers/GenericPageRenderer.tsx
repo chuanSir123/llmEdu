@@ -301,13 +301,14 @@ export function GenericPageRenderer({
       return;
     }
     if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
+      const mapped = Object.fromEntries(Object.entries(action.mapRowToValue ?? {}).map(([target, source]) => [target, row[source]]));
       try {
         await GatewayClient.executeApi({
           scope,
           schemaName,
           pageCode: dsl.pageCode,
           apiCode: action.apiCode ?? action.actionCode,
-          params: { ...(action.defaultValues ?? {}), ...row, id: row.id, versionId: row.id }
+          params: { ...(action.defaultValues ?? {}), ...row, ...mapped, id: row.id, versionId: row.id }
         });
         toast.success(`${action.label ?? "操作"}成功`);
         await load();

@@ -4,6 +4,7 @@ import { pool, withClient } from "../db/pool.js";
 import { migrate } from "../db/migrator.js";
 import { initializeTenantVersion } from "../version/version.service.js";
 import { qIdent } from "../db/schema-resolver.js";
+import { seedDefaultWechatBinding } from "../marketing.service.js";
 
 function httpError(statusCode: number, message: string) {
   return Object.assign(new Error(message), { statusCode });
@@ -178,6 +179,8 @@ async function seedTenantOperatingBaseline(
       [payId, name, type]
     );
   }
+
+  await seedDefaultWechatBinding(client, input.schemaName);
 
   return { ownerContact, ownerPassword: DEFAULT_OWNER_PASSWORD };
 }

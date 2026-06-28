@@ -29,6 +29,7 @@ import { rechargeTenant, listRechargeRecords } from "./tenant/tenant-recharge.se
 import { listCustomizationRecords, getCustomizationRecordDetail } from "./tenant/tenant-customization-record.service.js";
 import { listTenantDslChanges, previewCopyToTemplate, executeCopyToTemplate } from "./tenant/tenant-copy-template.service.js";
 import type { AuthedRequest, SessionUser } from "./types.js";
+import { bindWechatOpenid, completeWechatAuthorization, completeWechatOauth, createMallOrder, createWechatOauthLoginUrl, handleMallPayCallback, loadWechatPortal, processWechatComponentCallback, queryMallOrderStatus, reconcileMallOrder } from "./marketing.service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -127,6 +128,17 @@ export async function buildServer() {
   if (env.autoSeed) await seed();
 
   const app = Fastify({ logger: true, bodyLimit: 50 * 1024 * 1024 });
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+    const rawBody = typeof body === "string" ? body : body.toString("utf8");
+    (request as typeof request & { rawBody?: string }).rawBody = rawBody;
+    try { done(null, rawBody ? JSON.parse(rawBody) : {}); } catch (error) { done(error as Error); }
+  });
+  app.addContentTypeParser(["text/xml", "application/xml"], { parseAs: "string" }, (request, body, done) => {
+    const rawBody = typeof body === "string" ? body : body.toString("utf8");
+    (request as typeof request & { rawBody?: string }).rawBody = rawBody;
+    done(null, rawBody);
+  });
   await app.register(cors, { origin: true });
   await app.register(jwt, { secret: env.jwtSecret });
 
@@ -149,6 +161,76 @@ export async function buildServer() {
 
   app.get("/api/health", async () => ({ ok: true, service: "llmEdu", time: new Date().toISOString() }));
   app.get("/api/public/tenants", async () => ({ tenants: await listTenants() }));
+
+
+  app.get("/api/wechat/oauth/login-url", async (request) => {
+    const query = z.object({ schemaName: z.string(), redirect: z.string().optional(), bindingId: z.string().optional(), scope: z.string().optional() }).parse(request.query);
+    const schema = await resolveTenantSchema(query.schemaName);
+    return createWechatOauthLoginUrl(schema, { binding_id: query.bindingId, final_redirect: query.redirect ?? `/${query.schemaName}/wx/home`, scope: query.scope });
+  });
+
+  app.get("/api/wechat/oauth/callback", async (request, reply) => {
+    const query = z.object({ code: z.string(), state: z.string() }).parse(request.query);
+    const state = JSON.parse(Buffer.from(query.state, "base64url").toString("utf8"));
+    const schema = await resolveTenantSchema(String(state.schemaName));
+    const oauth = await completeWechatOauth(schema, { code: query.code, binding_id: state.bindingId, state: query.state });
+    const target = String(state.redirect ?? `/${state.schemaName}/wx/home`);
+    const tokenParam = `sessionToken=${encodeURIComponent(String(oauth.sessionToken))}`;
+    return reply.redirect(target.includes("?") ? `${target}&${tokenParam}` : `${target}?${tokenParam}`);
+  });
+
+  app.post("/api/wechat/openid/bind", async (request) => {
+    const body = z.object({ schemaName: z.string(), sessionToken: z.string(), studentId: z.string(), studentName: z.string().optional(), phoneLast4: z.string().optional(), verifyCode: z.string().optional() }).parse(request.body);
+    const schema = await resolveTenantSchema(body.schemaName);
+    return bindWechatOpenid(schema, { session_token: body.sessionToken, student_id: body.studentId, student_name: body.studentName, phone_last4: body.phoneLast4, verify_code: body.verifyCode });
+  });
+
+  app.get("/api/wechat/portal", async (request) => {
+    const query = z.object({ schemaName: z.string(), sessionToken: z.string().optional() }).parse(request.query);
+    const schema = await resolveTenantSchema(query.schemaName);
+    return loadWechatPortal(schema, query.sessionToken);
+  });
+
+
+  app.post("/api/wechat/component/callback", async (request) => {
+    const query = z.object({ component_appid: z.string().optional(), appid: z.string().optional(), timestamp: z.string(), nonce: z.string(), msg_signature: z.string().optional(), signature: z.string().optional() }).parse(request.query);
+    return processWechatComponentCallback({ ...query, raw_xml: (request as typeof request & { rawBody?: string }).rawBody ?? String(request.body ?? "") });
+  });
+
+  app.get("/api/wechat/authorizer/callback", async (request) => {
+    const query = z.object({ schemaName: z.string(), bindingId: z.string(), auth_code: z.string().optional(), authorization_code: z.string().optional(), expires_in: z.string().optional() }).parse(request.query);
+    const schema = await resolveTenantSchema(query.schemaName);
+    return completeWechatAuthorization(schema, { bindingId: query.bindingId, auth_code: query.auth_code ?? query.authorization_code, expires_in: query.expires_in });
+  });
+
+  app.post("/api/wechat/mall/order", async (request) => {
+    const body = z.object({ schemaName: z.string(), sessionToken: z.string(), goodsId: z.string(), quantity: z.number().optional(), activityId: z.string().optional(), groupId: z.string().optional() }).parse(request.body);
+    const schema = await resolveTenantSchema(body.schemaName);
+    return createMallOrder(schema, { session_token: body.sessionToken, goods_id: body.goodsId, quantity: body.quantity ?? 1, activity_id: body.activityId, group_id: body.groupId });
+  });
+
+  app.get("/api/wechat/mall/order/status", async (request) => {
+    const query = z.object({ schemaName: z.string(), orderId: z.string().optional(), orderNo: z.string().optional() }).parse(request.query);
+    const schema = await resolveTenantSchema(query.schemaName);
+    return queryMallOrderStatus(schema, { order_id: query.orderId, order_no: query.orderNo });
+  });
+
+  app.post("/api/wechat/mall/order/reconcile", async (request) => {
+    const body = z.object({ schemaName: z.string(), orderId: z.string(), bindingId: z.string().optional() }).parse(request.body);
+    const schema = await resolveTenantSchema(body.schemaName);
+    return reconcileMallOrder(schema, { order_id: body.orderId, binding_id: body.bindingId });
+  });
+
+  app.post("/api/wechat/pay/callback", async (request) => {
+    const query = z.object({ schemaName: z.string().optional(), bindingId: z.string().optional() }).parse(request.query);
+    const body = z.object({ schemaName: z.string().optional(), bindingId: z.string().optional() }).passthrough().parse(request.body ?? {});
+    const schemaName = query.schemaName ?? body.schemaName;
+    if (!schemaName) throw httpError(400, "微信支付回调缺少租户标识，请确认 notify_url 携带 schemaName");
+    const schema = await resolveTenantSchema(schemaName);
+    const result = await handleMallPayCallback(schema, { ...body, binding_id: query.bindingId ?? body.bindingId, headers: request.headers, rawBody: (request as typeof request & { rawBody?: string }).rawBody ?? JSON.stringify(request.body ?? {}) });
+    return { code: "SUCCESS", message: "成功", result };
+  });
+
 
   app.post("/api/auth/admin/login", async (request) => {
     const body = z.object({ contact: z.string(), password: z.string() }).parse(request.body);

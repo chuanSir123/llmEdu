@@ -6,6 +6,7 @@ export const env = {
   databaseUrl:
     process.env.DATABASE_URL ??
     "postgres://llmedu:llmedu@127.0.0.1:15432/llmedu",
+  redisUrl: process.env.REDIS_URL ?? "redis://127.0.0.1:16379/0",
   jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-me",
   host: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3000),
