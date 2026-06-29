@@ -2586,26 +2586,26 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.presentation.modal.size = "fullscreen";
     baseDsl.toolbar = [
       {
-        actionCode: "lead_list.create",
-        label: "新增意向学员",
-        type: "open_modal",
-        variant: "primary",
-        apiCode: "lead_list.create",
-        modalTitle: "新增意向学员",
-        fields: leadCreateFields,
-        defaultValues: { source_type: "MANUAL" },
-        modalSize: "large"
-      },
-      {
         actionCode: "lead_list.enroll",
         label: "新增报名",
         type: "open_modal",
-        variant: "default",
+        variant: "primary",
         apiCode: "contract_list.create",
         modalTitle: "新生报名",
         fields: contractCreateFields,
         defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) },
         modalSize: "fullscreen"
+      },
+      {
+        actionCode: "lead_list.create",
+        label: "新增意向学员",
+        type: "open_modal",
+        variant: "default",
+        apiCode: "lead_list.create",
+        modalTitle: "新增意向学员",
+        fields: leadCreateFields,
+        defaultValues: { source_type: "MANUAL" },
+        modalSize: "large"
       },
       { actionCode: "lead_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
