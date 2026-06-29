@@ -1943,6 +1943,11 @@ async function cancelApprovalTask(client: pg.PoolClient, schemaName: string, par
   return { taskId, status: "CANCELED" };
 }
 
+export async function executeCommandDslInTransaction(client: pg.PoolClient, schemaName: string, dsl: CommandDsl, params: Record<string, unknown>) {
+  const approval = await maybeSubmitApprovalTask(client, schemaName, dsl, params);
+  return approval ?? await runCommandInTransaction(client, schemaName, dsl, params);
+}
+
 export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, params: Record<string, unknown>) {
   const simpleCommands: Partial<Record<CommandDsl["command"], (c: pg.PoolClient, s: string, p: Record<string, unknown>) => Promise<unknown>>> = {
     "chargeRecord.reverse": reverseCharge,

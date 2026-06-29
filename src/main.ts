@@ -34,6 +34,20 @@ import { bindWechatOpenid, completeWechatAuthorization, completeWechatOauth, cre
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 
+
+function safeWechatOauthRedirect(redirect: unknown, schemaName: string) {
+  const fallback = `/${schemaName}/wx/home`;
+  if (typeof redirect !== "string") return fallback;
+  const value = redirect.trim();
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return fallback;
+  try {
+    const parsed = new URL(value, "http://llmedu.local");
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
 async function audit(input: {
   schemaName?: string;
   userId?: string;
@@ -166,7 +180,7 @@ export async function buildServer() {
   app.get("/api/wechat/oauth/login-url", async (request) => {
     const query = z.object({ schemaName: z.string(), redirect: z.string().optional(), bindingId: z.string().optional(), scope: z.string().optional() }).parse(request.query);
     const schema = await resolveTenantSchema(query.schemaName);
-    return createWechatOauthLoginUrl(schema, { binding_id: query.bindingId, final_redirect: query.redirect ?? `/${query.schemaName}/wx/home`, scope: query.scope });
+    return createWechatOauthLoginUrl(schema, { binding_id: query.bindingId, final_redirect: safeWechatOauthRedirect(query.redirect, query.schemaName), scope: query.scope });
   });
 
   app.get("/api/wechat/oauth/callback", async (request, reply) => {
@@ -174,7 +188,7 @@ export async function buildServer() {
     const state = JSON.parse(Buffer.from(query.state, "base64url").toString("utf8"));
     const schema = await resolveTenantSchema(String(state.schemaName));
     const oauth = await completeWechatOauth(schema, { code: query.code, binding_id: state.bindingId, state: query.state });
-    const target = String(state.redirect ?? `/${state.schemaName}/wx/home`);
+    const target = safeWechatOauthRedirect(state.redirect, String(state.schemaName));
     const tokenParam = `sessionToken=${encodeURIComponent(String(oauth.sessionToken))}`;
     return reply.redirect(target.includes("?") ? `${target}&${tokenParam}` : `${target}?${tokenParam}`);
   });

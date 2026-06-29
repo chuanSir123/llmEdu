@@ -1,8 +1,9 @@
 import { createDecipheriv, createHash, createSign, createVerify, randomUUID, timingSafeEqual } from "node:crypto";
+import type pg from "pg";
 import { pool, withClient } from "./db/pool.js";
 import { qIdent } from "./db/schema-resolver.js";
 import { withRedisLock } from "./redis-lock.service.js";
-import { executeCommandDsl } from "./gateway/command-engine.js";
+import { executeCommandDslInTransaction } from "./gateway/command-engine.js";
 
 type Row = Record<string, unknown>;
 
@@ -223,8 +224,8 @@ function appendQuery(url: string, params: Record<string, string>) {
   return `${url}${separator}${new URLSearchParams(params).toString()}`;
 }
 
-async function savePayOrderIndex(schemaName: string, bindingId: string, orderId: string, status = "CREATED") {
-  await pool.query(
+async function savePayOrderIndex(schemaName: string, bindingId: string, orderId: string, status = "CREATED", client: { query: typeof pool.query } = pool) {
+  await client.query(
     `insert into admin.wechat_pay_order_index(out_trade_no, schema_name, binding_id, mall_order_id, order_status, deleted)
      values($1,$2,$3,$4,$5,false)
      on conflict(out_trade_no) do update set schema_name = excluded.schema_name, binding_id = excluded.binding_id, mall_order_id = excluded.mall_order_id, order_status = excluded.order_status, updated_at = now(), deleted = false`,
@@ -237,7 +238,7 @@ async function findPayOrderIndex(outTradeNo: string) {
   return rows[0] as Row | undefined;
 }
 
-async function fulfillMallOrder(schemaName: string, client: { query: typeof pool.query }, order: Row, payData: Row) {
+async function fulfillMallOrder(schemaName: string, client: pg.PoolClient, order: Row, payData: Row) {
   const orderId = str(order.id);
   if (String(order.fulfillment_status) === "SUCCESS" && order.contract_id && order.funds_change_history_id) {
     return { orderId, idempotent: true, contractId: order.contract_id, fundsId: order.funds_change_history_id };
@@ -250,7 +251,7 @@ async function fulfillMallOrder(schemaName: string, client: { query: typeof pool
     if (!productId) throw new Error("商城商品未绑定产品，无法生成合同");
     let contractId = str(order.contract_id, "");
     if (!contractId) {
-      const contractResult = await executeCommandDsl(schemaName, { operation: "command", command: "contract.create", ruleCode: "contract_create_rule" } as never, {
+      const contractResult = await executeCommandDslInTransaction(client, schemaName, { operation: "command", command: "contract.create", ruleCode: "contract_create_rule" } as never, {
         __approvalApproved: true,
         data: {
           student_id: order.student_id,
@@ -268,7 +269,7 @@ async function fulfillMallOrder(schemaName: string, client: { query: typeof pool
     }
     let fundsId = str(order.funds_change_history_id, "");
     if (!fundsId) {
-      const fundsResult = await executeCommandDsl(schemaName, { operation: "command", command: "funds.create", ruleCode: "funds_create_rule" } as never, {
+      const fundsResult = await executeCommandDslInTransaction(client, schemaName, { operation: "command", command: "funds.create", ruleCode: "funds_create_rule" } as never, {
         __approvalApproved: true,
         data: {
           contract_id: contractId,
@@ -287,7 +288,7 @@ async function fulfillMallOrder(schemaName: string, client: { query: typeof pool
       `update ${table(schemaName, "mall_order")} set order_status = 'PAID', payment_status = 'PAID', payment_trade_no = $2, paid_at = coalesce(paid_at, now()), contract_id = $3, funds_change_history_id = $4, fulfillment_status = 'SUCCESS', fulfillment_error = null, callback_payload = callback_payload || $5::jsonb, updated_at = now() where id = $1`,
       [orderId, str(payData.transaction_id ?? payData.out_trade_no, ""), contractId, fundsId, JSON.stringify({ fulfillmentPayData: payData })]
     );
-    await savePayOrderIndex(schemaName, str(jsonObject(order.ext_json).bindingId, "wx_bind_public"), orderId, "PAID");
+    await savePayOrderIndex(schemaName, str(jsonObject(order.ext_json).bindingId, "wx_bind_public"), orderId, "PAID", client);
     return { orderId, contractId, fundsId, paymentStatus: "PAID" };
   } catch (error) {
     await client.query(`update ${table(schemaName, "mall_order")} set fulfillment_status = 'FAILED', fulfillment_error = $2, fulfillment_retry_count = coalesce(fulfillment_retry_count,0) + 1, updated_at = now() where id = $1`, [orderId, error instanceof Error ? error.message : String(error)]);
@@ -842,17 +843,20 @@ export async function reconcileMallOrder(schemaName: string, params: Row) {
   const payConfig = await getPayConfig(schemaName, bindingId);
   const query = await wechatPayRequest("GET", `/v3/pay/transactions/out-trade-no/${encodeURIComponent(orderId)}?mchid=${encodeURIComponent(str(payConfig.mchid))}`, undefined, payConfig);
   if (String(query.trade_state) === "SUCCESS") {
-    return withClient(async (client) => {
+    return withRedisLock(`lock:${schemaName}:mall:fulfill:${orderId}`, () => withClient(async (client) => {
       await client.query("begin");
       try {
-        const result = await fulfillMallOrder(schemaName, client, order, query);
+        const { rows: lockedRows } = await client.query(`select * from ${table(schemaName, "mall_order")} where id = $1 and deleted = false for update`, [orderId]);
+        const lockedOrder = lockedRows[0];
+        if (!lockedOrder) throw Object.assign(new Error("订单不存在"), { statusCode: 404 });
+        const result = await fulfillMallOrder(schemaName, client, lockedOrder, query);
         await client.query("commit");
         return { reconciled: true, result, wechatPay: query };
       } catch (error) {
         await client.query("rollback");
         throw error;
       }
-    });
+    }));
   }
   return { reconciled: false, orderId, tradeState: query.trade_state, wechatPay: query };
 }
