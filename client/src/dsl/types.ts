@@ -120,6 +120,8 @@ export type PageTargetDsl = {
   pageCode: string;
   title?: string;
   filters?: Record<string, unknown>;
+  filterField?: string;
+  rowField?: string;
 };
 
 export type PageDsl = {

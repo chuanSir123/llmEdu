@@ -525,8 +525,9 @@ export async function completeWechatOauth(schemaName: string, params: Row) {
 export async function bindWechatOpenid(schemaName: string, params: Row) {
   const studentId = str(params.student_id ?? params.studentId, "");
   if (!studentId) throw Object.assign(new Error("缺少学员"), { statusCode: 400 });
-  const session = await getWechatSession(schemaName, params.session_token ?? params.sessionToken);
-  const bindingId = str(params.binding_id ?? session.binding_id, "wx_bind_public");
+  const directOpenid = str(params.openid, "");
+  const session = directOpenid ? undefined : await getWechatSession(schemaName, params.session_token ?? params.sessionToken);
+  const bindingId = str(params.binding_id ?? session?.binding_id, "wx_bind_public");
   const { rows: studentRows } = await pool.query(`select id, name, contact from ${table(schemaName, "student")} where id = $1 and deleted = false limit 1`, [studentId]);
   const student = studentRows[0];
   if (!student) throw Object.assign(new Error("学员不存在"), { statusCode: 404 });
@@ -540,9 +541,11 @@ export async function bindWechatOpenid(schemaName: string, params: Row) {
     `insert into ${table(schemaName, "wechat_student_fan")}(id, binding_id, student_id, openid, unionid, nickname, avatar_url, subscribe_status, bound_at, deleted)
      values($1,$2,$3,$4,$5,$6,$7,'SUBSCRIBED',now(),false)
      on conflict (binding_id, openid) do update set student_id = excluded.student_id, unionid = excluded.unionid, nickname = excluded.nickname, avatar_url = excluded.avatar_url, subscribe_status = 'SUBSCRIBED', bound_at = now(), deleted = false, updated_at = now()`,
-    [id, bindingId, studentId, session.openid, session.unionid ?? null, session.nickname ?? null, session.avatar_url ?? null]
+    [id, bindingId, studentId, directOpenid || session?.openid, session?.unionid ?? null, session?.nickname ?? null, session?.avatar_url ?? null]
   );
-  await pool.query(`update ${table(schemaName, "wechat_oauth_session")} set updated_at = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $2::jsonb where id = $1`, [session.id, JSON.stringify({ boundStudentId: studentId })]);
+  if (session?.id) {
+    await pool.query(`update ${table(schemaName, "wechat_oauth_session")} set updated_at = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $2::jsonb where id = $1`, [session.id, JSON.stringify({ boundStudentId: studentId })]);
+  }
   return { id, studentId, bound: true };
 }
 
@@ -1112,6 +1115,86 @@ export async function refundMallOrder(schemaName: string, params: Row) {
       throw error;
     }
   }));
+}
+
+export async function completeMallGroupBuy(schemaName: string, params: Row = {}) {
+  const groupId = str(params.group_id ?? params.groupId ?? params.id, "");
+  if (!groupId) throw Object.assign(new Error("缺少团单"), { statusCode: 400 });
+  return withRedisLock(`lock:${schemaName}:mall:group:${groupId}`, () => withClient(async (client) => {
+    await client.query("begin");
+    try {
+      const { rows } = await client.query(`select * from ${table(schemaName, "mall_group_buy")} where id = $1 and deleted = false for update`, [groupId]);
+      const group = rows[0];
+      if (!group) throw Object.assign(new Error("团单不存在"), { statusCode: 404 });
+      if (String(group.group_status) === "SUCCESS") {
+        await client.query("commit");
+        return { groupId, status: "SUCCESS", changed: false };
+      }
+      if (String(group.group_status) !== "OPEN" && params.force !== true) throw Object.assign(new Error("只有进行中的团单可以成团"), { statusCode: 400 });
+      if (Number(group.joined_count ?? 0) < Number(group.group_size ?? 0) && params.force !== true) throw Object.assign(new Error("参团人数未达到成团人数"), { statusCode: 400 });
+      await client.query(`update ${table(schemaName, "mall_group_buy")} set group_status = 'SUCCESS', success_at = coalesce(success_at, now()), updated_at = now() where id = $1`, [groupId]);
+      await client.query("commit");
+      await processMarketingEvent(schemaName, "mall.group.success", groupId, { goods_id: group.goods_id, activity_id: group.activity_id, student_id: group.leader_student_id });
+      return { groupId, status: "SUCCESS", changed: true };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    }
+  }));
+}
+
+export async function closeMallGroupBuy(schemaName: string, params: Row = {}) {
+  const groupId = str(params.group_id ?? params.groupId ?? params.id, "");
+  if (!groupId) throw Object.assign(new Error("缺少团单"), { statusCode: 400 });
+  return withRedisLock(`lock:${schemaName}:mall:group:${groupId}`, () => withClient(async (client) => {
+    await client.query("begin");
+    try {
+      const { rows } = await client.query(`select * from ${table(schemaName, "mall_group_buy")} where id = $1 and deleted = false for update`, [groupId]);
+      const group = rows[0];
+      if (!group) throw Object.assign(new Error("团单不存在"), { statusCode: 404 });
+      if (String(group.group_status) === "SUCCESS" && params.force !== true) throw Object.assign(new Error("已成团团单不能关闭"), { statusCode: 400 });
+      await client.query(`update ${table(schemaName, "mall_group_buy")} set group_status = 'CLOSED', updated_at = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $2::jsonb where id = $1`, [groupId, JSON.stringify({ closeReason: params.reason ?? params.close_reason ?? "manual_close" })]);
+      await client.query("commit");
+      await processMarketingEvent(schemaName, "mall.group.closed", groupId, { goods_id: group.goods_id, activity_id: group.activity_id, student_id: group.leader_student_id });
+      return { groupId, status: "CLOSED" };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    }
+  }));
+}
+
+export async function leaveMallGroupBuy(schemaName: string, params: Row = {}) {
+  const memberId = str(params.member_id ?? params.memberId ?? params.id, "");
+  const groupId = str(params.group_id ?? params.groupId, "");
+  const studentId = str(params.student_id ?? params.studentId, "");
+  if (!memberId && (!groupId || !studentId)) throw Object.assign(new Error("缺少团购成员或团单学员"), { statusCode: 400 });
+  return withClient(async (client) => {
+    await client.query("begin");
+    try {
+      const { rows } = await client.query(
+        `select * from ${table(schemaName, "mall_group_member")}
+         where deleted = false and (($1::text <> '' and id = $1) or ($2::text <> '' and group_id = $2 and student_id = $3))
+         limit 1 for update`,
+        [memberId, groupId, studentId]
+      );
+      const member = rows[0];
+      if (!member) throw Object.assign(new Error("团购成员不存在"), { statusCode: 404 });
+      const group = (await client.query(`select * from ${table(schemaName, "mall_group_buy")} where id = $1 and deleted = false for update`, [member.group_id])).rows[0];
+      if (!group) throw Object.assign(new Error("团单不存在"), { statusCode: 404 });
+      if (String(group.group_status) === "SUCCESS" && params.force !== true) throw Object.assign(new Error("已成团团单不能退出"), { statusCode: 400 });
+      await client.query(`update ${table(schemaName, "mall_group_member")} set member_status = 'LEFT', deleted = true, updated_at = now() where id = $1`, [member.id]);
+      await client.query(`update ${table(schemaName, "mall_group_buy")} set joined_count = greatest(coalesce(joined_count,0) - 1, 0), updated_at = now() where id = $1`, [member.group_id]);
+      if (member.order_id) {
+        await client.query(`update ${table(schemaName, "mall_order")} set order_status = 'CLOSED', updated_at = now() where id = $1 and payment_status = 'UNPAID' and order_status <> 'CLOSED'`, [member.order_id]);
+      }
+      await client.query("commit");
+      return { memberId: member.id, groupId: member.group_id, left: true };
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    }
+  });
 }
 
 export async function loadWechatPortal(schemaName: string, sessionToken?: string) {

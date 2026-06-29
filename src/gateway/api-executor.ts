@@ -8,7 +8,7 @@ import { rollbackTestSchemaDsl } from "../tenant/test-schema.service.js";
 import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
-import { bindWechatOpenid, claimCoupon, closeMallOrder, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
+import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -365,6 +365,7 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     "refund_record.create": { command: "refund.create", ruleCode: "refund_create_rule" },
     "refund.delete": { command: "refund.delete", ruleCode: "refund_create_rule" },
     "contract.refund": { command: "contract.refund", ruleCode: "contract_refund_rule" },
+    "holiday.apply": { command: "holiday.apply", ruleCode: "holiday_course_impact_rule" },
     "approvalTask.approve": { command: "approval.approve", ruleCode: "approval_task_rule" },
     "approvalTask.reject": { command: "approval.reject", ruleCode: "approval_task_rule" },
     "approvalTask.cancel": { command: "approval.cancel", ruleCode: "approval_task_rule" },
@@ -417,6 +418,9 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
   if (apiCode === "mall.order.payCallback") return handleMallPayCallback(schemaName, params);
   if (apiCode === "mall.order.close") return closeMallOrder(schemaName, params);
   if (apiCode === "mall.order.refund") return refundMallOrder(schemaName, params);
+  if (apiCode === "mall.group.complete") return completeMallGroupBuy(schemaName, params);
+  if (apiCode === "mall.group.close") return closeMallGroupBuy(schemaName, params);
+  if (apiCode === "mall.group.leave") return leaveMallGroupBuy(schemaName, params);
   return undefined;
 }
 

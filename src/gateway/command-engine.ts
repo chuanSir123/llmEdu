@@ -9,7 +9,7 @@ type CommandDsl = {
     | "contract.refund" | "contract.delete" | "refund.delete" | "course.delete" | "ledger.denyMutation"
     | "attendance.checkIn" | "attendance.cancel" | "leave.create" | "makeup.create" | "classStudent.transfer" | "class.changeStatus"
     | "miniClass.addStudent" | "miniClass.removeStudent" | "oneOnNGroup.addStudent" | "oneOnNGroup.removeStudent"
-    | "chargeRecord.reverse" | "chargeRecord.preview" | "course.cancel" | "course.student.save"
+    | "chargeRecord.reverse" | "chargeRecord.preview" | "course.cancel" | "course.student.save" | "holiday.apply"
     | "moneyArrange.save" | "promotionArrange.save" | "performanceArrange.save"
     | "student.assignManager" | "product.grant.save" | "product.promotion.save"
     | "approval.submit" | "approval.approve" | "approval.reject" | "approval.cancel"
@@ -200,9 +200,9 @@ async function runCommandInTransaction(client: pg.PoolClient, schemaName: string
     return ["miniClass.addStudent", "oneOnNGroup.addStudent", "miniClass.removeStudent", "oneOnNGroup.removeStudent"].includes(dsl.command)
       ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || "course_create_rule"))
       : dsl.command === "chargeRecord.reverse"
-        ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || "charge_create_rule"))
-        : ["leave.create", "makeup.create", "classStudent.transfer"].includes(dsl.command)
-          ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || (dsl.command === "leave.create" ? "leave_create_rule" : "makeup_create_rule")))
+          ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || "charge_create_rule"))
+        : ["leave.create", "makeup.create", "classStudent.transfer", "holiday.apply"].includes(dsl.command)
+          ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || (dsl.command === "leave.create" ? "leave_create_rule" : dsl.command === "holiday.apply" ? "holiday_course_impact_rule" : "makeup_create_rule")))
           : await simpleFn(client, schemaName, params);
   }
   const rule = await loadRule(client, schemaName, dsl.ruleCode);
@@ -1737,6 +1737,56 @@ async function cancelCourse(client: pg.PoolClient, schemaName: string, params: R
   return { cancelled: true, courseId };
 }
 
+async function applyHolidayToCourses(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
+  const input = dataOf(params);
+  const holidayId = str(input.holiday_id ?? input.id);
+  const mode = str(input.mode, str(rule.defaultAction, "cancel"));
+  if (!holidayId) throw new Error("缺少停课日历 ID");
+  if (!["cancel", "postpone"].includes(mode)) throw new Error("停课影响课程处理方式必须是 cancel 或 postpone");
+  const holiday = await one(client, `select * from ${table(schemaName, "course_holiday_calendar")} where id = $1 and deleted = false for update`, [holidayId]);
+  if (!holiday) throw new Error("停课日历不存在");
+  const includeFinished = input.include_finished === true || rule.includeFinished === true;
+  const blockAttendedOrCharged = rule.blockAttendedOrCharged !== false;
+  const values: unknown[] = [holiday.holiday_date, holiday.end_date ?? holiday.holiday_date, holiday.organization_id ?? ""];
+  const where = [
+    "c.deleted = false",
+    "c.course_date between $1::date and $2::date",
+    "($3::text = '' or c.organization_id = $3)",
+  ];
+  if (!includeFinished) where.push("c.course_status = 'SCHEDULED'");
+  if (blockAttendedOrCharged) {
+    where.push(`not exists (
+      select 1 from ${table(schemaName, "generic_course_student")} cs
+      where cs.course_id = c.id and cs.deleted = false and cs.attendance_status in ('PRESENT','ABSENT','LEAVE')
+    )`);
+    where.push(`not exists (
+      select 1 from ${table(schemaName, "account_charge_records")} acr
+      where acr.course_id = c.id and acr.deleted = false and acr.charge_status = 'CONFIRMED'
+    )`);
+  }
+  const candidateSql = `select c.id from ${table(schemaName, "generic_course")} c where ${where.join(" and ")}`;
+  const candidates = await client.query(candidateSql, values);
+  if (mode === "cancel") {
+    const { rows } = await client.query(
+      `update ${table(schemaName, "generic_course")} c
+       set course_status = 'CANCELLED', updated_at = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $${values.length + 1}::jsonb
+       where c.id in (${candidateSql}) returning id`,
+      [...values, JSON.stringify({ holidayId, holidayAction: "cancel" })]
+    );
+    return { holidayId, mode, matched: candidates.rowCount, affected: rows.length, courseIds: rows.map((row) => row.id) };
+  }
+  const postponeDays = Math.max(1, num(input.postpone_days ?? input.postponeDays ?? rule.postponeDays, 7));
+  const { rows } = await client.query(
+    `update ${table(schemaName, "generic_course")} c
+     set course_date = c.course_date + $${values.length + 1}::int,
+         updated_at = now(),
+         ext_json = coalesce(ext_json,'{}'::jsonb) || $${values.length + 2}::jsonb
+     where c.id in (${candidateSql}) returning id, course_date`,
+    [...values, postponeDays, JSON.stringify({ holidayId, holidayAction: "postpone", postponeDays })]
+  );
+  return { holidayId, mode, postponeDays, matched: candidates.rowCount, affected: rows.length, courses: rows };
+}
+
 async function saveCourseStudents(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
   const input = dataOf(params);
   const courseId = str(input.course_id ?? input.generic_course_id);
@@ -2006,6 +2056,7 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
     "chargeRecord.preview": previewCharge,
     "course.cancel": cancelCourse,
     "course.student.save": saveCourseStudents,
+    "holiday.apply": applyHolidayToCourses,
     "moneyArrange.save": saveMoneyArrange,
     "promotionArrange.save": savePromotionArrange,
     "performanceArrange.save": savePerformanceArrange,
@@ -2029,7 +2080,7 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
 
   const simpleFn = simpleCommands[dsl.command];
   if (simpleFn) {
-    if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "funds.delete", "contract.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
+    if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "holiday.apply", "funds.delete", "contract.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
       return withCommandRedisLock(schemaName, dsl.command, params, () => withClient(async (client) => {
         await client.query("begin");
         try {
