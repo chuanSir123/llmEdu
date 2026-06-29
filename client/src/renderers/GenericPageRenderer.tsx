@@ -90,6 +90,21 @@ export function GenericPageRenderer({
     });
   }, [dsl.layout, selectedProductIds]);
 
+  function mappedRowValues(action: ActionDsl, row: Record<string, unknown>) {
+    return Object.fromEntries(
+      Object.entries(action.mapRowToValue ?? {}).map(([target, source]) => {
+        const value = row[source];
+        return [target, target.endsWith("_ids") && value !== undefined && !Array.isArray(value) ? [value] : value];
+      })
+    );
+  }
+
+  function targetFilters(target: PageTargetDsl | undefined, row?: Record<string, unknown>) {
+    if (!target) return undefined;
+    const filtersFromRow = row && target.filterField && target.rowField ? { [target.filterField]: row[target.rowField] } : {};
+    return { ...(target.filters ?? {}), ...filtersFromRow };
+  }
+
   const contractProducts = useMemo(() => {
     if (dsl.layout !== "enrollment") return [] as Array<{ productId: string; productName: string; productType: string; courseHour: number; unitPrice: number; totalAmount: number; promotionAmount: number }>;
     return selectedProductIds.map((pid, idx) => {
@@ -258,7 +273,7 @@ export function GenericPageRenderer({
     }
     if (action.type === "open_page" || action.actionType === "open_page") {
       const target = action.target ?? (action.targetPageCode ? { pageCode: action.targetPageCode, title: action.label } : undefined);
-      openTarget(target, action.label ?? "打开页面");
+      openTarget(target, action.label ?? "打开页面", targetFilters(target));
       return;
     }
     if (action.actionCode.endsWith(".create")) {
@@ -292,23 +307,27 @@ export function GenericPageRenderer({
     }
     if (action.type === "open_page" || action.actionType === "open_page") {
       const target = action.target ?? (action.targetPageCode ? { pageCode: action.targetPageCode, title: action.label } : undefined);
-      openTarget(target, action.label ?? "打开页面");
+      openTarget(target, action.label ?? "打开页面", targetFilters(target, row));
       return;
     }
     if (action.type === "open_modal" && action.fields?.length) {
-      const mapped = Object.fromEntries(Object.entries(action.mapRowToValue ?? {}).map(([target, source]) => [target, row[source]]));
+      const mapped = mappedRowValues(action, row);
       setModal({ type: "create", value: { ...(action.defaultValues ?? {}), ...mapped }, action });
       return;
     }
     if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
-      const mapped = Object.fromEntries(Object.entries(action.mapRowToValue ?? {}).map(([target, source]) => [target, row[source]]));
+      const mapped = mappedRowValues(action, row);
+      const data = { ...row, ...(action.defaultValues ?? {}), ...mapped };
+      const params = (action.apiCode ?? action.actionCode).endsWith(".update")
+        ? { id: row.id, data }
+        : { ...(action.defaultValues ?? {}), ...row, ...mapped, id: row.id, versionId: row.id };
       try {
         await GatewayClient.executeApi({
           scope,
           schemaName,
           pageCode: dsl.pageCode,
           apiCode: action.apiCode ?? action.actionCode,
-          params: { ...(action.defaultValues ?? {}), ...row, ...mapped, id: row.id, versionId: row.id }
+          params
         });
         toast.success(`${action.label ?? "操作"}成功`);
         await load();
@@ -349,9 +368,9 @@ export function GenericPageRenderer({
     return metric.label;
   }
 
-  function openTarget(target: PageTargetDsl | undefined, fallbackTitle: string) {
+  function openTarget(target: PageTargetDsl | undefined, fallbackTitle: string, initialFilters = target?.filters) {
     if (!target) return;
-    onOpenPage?.(target.pageCode, target.title ?? fallbackTitle, target.filters);
+    onOpenPage?.(target.pageCode, target.title ?? fallbackTitle, initialFilters);
   }
 
   function formatMeta(value: unknown) {

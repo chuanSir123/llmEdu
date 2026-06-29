@@ -297,9 +297,15 @@ async function runTool(input: {
     const pageCode = String(args.pageCode ?? "");
     const apiCode = String(args.apiCode ?? "");
     if (!apiCode.endsWith(".create") && !apiCode.endsWith(".update") && !apiCode.endsWith(".delete")) {
-      const apiDsl = asObject(await loadApiDsl("tenant", apiCode, schemaName));
-      if (!["create", "update", "delete", "command"].includes(String(apiDsl.operation ?? ""))) {
-        return { ok: false, pageCode, apiCode, error: `接口 ${apiCode} 不是新增/更新/删除/命令类接口，无法执行业务操作。请检查 apiCode 是否正确。` };
+      try {
+        const apiDsl = asObject(await loadApiDsl("tenant", apiCode, schemaName));
+        if (!["create", "update", "delete", "command"].includes(String(apiDsl.operation ?? ""))) {
+          return { ok: false, pageCode, apiCode, error: `接口 ${apiCode} 不是新增/更新/删除/命令类接口，无法执行业务操作。请检查 apiCode 是否正确。` };
+        }
+      } catch {
+        if (!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(apiCode)) {
+          return { ok: false, pageCode, apiCode, error: `接口 ${apiCode} 不存在或格式不正确，无法执行业务操作。` };
+        }
       }
     }
     const params = asObject(args.params);
@@ -698,35 +704,79 @@ async function buildMappedRows(localPath: string, sheetName: string, fieldMappin
 }
 
 type WriteApi = { apiCode: string; operation: string; pageCode: string; fields: string[] };
+type PageActionApi = { apiCode: string; pageCode: string; fields: string[] };
 
 const SYSTEM_WRITE_FIELDS = new Set(["id", "created_at", "updated_at", "deleted", "deleted_at", "ext_json"]);
 const OPERATION_LABEL: Record<string, string> = { create: "新增", update: "修改", delete: "删除", command: "业务命令" };
+
+function collectPageActionApis(pageCode: string, dsl: unknown): PageActionApi[] {
+  const pageDsl = asObject(dsl);
+  const table = asObject(pageDsl.table);
+  const actions = [
+    ...(Array.isArray(pageDsl.toolbar) ? pageDsl.toolbar : []),
+    ...(Array.isArray(table.rowActions) ? table.rowActions : []),
+  ];
+  const apis: PageActionApi[] = [];
+  for (const item of actions) {
+    const action = asObject(item);
+    const actionType = String(action.type ?? action.actionType ?? "");
+    const apiCode = String(action.apiCode ?? (actionType === "execute_api" ? action.actionCode ?? "" : ""));
+    if (!apiCode || apiCode.endsWith(".query") || apiCode.endsWith(".detail")) continue;
+    const fields = (Array.isArray(action.fields) ? action.fields : [])
+      .map((field) => String(asObject(field).key ?? ""))
+      .filter((field) => field && !SYSTEM_WRITE_FIELDS.has(field))
+      .slice(0, 14);
+    apis.push({ apiCode, pageCode, fields });
+  }
+  return apis;
+}
 
 // 从实时 api_dsl 派生当前账号可用的写接口与字段，让新功能/AI 定制新增的字段自动出现在助手知识里
 async function loadWriteApiCatalog(schemaName: string, pageCodes: string[]): Promise<WriteApi[]> {
   const pages = [...new Set(pageCodes.filter((p) => /^[a-z][a-z0-9_]{0,62}$/.test(p)))];
   if (pages.length === 0) return [];
+  const { rows: pageRows } = await pool.query(
+    `select distinct on (page_code) page_code, dsl_json from admin.page_dsl
+     where page_code = any($1)
+       and status = 'active' and deleted = false
+       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
+     order by page_code, case when schema_scope = 'tenant' then 0 else 1 end`,
+    [pages, schemaName]
+  );
+  const actionApis = pageRows.flatMap((row: { page_code: string; dsl_json: unknown }) =>
+    collectPageActionApis(row.page_code, typeof row.dsl_json === "string" ? (() => { try { return JSON.parse(row.dsl_json as string); } catch { return {}; } })() : row.dsl_json)
+  );
+  const actionApiCodes = [...new Set(actionApis.map((api) => api.apiCode))];
   const likeCodes = pages.map((p) => `${p}.%`);
   const { rows } = await pool.query(
     `select distinct on (api_code) api_code, dsl_json->>'operation' as operation, dsl_json from admin.api_dsl
-     where api_code like any($1)
+     where (api_code like any($1) or api_code = any($3))
        and dsl_json->>'operation' in ('create','update','delete','command')
        and status = 'active' and deleted = false
        and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
      order by api_code, case when schema_scope = 'tenant' then 0 else 1 end`,
-    [likeCodes, schemaName]
+    [likeCodes, schemaName, actionApiCodes]
   );
-  return rows.map((row: { api_code: string; operation: string; dsl_json: unknown }) => {
+  const catalog = rows.map((row: { api_code: string; operation: string; dsl_json: unknown }) => {
     const dsl = asObject(typeof row.dsl_json === "string" ? (() => { try { return JSON.parse(row.dsl_json as string); } catch { return {}; } })() : row.dsl_json);
     const allowed = Array.isArray(dsl.allowedFields) ? dsl.allowedFields.map(String) : [];
     const apiCode = String(row.api_code);
+    const actionApi = actionApis.find((api) => api.apiCode === apiCode);
     return {
       apiCode,
       operation: String(row.operation),
-      pageCode: apiCode.replace(/\.[^.]+$/, ""),
-      fields: allowed.filter((f) => !SYSTEM_WRITE_FIELDS.has(f)).slice(0, 14),
+      pageCode: actionApi?.pageCode ?? apiCode.replace(/\.[^.]+$/, ""),
+      fields: (allowed.length > 0 ? allowed : actionApi?.fields ?? []).filter((f) => !SYSTEM_WRITE_FIELDS.has(f)).slice(0, 14),
     };
-  }).sort((a: WriteApi, b: WriteApi) => a.apiCode.localeCompare(b.apiCode));
+  });
+  const found = new Set(catalog.map((api) => api.apiCode));
+  for (const actionApi of actionApis) {
+    if (!found.has(actionApi.apiCode)) {
+      catalog.push({ ...actionApi, operation: "command" });
+      found.add(actionApi.apiCode);
+    }
+  }
+  return catalog.sort((a: WriteApi, b: WriteApi) => a.apiCode.localeCompare(b.apiCode));
 }
 
 function buildSystemPrompt(

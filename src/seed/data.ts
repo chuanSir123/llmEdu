@@ -124,6 +124,9 @@ const contractSelect = { pageCode: "contract_list", apiCode: "contract_list.quer
 const contractProductSelect = { pageCode: "contract_product_list", apiCode: "contract_product_list.query", labelField: "product_name" };
 const miniClassSelect = { pageCode: "mini_class_list", apiCode: "mini_class_list.query", labelField: "name" };
 const oneOnNGroupSelect = { pageCode: "one_on_n_group_list", apiCode: "one_on_n_group_list.query", labelField: "name" };
+const channelSelect = { pageCode: "recruit_channel_list", apiCode: "recruit_channel_list.query", labelField: "channel_name" };
+const mallActivitySelect = { pageCode: "mall_activity", apiCode: "mall_activity.query", labelField: "activity_name" };
+const couponClaimSelect = { pageCode: "coupon_claim_list", apiCode: "coupon_claim_list.query", labelField: "coupon_code" };
 const derivedArrangePages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list"]);
 const readOnlyPages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "student_ele_account", "student_ele_account_record"]);
 const standardImportPageCodes = new Set(["student_list", "contract_list", "funds_history", "course_list", "charge_record", "refund_record"]);
@@ -205,6 +208,62 @@ const trialLessonCreateFields = [
   { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect, searchable: true },
   { key: "course_hour", label: "试听课时", type: "number", defaultValue: 1 },
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
+];
+
+
+const couponClaimFields = [
+  { key: "coupon_template_id", label: "优惠券模板", type: "text", hidden: true },
+  { key: "student_id", label: "领取学员", type: "text", optionSource: studentSelect, searchable: true, required: true },
+  { key: "source", label: "领取来源", type: "text", defaultValue: "manual" }
+];
+
+const landingLeadSubmitFields = [
+  { key: "page_id", label: "落地页", type: "text", hidden: true },
+  { key: "name", label: "学员姓名", type: "text", required: true },
+  { key: "contact", label: "联系电话", type: "text", required: true },
+  { key: "channel_id", label: "投放渠道", type: "text", optionSource: channelSelect, searchable: true },
+  { key: "school_name", label: "学校", type: "text" },
+  { key: "grade", label: "年级", type: "text" },
+  { key: "referrer_student_id", label: "推荐人", type: "text", optionSource: studentSelect, searchable: true }
+];
+
+const channelCostFields = [
+  { key: "channel_id", label: "招生渠道", type: "text", hidden: true },
+  { key: "cost_date", label: "投放日期", type: "date", required: true },
+  { key: "cost_amount", label: "投放成本", type: "number", required: true },
+  { key: "cost_type", label: "成本类型", type: "text" },
+  { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
+];
+
+const leadAssignFields = [
+  { key: "student_id", label: "意向学员", type: "text", hidden: true },
+  { key: "owner_user_id", label: "分配顾问", type: "text", optionSource: userSelect, searchable: true, required: true },
+  { key: "reason", label: "分配原因", type: "textarea", span: "full" as const, rows: 3 }
+];
+
+const trialFeedbackFields = [
+  { key: "id", label: "试听记录", type: "text", hidden: true },
+  { key: "trial_status", label: "试听状态", type: "text", defaultValue: "COMPLETED" },
+  { key: "conversion_status", label: "转化状态", type: "text", defaultValue: "PENDING" },
+  { key: "feedback", label: "试听反馈", type: "textarea", span: "full" as const, rows: 3 }
+];
+
+
+
+const wechatBindStudentFields = [
+  { key: "binding_id", label: "公众号绑定", type: "text", hidden: true },
+  { key: "openid", label: "OpenID", type: "text", hidden: true },
+  { key: "student_id", label: "绑定学员", type: "text", optionSource: studentSelect, searchable: true, required: true },
+  { key: "student_name", label: "学员姓名校验", type: "text" },
+  { key: "phone_last4", label: "手机号后四位", type: "text", required: true }
+];
+
+const mallOrderCreateFields = [
+  { key: "goods_id", label: "商品", type: "text", hidden: true },
+  { key: "activity_id", label: "活动", type: "text", optionSource: mallActivitySelect, searchable: true },
+  { key: "student_id", label: "下单学员", type: "text", optionSource: studentSelect, searchable: true, required: true },
+  { key: "quantity", label: "购买数量", type: "number", defaultValue: 1 },
+  { key: "coupon_claim_id", label: "使用优惠券", type: "text", optionSource: couponClaimSelect, searchable: true }
 ];
 
 const fundsCreateFields = [
@@ -2618,7 +2677,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         modalTitle: "新生报名",
         fields: contractCreateFields,
         defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) },
-        mapRowToValue: { student_id: "id", organization_id: "organization_id" },
+        mapRowToValue: { student_ids: "id", organization_id: "organization_id" },
         modalSize: "large"
       },
       {
@@ -2671,6 +2730,17 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     ];
     baseDsl.presentation.table.primaryRowActions = ["course_list.detail", "course_list.attendance", "course_list.leave", "course_list.makeup", "course_list.delete"];
     baseDsl.modal.fields = courseCreateFields;
+  }
+
+  if (page.page === "course_week_schedule") {
+    baseDsl.table.rowActions = [
+      { actionCode: "course_week_schedule.detail", label: "详情", type: "open_modal" },
+      { actionCode: "course_week_schedule.attendance", label: "考勤", type: "open_modal", apiCode: "attendance.checkIn", modalTitle: "学员考勤", fields: attendanceCheckInFields, mapRowToValue: { course_id: "id" } },
+      { actionCode: "course_week_schedule.leave", label: "请假", type: "open_modal", apiCode: "leave_record.create", modalTitle: "学员请假", fields: leaveCreateFields, mapRowToValue: { course_id: "id", organization_id: "organization_id" } },
+      { actionCode: "course_week_schedule.makeup", label: "安排补课", type: "open_modal", apiCode: "makeup_course_record.create", modalTitle: "安排补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" }, mapRowToValue: { original_course_id: "id", organization_id: "organization_id", teacher_id: "teacher_id" } },
+      { actionCode: "course_week_schedule.course", label: "打开排课", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["course_week_schedule.detail", "course_week_schedule.attendance", "course_week_schedule.leave", "course_week_schedule.makeup", "course_week_schedule.course"];
   }
 
   if (page.page === "charge_record") {
@@ -2753,6 +2823,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         label: "移除",
         type: "execute_api",
         apiCode: page.page === "mini_class_student_list" ? "miniClass.removeStudent" : "oneOnNGroup.removeStudent",
+        mapRowToValue: page.page === "mini_class_student_list" ? { mini_class_id: "mini_class_id", student_id: "student_id" } : { one_on_n_group_id: "one_on_n_group_id", student_id: "student_id" },
         confirm: "确认移除该学员？",
         variant: "danger"
       }
@@ -2765,6 +2836,12 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "leave_record.create", label: "新增请假", type: "open_modal", variant: "primary", modalTitle: "新增请假", fields: leaveCreateFields, defaultValues: { status: "APPROVED", leave_type: "PERSONAL", leave_time: new Date().toISOString().slice(0, 16) } },
       { actionCode: "leave_record.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
+    baseDsl.table.rowActions = [
+      { actionCode: "leave_record.detail", label: "详情", type: "open_modal" },
+      { actionCode: "leave_record.course", label: "查看课程", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "course_id" } },
+      { actionCode: "leave_record.makeup", label: "安排补课", type: "open_modal", apiCode: "makeup_course_record.create", modalTitle: "安排补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" }, mapRowToValue: { original_course_id: "course_id", student_id: "student_id", organization_id: "organization_id", source_id: "id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["leave_record.detail", "leave_record.course", "leave_record.makeup"];
     baseDsl.modal.fields = leaveCreateFields;
   }
 
@@ -2773,6 +2850,13 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "makeup_course_record.create", label: "新增补课", type: "open_modal", variant: "primary", modalTitle: "新增补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" } },
       { actionCode: "makeup_course_record.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
+    baseDsl.table.rowActions = [
+      { actionCode: "makeup_course_record.detail", label: "详情", type: "open_modal" },
+      { actionCode: "makeup_course_record.originalCourse", label: "原课程", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "original_course_id" } },
+      { actionCode: "makeup_course_record.makeupCourse", label: "补课课次", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "makeup_course_id" } },
+      { actionCode: "makeup_course_record.student", label: "查看学员", type: "open_page", target: { pageCode: "student_list", title: "学员列表", filterField: "id", rowField: "student_id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["makeup_course_record.detail", "makeup_course_record.originalCourse", "makeup_course_record.makeupCourse", "makeup_course_record.student"];
     baseDsl.modal.fields = makeupCreateFields;
   }
 
@@ -2781,6 +2865,13 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "course_holiday_calendar.create", label: "新增停课", type: "open_modal", variant: "primary", modalTitle: "新增停课", fields: holidayCreateFields, defaultValues: { block_course: true, holiday_type: "CAMPUS_CLOSED" } },
       { actionCode: "course_holiday_calendar.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
+    baseDsl.table.rowActions = [
+      { actionCode: "course_holiday_calendar.detail", label: "详情", type: "open_modal" },
+      { actionCode: "course_holiday_calendar.courses", label: "影响课程", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "course_date", rowField: "holiday_date" } },
+      { actionCode: "course_holiday_calendar.cancelCourses", label: "批量取消课程", type: "execute_api", apiCode: "holiday.apply", defaultValues: { mode: "cancel" }, confirm: "确认按停课规则批量取消影响课程？" },
+      { actionCode: "course_holiday_calendar.postponeCourses", label: "批量顺延课程", type: "execute_api", apiCode: "holiday.apply", defaultValues: { mode: "postpone" }, confirm: "确认按停课规则批量顺延影响课程？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["course_holiday_calendar.detail", "course_holiday_calendar.courses", "course_holiday_calendar.cancelCourses", "course_holiday_calendar.postponeCourses"];
     baseDsl.modal.fields = holidayCreateFields;
   }
 
@@ -2856,10 +2947,46 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.table.rowActions = [
       { actionCode: "mall_goods.detail", label: "详情", type: "open_modal" },
       { actionCode: "mall_goods.edit", label: "编辑", type: "open_modal" },
-      { actionCode: "mall_goods.createOrder", label: "创建订单", type: "execute_api", apiCode: "mall.order.create", defaultValues: { student_id: "stu_001", quantity: 1 }, mapRowToValue: { goods_id: "id" } },
+      { actionCode: "mall_goods.createOrder", label: "创建订单", type: "open_modal", apiCode: "mall.order.create", modalTitle: "创建商城订单", fields: mallOrderCreateFields, defaultValues: { quantity: 1 }, mapRowToValue: { goods_id: "id" } },
       { actionCode: "mall_goods.delete", label: "删除", type: "execute_api", confirm: "确认删除该商品？" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["mall_goods.detail", "mall_goods.edit", "mall_goods.createOrder", "mall_goods.delete"];
+  }
+
+  if (page.page === "mall_activity") {
+    baseDsl.table.rowActions = [
+      { actionCode: "mall_activity.detail", label: "详情", type: "open_modal" },
+      { actionCode: "mall_activity.goods", label: "查看商品", type: "open_page", target: { pageCode: "mall_goods", title: "商城商品", filterField: "id", rowField: "goods_id" } },
+      { actionCode: "mall_activity.groups", label: "查看团单", type: "open_page", target: { pageCode: "mall_group_buy", title: "团购团单", filterField: "activity_id", rowField: "id" } },
+      { actionCode: "mall_activity.orders", label: "查看订单", type: "open_page", target: { pageCode: "mall_order", title: "商城订单", filterField: "activity_id", rowField: "id" } },
+      { actionCode: "mall_activity.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "mall_activity.delete", label: "删除", type: "execute_api", confirm: "确认删除该营销活动？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["mall_activity.detail", "mall_activity.goods", "mall_activity.groups", "mall_activity.orders", "mall_activity.edit", "mall_activity.delete"];
+  }
+
+  if (page.page === "mall_group_buy") {
+    baseDsl.table.rowActions = [
+      { actionCode: "mall_group_buy.detail", label: "详情", type: "open_modal" },
+      { actionCode: "mall_group_buy.complete", label: "手动成团", type: "execute_api", apiCode: "mall.group.complete", confirm: "确认将该团单标记为成团？", visibleWhen: { group_status: "OPEN" } },
+      { actionCode: "mall_group_buy.close", label: "关闭团单", type: "execute_api", apiCode: "mall.group.close", confirm: "确认关闭该团单？", visibleWhen: { group_status: ["OPEN", "FAILED"] } },
+      { actionCode: "mall_group_buy.members", label: "查看成员", type: "open_page", target: { pageCode: "mall_group_member", title: "团购成员", filterField: "group_id", rowField: "id" } },
+      { actionCode: "mall_group_buy.orders", label: "查看订单", type: "open_page", target: { pageCode: "mall_order", title: "商城订单", filterField: "activity_id", rowField: "activity_id" } },
+      { actionCode: "mall_group_buy.activity", label: "查看活动", type: "open_page", target: { pageCode: "mall_activity", title: "营销活动", filterField: "id", rowField: "activity_id" } },
+      { actionCode: "mall_group_buy.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["mall_group_buy.detail", "mall_group_buy.complete", "mall_group_buy.close", "mall_group_buy.members", "mall_group_buy.orders", "mall_group_buy.activity", "mall_group_buy.edit"];
+  }
+
+  if (page.page === "mall_group_member") {
+    baseDsl.table.rowActions = [
+      { actionCode: "mall_group_member.detail", label: "详情", type: "open_modal" },
+      { actionCode: "mall_group_member.leave", label: "退出团", type: "execute_api", apiCode: "mall.group.leave", confirm: "确认将该成员退出团单？", variant: "danger", visibleWhen: { member_status: "JOINED" } },
+      { actionCode: "mall_group_member.order", label: "查看订单", type: "open_page", target: { pageCode: "mall_order", title: "商城订单", filterField: "id", rowField: "order_id" } },
+      { actionCode: "mall_group_member.student", label: "查看学员", type: "open_page", target: { pageCode: "student_list", title: "学员列表", filterField: "id", rowField: "student_id" } },
+      { actionCode: "mall_group_member.group", label: "查看团单", type: "open_page", target: { pageCode: "mall_group_buy", title: "团购团单", filterField: "id", rowField: "group_id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["mall_group_member.detail", "mall_group_member.leave", "mall_group_member.order", "mall_group_member.student", "mall_group_member.group"];
   }
 
   if (page.page === "mall_order") {
@@ -2876,14 +3003,131 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   }
 
 
+  if (page.page === "coupon_template_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "coupon_template_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "coupon_template_list.claim", label: "发券", type: "open_modal", apiCode: "coupon.claim", modalTitle: "手工发券", fields: couponClaimFields, defaultValues: { source: "manual" }, mapRowToValue: { coupon_template_id: "id" } },
+      { actionCode: "coupon_template_list.claims", label: "领取明细", type: "open_page", target: { pageCode: "coupon_claim_list", title: "优惠券领取", filterField: "coupon_template_id", rowField: "id" } },
+      { actionCode: "coupon_template_list.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "coupon_template_list.delete", label: "删除", type: "execute_api", confirm: "确认删除该优惠券模板？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["coupon_template_list.detail", "coupon_template_list.claim", "coupon_template_list.claims", "coupon_template_list.edit", "coupon_template_list.delete"];
+  }
+
+  if (page.page === "coupon_claim_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "coupon_claim_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "coupon_claim_list.template", label: "查看模板", type: "open_page", target: { pageCode: "coupon_template_list", title: "优惠券模板", filterField: "id", rowField: "coupon_template_id" } },
+      { actionCode: "coupon_claim_list.student", label: "查看学员", type: "open_page", target: { pageCode: "student_list", title: "学员列表", filterField: "id", rowField: "student_id" } },
+      { actionCode: "coupon_claim_list.order", label: "查看订单", type: "open_page", target: { pageCode: "mall_order", title: "商城订单", filterField: "id", rowField: "used_order_id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["coupon_claim_list.detail", "coupon_claim_list.template", "coupon_claim_list.student", "coupon_claim_list.order"];
+  }
+
+  if (page.page === "wechat_student_fan") {
+    baseDsl.table.rowActions = [
+      { actionCode: "wechat_student_fan.detail", label: "详情", type: "open_modal" },
+      { actionCode: "wechat_student_fan.bind", label: "绑定学员", type: "open_modal", apiCode: "wechat.openid.bind", modalTitle: "绑定微信学员", fields: wechatBindStudentFields, mapRowToValue: { binding_id: "binding_id", openid: "openid" } },
+      { actionCode: "wechat_student_fan.student", label: "查看学员", type: "open_page", target: { pageCode: "student_list", title: "学员列表", filterField: "id", rowField: "student_id" } },
+      { actionCode: "wechat_student_fan.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["wechat_student_fan.detail", "wechat_student_fan.bind", "wechat_student_fan.student", "wechat_student_fan.edit"];
+  }
+
+  if (page.page === "wechat_push_log") {
+    baseDsl.table.rowActions = [
+      { actionCode: "wechat_push_log.detail", label: "详情", type: "open_modal" },
+      { actionCode: "wechat_push_log.retry", label: "重试失败", type: "execute_api", apiCode: "wechat.push.retry" },
+      { actionCode: "wechat_push_log.student", label: "查看学员", type: "open_page", target: { pageCode: "student_list", title: "学员列表", filterField: "id", rowField: "student_id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["wechat_push_log.detail", "wechat_push_log.retry", "wechat_push_log.student"];
+  }
+
+  if (page.page === "landing_page_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "landing_page_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "landing_page_list.submitLead", label: "录入线索", type: "open_modal", apiCode: "landing.lead.submit", modalTitle: "落地页线索", fields: landingLeadSubmitFields, mapRowToValue: { page_id: "id", channel_id: "channel_id" } },
+      { actionCode: "landing_page_list.leads", label: "查看线索", type: "open_page", target: { pageCode: "lead_stage_list", title: "招生漏斗", filterField: "channel_id", rowField: "channel_id" } },
+      { actionCode: "landing_page_list.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "landing_page_list.delete", label: "删除", type: "execute_api", confirm: "确认删除该落地页？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["landing_page_list.detail", "landing_page_list.submitLead", "landing_page_list.leads", "landing_page_list.edit", "landing_page_list.delete"];
+  }
+
+  if (page.page === "recruit_channel_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "recruit_channel_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "recruit_channel_list.addCost", label: "登记成本", type: "open_modal", apiCode: "recruit_channel_cost_list.create", modalTitle: "登记渠道成本", fields: channelCostFields, defaultValues: { cost_date: new Date().toISOString().slice(0, 10) }, mapRowToValue: { channel_id: "id" } },
+      { actionCode: "recruit_channel_list.leads", label: "查看线索", type: "open_page", target: { pageCode: "lead_stage_list", title: "招生漏斗", filterField: "channel_id", rowField: "id" } },
+      { actionCode: "recruit_channel_list.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "recruit_channel_list.delete", label: "删除", type: "execute_api", confirm: "确认删除该招生渠道？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["recruit_channel_list.detail", "recruit_channel_list.addCost", "recruit_channel_list.leads", "recruit_channel_list.edit", "recruit_channel_list.delete"];
+  }
+
   if (page.page === "lead_stage_list") {
     baseDsl.table.rowActions = [
       { actionCode: "lead_stage_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "lead_stage_list.assign", label: "分配", type: "open_modal", apiCode: "lead.assign", modalTitle: "分配意向学员", fields: leadAssignFields, mapRowToValue: { student_id: "student_id" } },
       { actionCode: "lead_stage_list.claim", label: "领取", type: "execute_api", apiCode: "lead.claim", mapRowToValue: { student_id: "student_id" } },
       { actionCode: "lead_stage_list.recycle", label: "回收", type: "execute_api", apiCode: "lead.recycle", mapRowToValue: { student_id: "student_id" } },
+      { actionCode: "lead_stage_list.followup", label: "跟进", type: "open_modal", apiCode: "student_followup_list.create", modalTitle: "新增跟进", fields: followupCreateFields, defaultValues: { follow_type: "PHONE", follow_result: "CONTACTED" }, mapRowToValue: { student_id: "student_id", lead_stage_id: "id" } },
       { actionCode: "lead_stage_list.edit", label: "编辑", type: "open_modal" }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["lead_stage_list.detail", "lead_stage_list.claim", "lead_stage_list.recycle", "lead_stage_list.edit"];
+    baseDsl.presentation.table.primaryRowActions = ["lead_stage_list.detail", "lead_stage_list.assign", "lead_stage_list.claim", "lead_stage_list.recycle", "lead_stage_list.followup", "lead_stage_list.edit"];
+  }
+
+  if (page.page === "trial_lesson_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "trial_lesson_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "trial_lesson_list.feedback", label: "试听反馈", type: "open_modal", apiCode: "trial_lesson_list.update", modalTitle: "试听反馈", fields: trialFeedbackFields, mapRowToValue: { id: "id" } },
+      { actionCode: "trial_lesson_list.enroll", label: "转报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "新生报名", fields: contractCreateFields, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) }, mapRowToValue: { student_ids: "student_id" }, modalSize: "fullscreen" },
+      { actionCode: "trial_lesson_list.course", label: "查看课次", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "course_id" } },
+      { actionCode: "trial_lesson_list.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["trial_lesson_list.detail", "trial_lesson_list.feedback", "trial_lesson_list.enroll", "trial_lesson_list.course", "trial_lesson_list.edit"];
+  }
+
+  if (page.page === "sales_task_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "sales_task_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "sales_task_list.complete", label: "完成", type: "execute_api", apiCode: "sales_task_list.update", defaultValues: { task_status: "COMPLETED", complete_time: new Date().toISOString() } },
+      { actionCode: "sales_task_list.followup", label: "写跟进", type: "open_modal", apiCode: "student_followup_list.create", modalTitle: "新增跟进", fields: followupCreateFields, defaultValues: { follow_type: "PHONE", follow_result: "CONTACTED" }, mapRowToValue: { student_id: "student_id" } },
+      { actionCode: "sales_task_list.trial", label: "邀约试听", type: "open_modal", apiCode: "trial_lesson_list.create", modalTitle: "邀约试听", fields: trialLessonCreateFields, defaultValues: { course_hour: 1 }, mapRowToValue: { student_id: "student_id", sales_user_id: "owner_user_id" } },
+      { actionCode: "sales_task_list.enroll", label: "转报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "新生报名", fields: contractCreateFields, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) }, mapRowToValue: { student_ids: "student_id" }, modalSize: "fullscreen" },
+      { actionCode: "sales_task_list.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["sales_task_list.detail", "sales_task_list.complete", "sales_task_list.followup", "sales_task_list.trial", "sales_task_list.enroll", "sales_task_list.edit"];
+  }
+
+  if (page.page === "recruit_channel_cost_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "recruit_channel_cost_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "recruit_channel_cost_list.channel", label: "查看渠道", type: "open_page", target: { pageCode: "recruit_channel_list", title: "招生渠道", filterField: "id", rowField: "channel_id" } },
+      { actionCode: "recruit_channel_cost_list.leads", label: "查看线索", type: "open_page", target: { pageCode: "lead_stage_list", title: "招生漏斗", filterField: "channel_id", rowField: "channel_id" } },
+      { actionCode: "recruit_channel_cost_list.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["recruit_channel_cost_list.detail", "recruit_channel_cost_list.channel", "recruit_channel_cost_list.leads", "recruit_channel_cost_list.edit"];
+  }
+
+  if (page.page === "sales_target_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "sales_target_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "sales_target_list.leads", label: "顾问线索", type: "open_page", target: { pageCode: "lead_stage_list", title: "招生漏斗", filterField: "owner_user_id", rowField: "owner_user_id" } },
+      { actionCode: "sales_target_list.trials", label: "顾问试听", type: "open_page", target: { pageCode: "trial_lesson_list", title: "试听邀约", filterField: "sales_user_id", rowField: "owner_user_id" } },
+      { actionCode: "sales_target_list.tasks", label: "销售任务", type: "open_page", target: { pageCode: "sales_task_list", title: "销售任务", filterField: "owner_user_id", rowField: "owner_user_id" } },
+      { actionCode: "sales_target_list.edit", label: "编辑", type: "open_modal" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["sales_target_list.detail", "sales_target_list.leads", "sales_target_list.trials", "sales_target_list.tasks", "sales_target_list.edit"];
+  }
+
+  if (page.page === "lead_assignment_history_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "lead_assignment_history_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "lead_assignment_history_list.lead", label: "查看意向", type: "open_page", target: { pageCode: "lead_stage_list", title: "招生漏斗", filterField: "student_id", rowField: "student_id" } },
+      { actionCode: "lead_assignment_history_list.student", label: "查看学员", type: "open_page", target: { pageCode: "student_list", title: "学员列表", filterField: "id", rowField: "student_id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["lead_assignment_history_list.detail", "lead_assignment_history_list.lead", "lead_assignment_history_list.student"];
   }
 
   if (standardImportPageCodes.has(page.page)) {
@@ -3392,6 +3636,20 @@ export const businessRules = [
       validations: [
         { field: "transaction_amount", operator: ">", value: 0, message: "预存金额必须大于 0" }
       ]
+    }
+  },
+
+  {
+    rule_code: "holiday_course_impact_rule",
+    rule_name: "停课影响课程处理规则",
+    rule_json: {
+      category: "workflow",
+      businessType: "course_cancel",
+      defaultAction: "cancel",
+      postponeDays: 7,
+      includeFinished: false,
+      blockAttendedOrCharged: true,
+      description: "停课日历批量处理仅影响待上课课程；默认拦截已有考勤或已确认扣费课程，支持批量取消或按天数顺延。"
     }
   },
   {

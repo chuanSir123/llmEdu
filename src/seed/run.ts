@@ -34,6 +34,43 @@ function collectPermissionPageSeeds() {
   ];
 }
 
+function buildSkillMd(page: (typeof pages)[number] | (typeof adminPages)[number]) {
+  const dsl = pageDsl(page) as {
+    toolbar?: Array<{ actionCode?: string; label?: string; apiCode?: string; type?: string; target?: { pageCode?: string } }>;
+    table?: { rowActions?: Array<{ actionCode?: string; label?: string; apiCode?: string; type?: string; target?: { pageCode?: string } }> };
+    filters?: Array<{ key?: string; label?: string }>;
+  };
+  const fields = page.fields.map((field) => `${field.key}${field.label ? `(${field.label})` : ""}`).join(", ");
+  const filters = (dsl.filters ?? []).map((field) => `${field.key}${field.label ? `(${field.label})` : ""}`).join(", ") || "无";
+  const actions = [...(dsl.toolbar ?? []), ...(dsl.table?.rowActions ?? [])]
+    .map((action) => {
+      const target = action.target?.pageCode ? ` -> ${action.target.pageCode}` : "";
+      const api = action.apiCode ? ` api=${action.apiCode}` : "";
+      return `- ${action.actionCode ?? action.label}：${action.label ?? ""} type=${action.type ?? "unknown"}${api}${target}`;
+    })
+    .join("\n") || "- 无";
+  const apiCodes = [`${page.page}.query`, `${page.page}.detail`, `${page.page}.create`, `${page.page}.update`, `${page.page}.delete`].join(", ");
+  const base = skillContentMap[page.feature] ?? `# ${page.name}\n\n## 功能描述\n${page.name}业务数据维护。`;
+  return `${base}
+
+## DSL/AI 调用索引
+- 模块编码：${page.module}
+- 功能编码：${page.feature}
+- 页面编码：${page.page}
+- 主表：${page.table}
+- 字段：${fields}
+- 筛选：${filters}
+- 标准接口：${apiCodes}
+
+## 页面动作
+${actions}
+
+## AI 定制与 AI 助手注意事项
+- AI 定制修改本功能时必须同步 page DSL、api DSL、action DSL 和本 skill。
+- AI 对话执行写操作时优先使用上方接口或动作 apiCode；外键字段传 ID，不知道 ID 时先查询对应页面。
+- 新增查询、筛选、统计或报表字段必须基于真实表结构；仅低频展示扩展字段使用 ext_json。`;
+}
+
 async function upsert(table: string, key: string, row: Record<string, unknown>) {
   const keys = Object.keys(row);
   const values = Object.values(row).map((value) => {
@@ -444,7 +481,7 @@ async function seedDsl(schemaScope: string, schemaName: string | null, page: (ty
     feature_code: page.feature,
     skill_code: `skill_${page.feature}`,
     skill_name: `${page.name}维护说明`,
-    skill_md_content: skillContentMap[page.feature] ?? `# ${page.name}\n\n通过 page DSL、api DSL 和 action DSL 维护本功能。新增可查询、筛选、排序、统计或报表聚合字段时，必须基于真实表结构生成变更；仅展示或低频扩展字段使用 ext_json。`,
+    skill_md_content: buildSkillMd(page),
     version_no: 1,
     status: "active"
   });
