@@ -51,6 +51,19 @@ function asArray(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object" && !Array.isArray(item)) as Record<string, unknown>[] : [];
 }
 
+function normalizeApprovalParams(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalizeApprovalParams(item));
+  if (!value || typeof value !== "object") return value;
+  const entries: [string, unknown][] = Object.entries(value as Record<string, unknown>)
+    .filter(([key, entry]) => entry !== undefined && !["__userId", "__approvalApproved", "approval_task_id", "approvalTaskId"].includes(key))
+    .map(([key, entry]) => [key, normalizeApprovalParams(entry)]);
+  return Object.fromEntries(entries.sort((left, right) => left[0].localeCompare(right[0])));
+}
+
+function approvalParamsMatch(originalParams: unknown, currentParams: Record<string, unknown>) {
+  return JSON.stringify(normalizeApprovalParams(originalParams)) === JSON.stringify(normalizeApprovalParams(currentParams));
+}
+
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
 }
@@ -191,9 +204,16 @@ async function maybeSubmitApprovalTask(client: pg.PoolClient, schemaName: string
   if (dsl.command === "contract.create" && num(input.promotion_amount) > 0) hint.flowCode = "contract_discount_approval";
   const existingTaskId = str(input.approval_task_id ?? input.approvalTaskId);
   if (existingTaskId) {
-    const task = await one(client, `select status from ${table(schemaName, "approval_task")} where id = $1 and deleted = false`, [existingTaskId]);
-    if (task?.status === "APPROVED") return undefined;
-    throw new Error("审批未通过，不能执行业务动作");
+    const task = await one(client, `select status, form_json, consumed_at from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [existingTaskId]);
+    if (!task) throw new Error("审批任务不存在");
+    if (task.status !== "APPROVED") throw new Error("审批未通过，不能执行业务动作");
+    if (task.consumed_at) throw new Error("审批任务已使用，不能重复执行业务动作");
+    const form = asObject(task.form_json);
+    if (str(form.originalCommand) !== dsl.command || !approvalParamsMatch(form.originalParams, params)) {
+      throw new Error("审批任务与当前业务动作不匹配");
+    }
+    await client.query(`update ${table(schemaName, "approval_task")} set consumed_at = now(), consumed_by_user_id = $2, updated_at = now() where id = $1`, [existingTaskId, str(params.__userId) || null]);
+    return undefined;
   }
   const { rows } = await client.query(`select id from ${table(schemaName, "approval_flow")} where flow_code = $1 and status = 'ACTIVE' and deleted = false limit 1`, [hint.flowCode]);
   if (!rows[0]) return undefined;
@@ -1868,6 +1888,7 @@ async function approveApprovalTask(client: pg.PoolClient, schemaName: string, pa
       ruleCode: str(form.originalRuleCode),
     }, { ...asObject(form.originalParams), __approvalApproved: true, approval_task_id: taskId, __userId: userId });
   }
+  await client.query(`update ${table(schemaName, "approval_task")} set consumed_at = now(), consumed_by_user_id = $2, updated_at = now() where id = $1 and consumed_at is null`, [taskId, userId || null]);
   return { taskId, status: "APPROVED", businessResult, afterApproved: form.afterApproved ?? [] };
 }
 
@@ -1879,6 +1900,7 @@ async function rejectApprovalTask(client: pg.PoolClient, schemaName: string, par
   const task = await one(client, `select * from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [taskId]);
   if (!task) throw new Error("审批任务不存在");
   if (task.status !== "PENDING") throw new Error("审批任务不是待审批状态");
+  if (task.current_approver_user_id && userId && String(task.current_approver_user_id) !== userId) throw new Error("当前用户不是此节点审批人");
   const form = asObject(task.form_json);
   await insertApprovalLog(client, schemaName, taskId, "REJECT", userId, str(input.comment ?? input.reason, "驳回"), asArray(form.steps)[num(task.current_step_index)], {});
   await client.query(`update ${table(schemaName, "approval_task")} set status = 'REJECTED', current_approver_user_id = null, rejected_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId]);

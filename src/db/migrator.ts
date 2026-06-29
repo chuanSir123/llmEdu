@@ -566,6 +566,8 @@ export async function migrate() {
     await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS rejected_at timestamptz`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS canceled_at timestamptz`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS completed_at timestamptz`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS consumed_at timestamptz`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".approval_task ADD COLUMN IF NOT EXISTS consumed_by_user_id text`);
     await exec(`CREATE INDEX IF NOT EXISTS approval_task_pending_approver_idx ON "${schema}".approval_task(current_approver_user_id, status)`);
     await exec(`CREATE INDEX IF NOT EXISTS approval_task_applicant_idx ON "${schema}".approval_task(applicant_user_id, status)`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".login_session ADD COLUMN IF NOT EXISTS ip text`);
