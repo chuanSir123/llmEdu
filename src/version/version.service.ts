@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { pool, withClient } from "../db/pool.js";
-import { syncSkillMd } from "../agent/skill-md.service.js";
+import { collectBusinessEventRelatedFeatureCodes, syncSkillMd } from "../agent/skill-md.service.js";
 import { qIdent } from "../db/schema-resolver.js";
 
 export async function createDraftVersion(input: {
@@ -606,6 +606,10 @@ export async function publishVersionAndSyncSkillMd(versionId: string, userId: st
       if (item.targetType === "api" || item.targetType === "action") {
         features.add(item.targetCode.replace(/\.(query|detail|create|update|delete)$/, ""));
       }
+      if (item.targetType === "business_rule") {
+        const resource = ((item.snapshot as Record<string, unknown> | undefined)?.resource_json ?? item.snapshot) as Record<string, unknown> | undefined;
+        for (const featureCode of collectBusinessEventRelatedFeatureCodes(resource ?? {})) features.add(featureCode);
+      }
     }
     for (const featureCode of features) {
       try {
@@ -623,6 +627,24 @@ export async function publishVersionAndSyncSkillMd(versionId: string, userId: st
       await syncSkillMd(schemaName, featureCode);
     } catch (err) {
       console.warn("[Version] SKILL.md sync failed after publish for %s: %s", featureCode, err instanceof Error ? err.message : String(err));
+    }
+  }
+  if (result.targetType === "business_rule") {
+    const schemaName = result.schemaName ?? "demo_school";
+    const { rows } = await pool.query(
+      `select rule_json from admin.business_rule
+       where rule_code = $1 and status = 'active' and deleted = false
+         and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
+       order by case when schema_scope = 'tenant' then 0 else 1 end
+       limit 1`,
+      [result.targetCode, schemaName]
+    );
+    for (const featureCode of collectBusinessEventRelatedFeatureCodes((rows[0]?.rule_json ?? {}) as Record<string, unknown>)) {
+      try {
+        await syncSkillMd(schemaName, featureCode);
+      } catch (err) {
+        console.warn("[Version] SKILL.md sync failed after business rule publish for %s: %s", featureCode, err instanceof Error ? err.message : String(err));
+      }
     }
   }
   return result;
