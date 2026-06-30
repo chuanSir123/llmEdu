@@ -2376,10 +2376,18 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       theme: "flatTech",
       density: "compact",
       header: {
+        hidden: true,
         subtitle: pageSubtitles[page.page] ?? `${page.name}业务数据维护`,
         metrics: metricsFor(page)
       },
+      filters: {
+        showLabels: false
+      },
+      toolbar: {
+        align: "right"
+      },
       table: {
+        pageSize: 50,
         rowActionMode: "inline",
         rowActionStyle: "linkGroup",
         primaryRowActions: [`${page.page}.detail`, `${page.page}.edit`, `${page.page}.delete`],
