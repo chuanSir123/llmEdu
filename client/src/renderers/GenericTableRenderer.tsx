@@ -89,7 +89,7 @@ export function GenericTableRenderer({
   const summaryValue = (key: string) => rows.reduce((sum, row) => sum + Number(row[key] ?? 0), 0);
 
   return (
-    <div className={token.tableWrap}>
+    <div className="h-[calc(100%-3.5rem)] overflow-auto bg-white">
       <table className="min-w-full border-collapse">
         <thead className={stickyHeader ? "sticky top-0 z-10" : undefined}>
           <tr>
@@ -198,10 +198,10 @@ export function GenericTableRenderer({
             </tr>
           )}
           {hasSummary && (
-            <tr className="border-t border-[#d9e3ed] bg-[#fbfcff] font-semibold text-[#263445]">
+            <tr className="sticky bottom-0 z-10 border-t border-[#d9e3ed] bg-white font-semibold text-[#172033] shadow-[0_-1px_0_#e5e8ef]">
               {sortedColumns.map((column, index) => (
                 <td key={column.key} className={`${token.td} ${tdDensity} ${alignClass(column.align)} whitespace-nowrap`}>
-                  {index === 0 ? "合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toLocaleString(undefined, { maximumFractionDigits: 2 }) : ""}
+                  {index === 0 ? "合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toFixed(2).replace(/\.00$/, "") : ""}
                 </td>
               ))}
               {hasActions && <td className={`${token.td} ${tdDensity}`} />}
