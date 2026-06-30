@@ -17,7 +17,7 @@ export async function loadTenantMenu(schemaName: string, user?: SessionUser) {
   );
   const modules = new Map<string, { moduleCode: string; moduleName: string; icon: string; groups: Record<string, unknown[]> }>();
   for (const row of rows) {
-    if (isPreviewTestSchema && row.module_code === "ai_customization") continue;
+    if (isPreviewTestSchema && ["customization_record_list", "tenant_version_list"].includes(row.page_code)) continue;
     if (permitted.size && !permitted.has(row.page_code)) continue;
     if (!modules.has(row.module_code)) {
       modules.set(row.module_code, { moduleCode: row.module_code, moduleName: row.module_name, icon: row.icon, groups: {} });
@@ -33,10 +33,19 @@ export async function loadTenantMenu(schemaName: string, user?: SessionUser) {
         return "财务流水";
       }
       if (mc === "student") return pc.includes("followup") ? "跟进管理" : "学员管理";
-      if (mc === "education") return pc.includes("charge") ? "消课扣费" : "教务管理";
-      if (mc === "oa") return "协同办公";
-      if (mc === "report") return "经营报表";
-      if (mc === "system") return "组织权限";
+      if (mc === "education") {
+        if (pc.includes("course_week") || pc.includes("course_list") || pc.includes("holiday") || pc.includes("makeup") || pc.includes("leave")) return "排课上课";
+        if (pc.includes("mini_class") || pc.includes("one_on_n")) return "班级管理";
+        if (pc.includes("charge")) return "消课扣费";
+        return "教务配置";
+      }
+      if (mc === "oa") return pc.includes("approval") ? "审批流转" : "协同办公";
+      if (mc === "report") return pc.includes("finance") ? "财务报表" : pc.includes("course") ? "课程报表" : "经营报表";
+      if (mc === "system") {
+        if (pc.includes("customization") || pc.includes("assistant_record") || pc.includes("tenant_version")) return "AI 能力";
+        if (pc.includes("organization") || pc.includes("user") || pc.includes("role")) return "组织权限";
+        return "系统配置";
+      }
       return "管理";
     })();
     modules.get(row.module_code)!.groups[group] ??= [];

@@ -241,7 +241,7 @@ export async function createTenantWithModules(input: {
     if (catalog.modules.length === 0 || catalog.features.length === 0) {
       throw httpError(400, "请至少选择一个可用模块和功能");
     }
-    const agentCustomizationEnabled = catalog.modules.includes("ai_customization") || catalog.modules.includes("ai_agent");
+    const agentCustomizationEnabled = catalog.modules.includes("ai_agent") || catalog.features.some((feature) => ["customization_record_list", "tenant_version_list"].includes(feature.featureCode));
 
     await client.query(
       `insert into admin.tenant_manage(id, schema_name, name, status, contact_phone, owner_name, enabled_modules, enabled_features, expire_time, created_by, agent_customization_enabled)

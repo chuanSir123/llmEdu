@@ -14,6 +14,11 @@ const badgeTone = {
   gray: "border-[#d7dee7] bg-[#f6f8fa] text-[#607083]"
 } satisfies Record<BadgeTone, string>;
 
+function isImageField(column: FieldDsl) {
+  const key = column.key.toLowerCase();
+  return column.type === "image" || key.includes("image") || key.includes("avatar") || key.includes("photo") || key.includes("cover") || key.includes("logo") || key.endsWith("_url");
+}
+
 function formatValue(value: unknown, type?: string): string {
   if (value === null || value === undefined || value === "") return "-";
   if (type === "datetime") return new Date(String(value)).toLocaleString();
@@ -50,6 +55,9 @@ function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation
     : row[column.key];
   const text = formatValue(rawValue, column.type);
   const displayText = text === "-" ? text : (presentation?.valueLabels?.[column.key]?.[text] ?? text);
+  if (isImageField(column) && text !== "-") {
+    return <img src={text} alt={column.title ?? column.label ?? column.key} className="h-12 w-16 rounded border border-[#dde3ee] object-cover" />;
+  }
   if (!column.badge || text === "-") return displayText;
   const tone = (presentation?.statusMap?.[column.key]?.[text] ?? "gray") as BadgeTone;
   return <span className={`inline-flex h-6 items-center border px-2 text-xs font-medium ${badgeTone[tone]}`}>{displayText}</span>;
@@ -76,6 +84,9 @@ export function GenericTableRenderer({
   const hasActions = rowActions.length > 0;
   const actionStyle = presentation?.table?.rowActionStyle ?? "button";
   const primaryRowActions = new Set(presentation?.table?.primaryRowActions ?? []);
+  const numericColumns = sortedColumns.filter((column) => column.type === "number" || /(_amount|amount|hour|qty|count|total|price|balance)$/i.test(column.key));
+  const hasSummary = rows.length > 0 && numericColumns.length > 0;
+  const summaryValue = (key: string) => rows.reduce((sum, row) => sum + Number(row[key] ?? 0), 0);
 
   return (
     <div className={token.tableWrap}>
@@ -184,6 +195,16 @@ export function GenericTableRenderer({
               <td className="px-3 py-10 text-center text-sm text-[#607083]" colSpan={columns.length + (hasActions ? 1 : 0)}>
                 暂无数据
               </td>
+            </tr>
+          )}
+          {hasSummary && (
+            <tr className="border-t border-[#d9e3ed] bg-[#fbfcff] font-semibold text-[#263445]">
+              {sortedColumns.map((column, index) => (
+                <td key={column.key} className={`${token.td} ${tdDensity} ${alignClass(column.align)} whitespace-nowrap`}>
+                  {index === 0 ? "本页合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toLocaleString(undefined, { maximumFractionDigits: 2 }) : ""}
+                </td>
+              ))}
+              {hasActions && <td className={`${token.td} ${tdDensity}`} />}
             </tr>
           )}
         </tbody>
