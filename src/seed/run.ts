@@ -410,8 +410,20 @@ async function disableLegacyNonTenantDslScopes() {
     "admin.dsl_version",
   ];
   for (const table of tables) {
+    const [schemaName, tableName] = table.split(".");
+    const { rows } = await pool.query(
+      `select column_name from information_schema.columns where table_schema = $1 and table_name = $2`,
+      [schemaName, tableName]
+    );
+    const columns = new Set(rows.map((row: { column_name: string }) => row.column_name));
+    if (!columns.has("schema_scope") || !columns.has("deleted")) continue;
+    const setClause = columns.has("updated_at")
+      ? "deleted = true, updated_at = now()"
+      : columns.has("status")
+        ? "deleted = true, status = 'archived'"
+        : "deleted = true";
     await pool.query(
-      `update ${table} set deleted = true, updated_at = now() where schema_scope not in ('tenant','admin') and deleted = false`
+      `update ${table} set ${setClause} where schema_scope not in ('tenant','admin') and deleted = false`
     );
   }
 }
