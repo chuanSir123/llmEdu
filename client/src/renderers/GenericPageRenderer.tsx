@@ -64,7 +64,8 @@ export function GenericPageRenderer({
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const pageSize = 20;
+  const defaultPageSize = dsl.presentation?.table?.pageSize ?? 20;
+  const [pageSize, setPageSize] = useState(defaultPageSize);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
@@ -199,6 +200,8 @@ export function GenericPageRenderer({
       if (start && end) next[field.key] = [start, end];
     }
     return next;
+  }
+
   function currentWeekRange() {
     const now = new Date();
     const day = now.getDay() || 7;
@@ -209,7 +212,7 @@ export function GenericPageRenderer({
     return [monday.toISOString().slice(0, 10), sunday.toISOString().slice(0, 10)];
   }
 
-  async function load(nextFilters = filters, nextPage = page) {
+  async function load(nextFilters = filters, nextPage = page, nextPageSize = pageSize) {
     setLoading(true);
     setError("");
     try {
@@ -220,7 +223,7 @@ export function GenericPageRenderer({
         schemaName,
         pageCode: dsl.pageCode,
         apiCode: dsl.dataApi,
-        params: { filters: effectiveFilters, page: nextPage, pageSize, schemaName }
+        params: { filters: effectiveFilters, page: nextPage, pageSize: nextPageSize, schemaName }
       });
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
@@ -236,10 +239,11 @@ export function GenericPageRenderer({
     const nextFilters = initialFilters ?? (dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {});
     setFilters(nextFilters);
     setPage(1);
+    setPageSize(defaultPageSize);
     setEnrollmentValue({});
     setImportConfig(null);
-    void load(nextFilters, 1);
-  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey]);
+    void load(nextFilters, 1, defaultPageSize);
+  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, defaultPageSize]);
 
   async function submitModal() {
     if (!modal) return;
@@ -428,32 +432,26 @@ export function GenericPageRenderer({
   }
 
   function renderFilterInput(field: typeof filtersDsl[number]) {
-    if (field.type === "date_range") {
-      const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : [];
+    if (field.type === "date_range" || field.type === "daterange") {
+      const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : currentMonthRange();
       const start = String(range[0] ?? "");
       const end = String(range[1] ?? "");
+      const displayValue = start && end ? `${start.replaceAll("-", "/")} - ${end.replaceAll("-", "/")}` : "";
       return (
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            className={token.input}
-            value={start}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value || start || currentMonthRange()[0], end || currentMonthRange()[1]] })}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
-            }}
-          />
-          <span className="text-[#8b95a7]">至</span>
-          <input
-            type="date"
-            className={token.input}
-            value={end}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [start || currentMonthRange()[0], event.target.value || end || currentMonthRange()[1]] })}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
-            }}
-          />
-        </div>
+        <input
+          type="text"
+          className={`${token.input} min-w-[252px]`}
+          value={displayValue}
+          placeholder={field.placeholder ?? "请选择日期范围"}
+          onChange={(event) => {
+            const matches = event.target.value.match(/(\d{4})[/-](\d{2})[/-](\d{2})\s*-\s*(\d{4})[/-](\d{2})[/-](\d{2})/);
+            if (!matches) return;
+            setFilters({ ...filters, [field.key]: [`${matches[1]}-${matches[2]}-${matches[3]}`, `${matches[4]}-${matches[5]}-${matches[6]}`] });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") { setPage(1); void load(filters, 1); }
+          }}
+        />
       );
     }
     const inputType = field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text";
@@ -907,38 +905,38 @@ export function GenericPageRenderer({
     );
   }
 
+  const hideHeader = dsl.presentation?.header?.hidden === true;
+  const showFilterLabels = dsl.presentation?.filters?.showLabels !== false;
+  const toolbarAlign = dsl.presentation?.toolbar?.align ?? "right";
+
   return (
-    <div className="flex h-full flex-col overflow-hidden p-4">
-      <div className="mb-3 flex items-start justify-between border-b border-[#d9e3ed] pb-3">
-        <div>
-          <h1 className="text-base font-semibold text-[#172033]">{dsl.title}</h1>
-          {(dsl.presentation?.header?.subtitle ?? dsl.subtitle) && (
-            <p className="mt-1 text-xs text-[#607083]">{dsl.presentation?.header?.subtitle ?? dsl.subtitle}</p>
-          )}
+    <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
+      {!hideHeader && (
+        <div className="mx-4 mt-4 mb-3 flex items-start justify-between border-b border-[#d9e3ed] bg-white px-4 py-3">
+          <div>
+            <h1 className="text-base font-semibold text-[#172033]">{dsl.title}</h1>
+            {(dsl.presentation?.header?.subtitle ?? dsl.subtitle) && (
+              <p className="mt-1 text-xs text-[#607083]">{dsl.presentation?.header?.subtitle ?? dsl.subtitle}</p>
+            )}
+          </div>
+          <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
         </div>
-        <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
-      </div>
-      <div className={token.filterBar}>
+      )}
+      <div className={`shrink-0 ${hideHeader ? "mt-0" : ""} ${token.filterBar} mb-3 rounded-none border-0 px-8 py-5 shadow-none`}>
         {sortWithOrder(filtersDsl).map((field) => (
           <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
-            {field.label}
+            {showFilterLabels && field.label}
             {renderFilterInput(field)}
           </label>
         ))}
-        <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>
+        <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1, pageSize); }}>
           查询
         </button>
-        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1); }}>
+        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1, pageSize); }}>
           重置
         </button>
       </div>
-      <div className="mb-3 flex flex-wrap gap-2">
-        {sortWithOrder(toolbarDsl)
-          .map((action) => (
-          <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
-        ))}
-      </div>
-      {error && <div className="mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      {error && <div className="mx-3 mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {importConfig && (
         <div className="mb-3 border border-[#d9e3ed] bg-white p-3">
           <div className="mb-2 flex items-center justify-between">
@@ -956,7 +954,15 @@ export function GenericPageRenderer({
           />
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="mx-3 min-h-0 flex-1 overflow-hidden bg-white">
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#edf0f5] px-5">
+          <div className="text-base font-semibold text-[#172033]">{dsl.title}<span className="ml-1 text-[#a7b0bf]">ⓘ</span></div>
+          <div className={`flex flex-wrap gap-5 text-sm ${toolbarAlign === "right" ? "justify-end" : "justify-start"}`}>
+            {sortWithOrder(toolbarDsl).map((action) => (
+              <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
+            ))}
+          </div>
+        </div>
         <GenericTableRenderer
           columns={tableDsl.columns ?? []}
           rows={rows}
@@ -966,19 +972,24 @@ export function GenericPageRenderer({
         />
       </div>
 
-      <div className="mt-3 flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-3 py-2 text-sm text-[#607083]">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-          <span>数据合计：共 {total} 条</span>
-          {metrics.map((metric) => (
-            <button key={`${metric.label}-${metric.field ?? metric.source}`} className={metric.target ? "text-[#2f80ed] hover:underline" : "cursor-default"} onClick={() => openTarget(metric.target, metricLabel(metric))}>
-              {metricLabel(metric)}：<span className="font-semibold text-[#172033]">{metricValue(metric)}{metric.suffix ?? ""}</span>
-            </button>
-          ))}
-        </div>
+      <div className="flex h-14 shrink-0 items-center justify-center gap-8 border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
         <div className="flex items-center gap-2">
-          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next, pageSize); }}>上一页</button>
           <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
-          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next); }}>下一页</button>
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next, pageSize); }}>下一页</button>
+          <select
+            className={`${token.input} h-8 min-w-[112px]`}
+            value={pageSize}
+            onChange={(event) => {
+              const nextSize = Number(event.target.value);
+              setPageSize(nextSize);
+              setPage(1);
+              void load(filters, 1, nextSize);
+            }}
+          >
+            {[20, 50, 100].map((size) => <option key={size} value={size}>每页{size}条</option>)}
+          </select>
+          <span className="ml-2">共 {total.toLocaleString()} 条</span>
         </div>
       </div>
       {modal && (

@@ -1542,8 +1542,10 @@ export const pages: PageSeed[] = [
       { key: "course_title", label: "课程名称", filter: true },
       { key: "course_type", label: "课程类型", filter: true },
       { key: "course_dates", label: "上课日期", type: "multiDate", span: 2 as const, defaultFutureOnly: true },
-  { key: "course_date", label: "单次日期", type: "date", hidden: true },
+      { key: "course_date", label: "单次日期", type: "date", hidden: true },
+      { key: "organization_id", label: "上课校区", filter: true },
       { key: "teacher_id", label: "授课老师" },
+      { key: "study_manager_id", label: "班主任" },
       { key: "course_status", label: "状态", filter: true }
     ]
   },
@@ -1561,7 +1563,9 @@ export const pages: PageSeed[] = [
       { key: "end_time", label: "结束时间" },
       { key: "course_title", label: "课程" },
       { key: "course_type", label: "类型", filter: true },
+      { key: "organization_id", label: "上课校区", filter: true },
       { key: "teacher_id", label: "老师", filter: true },
+      { key: "study_manager_id", label: "班主任" },
       { key: "mini_class_id", label: "班级" },
       { key: "one_on_n_group_id", label: "1对N小组" },
       { key: "course_status", label: "状态", filter: true }
@@ -2376,10 +2380,18 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       theme: "flatTech",
       density: "compact",
       header: {
+        hidden: true,
         subtitle: pageSubtitles[page.page] ?? `${page.name}业务数据维护`,
         metrics: metricsFor(page)
       },
+      filters: {
+        showLabels: false
+      },
+      toolbar: {
+        align: "right"
+      },
       table: {
+        pageSize: 20,
         rowActionMode: "inline",
         rowActionStyle: "linkGroup",
         primaryRowActions: [`${page.page}.detail`, `${page.page}.edit`, `${page.page}.delete`],
@@ -2769,6 +2781,14 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "course_list.delete", label: "删除", type: "execute_api", apiCode: "course.delete", confirm: "确认删除该排课？将回滚关联考勤和扣费", variant: "danger" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["course_list.detail", "course_list.attendance", "course_list.leave", "course_list.makeup", "course_list.delete"];
+    baseDsl.table.columns = [
+      { key: "course_title", title: "课程名称", width: 180 },
+      { key: "course_type", title: "课程类型", width: 120 },
+      { key: "organization_id", title: "上课校区", width: 150, displayKey: "organization_name" },
+      { key: "teacher_id", title: "授课老师", width: 130, displayKey: "teacher_name" },
+      { key: "study_manager_id", title: "班主任", width: 130, displayKey: "study_manager_name" },
+      { key: "course_status", title: "状态", width: 100, align: "center", badge: true }
+    ];
     baseDsl.modal.fields = courseCreateFields;
   }
 
@@ -2781,6 +2801,19 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "course_week_schedule.course", label: "打开排课", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "id" } }
     ];
     baseDsl.presentation.table.primaryRowActions = ["course_week_schedule.detail", "course_week_schedule.attendance", "course_week_schedule.leave", "course_week_schedule.makeup", "course_week_schedule.course"];
+    baseDsl.table.columns = [
+      { key: "course_date", title: "日期", type: "date", width: 120 },
+      { key: "start_time", title: "开始时间", width: 110 },
+      { key: "end_time", title: "结束时间", width: 110 },
+      { key: "course_title", title: "课程", width: 180 },
+      { key: "course_type", title: "类型", width: 120 },
+      { key: "organization_id", title: "上课校区", width: 150, displayKey: "organization_name" },
+      { key: "teacher_id", title: "老师", width: 130, displayKey: "teacher_name" },
+      { key: "study_manager_id", title: "班主任", width: 130, displayKey: "study_manager_name" },
+      { key: "mini_class_id", title: "班级", width: 140, displayKey: "mini_class_name" },
+      { key: "one_on_n_group_id", title: "1对N小组", width: 140, displayKey: "one_on_n_group_name" },
+      { key: "course_status", title: "状态", width: 100, align: "center", badge: true }
+    ];
   }
 
   if (page.page === "charge_record") {
