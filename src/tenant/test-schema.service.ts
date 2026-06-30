@@ -295,7 +295,7 @@ async function resolveTableName(
 ): Promise<string | null> {
   if (diff.targetType === "api_dsl") {
     const { rows } = await pool.query(
-      `select dsl_json from admin.api_dsl where api_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default') and status = 'active' and deleted = false limit 1`,
+      `select dsl_json from admin.api_dsl where api_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school')) and status = 'active' and deleted = false limit 1`,
       [diff.targetCode, schemaName]
     );
     const dsl = rows[0]?.dsl_json as Record<string, unknown> | null;
@@ -304,7 +304,7 @@ async function resolveTableName(
   if (diff.targetType === "page_dsl") {
     const pageCode = diff.targetCode;
     const { rows: apiRows } = await pool.query(
-      `select dsl_json from admin.api_dsl where api_code like $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default') and status = 'active' and deleted = false limit 1`,
+      `select dsl_json from admin.api_dsl where api_code like $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school')) and status = 'active' and deleted = false limit 1`,
       [`${pageCode}.query`, schemaName]
     );
     const dsl = apiRows[0]?.dsl_json as Record<string, unknown> | null;
@@ -575,8 +575,8 @@ async function loadDslSourceRow(dslTable: string, codeCol: string, targetCode: s
   const { rows } = await pool.query(
     `select * from ${dslTable}
      where ${codeCol} = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
      limit 1`,
     [targetCode, schemaName]
   );

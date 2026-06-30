@@ -539,7 +539,7 @@ async function discoverPageModalCodes(pageCode: string, schemaName: string): Pro
      WHERE page_code = $1
        AND action_type = 'open_modal'
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR schema_scope = 'tenant_default')
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [pageCode, schemaName]
   );
@@ -596,7 +596,7 @@ async function loadExistingDsl(
   const { rows } = await pool.query(
     `SELECT ${mapping.contentCol} AS content FROM ${mapping.table}
      WHERE ${mapping.codeCol} = $1
-       AND (schema_scope = 'tenant' AND schema_name = $2 OR schema_scope = 'tenant_default')
+       AND (schema_scope = 'tenant' AND schema_name = $2 OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
        AND status = 'active' AND deleted = false
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END LIMIT 1`,
     [targetCode, schemaName]
@@ -704,7 +704,8 @@ function applyOp(dsl: unknown, diff: DslDiff): unknown {
       break;
     }
 
-    case "create_business_rule": {
+    case "create_business_rule":
+    case "create_business_event_listener": {
       result = {
         resourceType: "business_rule",
         ruleCode: diff.targetCode,
