@@ -89,7 +89,7 @@ export function GenericTableRenderer({
   const summaryValue = (key: string) => rows.reduce((sum, row) => sum + Number(row[key] ?? 0), 0);
 
   return (
-    <div className="h-[calc(100%-3.5rem)] overflow-auto bg-white">
+    <div className="h-full overflow-auto bg-white">
       <table className="min-w-full border-collapse">
         <thead className={stickyHeader ? "sticky top-0 z-10" : undefined}>
           <tr>

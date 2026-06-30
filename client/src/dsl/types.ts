@@ -163,6 +163,8 @@ export type PageDsl = {
       primaryRowActions?: string[];
       stickyHeader?: boolean;
     };
+    type?: "calendar";
+    calendarField?: string;
     modal?: {
       style?: "default" | "bossForm";
       columns?: 2 | 3;
@@ -200,7 +202,7 @@ export type PageDsl = {
       }>;
     };
   };
-  layout: "list" | "dashboard" | "enrollment";
+  layout: "list" | "dashboard" | "enrollment" | "calendar";
   dataApi: string;
   detailApi: string;
   createApi: string;

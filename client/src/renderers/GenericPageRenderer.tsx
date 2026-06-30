@@ -11,6 +11,7 @@ import { GenericFormRenderer } from "./GenericFormRenderer";
 import { ImportHandler } from "./ImportHandler";
 import { exportToExcel } from "./ExportHandler";
 import { CustomizationRecordDetail } from "./CustomizationRecordDetail";
+import { CalendarView } from "./CalendarView";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type MetricDsl = {
@@ -434,22 +435,35 @@ export function GenericPageRenderer({
       const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : currentMonthRange();
       const start = String(range[0] ?? "");
       const end = String(range[1] ?? "");
-      const displayValue = start && end ? `${start.replaceAll("-", "/")} - ${end.replaceAll("-", "/")}` : "";
+      const updateRange = (index: 0 | 1, value: string) => {
+        const nextRange = [start, end];
+        nextRange[index] = value;
+        setFilters({ ...filters, [field.key]: nextRange });
+      };
       return (
-        <input
-          type="text"
-          className={`${token.input} min-w-[252px]`}
-          value={displayValue}
-          placeholder={field.placeholder ?? "请选择日期范围"}
-          onChange={(event) => {
-            const matches = event.target.value.match(/(\d{4})[/-](\d{2})[/-](\d{2})\s*-\s*(\d{4})[/-](\d{2})[/-](\d{2})/);
-            if (!matches) return;
-            setFilters({ ...filters, [field.key]: [`${matches[1]}-${matches[2]}-${matches[3]}`, `${matches[4]}-${matches[5]}-${matches[6]}`] });
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") { setPage(1); void load(filters, 1); }
-          }}
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            className={`${token.input} min-w-[150px]`}
+            value={start}
+            aria-label={`${field.label ?? "日期"}开始日期`}
+            onChange={(event) => updateRange(0, event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
+            }}
+          />
+          <span className="text-sm text-[#8b95a7]">至</span>
+          <input
+            type="date"
+            className={`${token.input} min-w-[150px]`}
+            value={end}
+            aria-label={`${field.label ?? "日期"}结束日期`}
+            onChange={(event) => updateRange(1, event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
+            }}
+          />
+        </div>
       );
     }
     const inputType = field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text";
@@ -903,6 +917,41 @@ export function GenericPageRenderer({
     );
   }
 
+  if (dsl.layout === "calendar" || dsl.presentation?.type === "calendar") {
+    return (
+      <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
+        <div className={`mx-3 mt-3 shrink-0 ${token.filterBar} rounded-[2px] border-0 shadow-none`}>
+          {sortWithOrder(filtersDsl).map((field) => (
+            <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
+              {renderFilterInput(field)}
+            </label>
+          ))}
+          <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>查询</button>
+          <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = { course_date: currentWeekRange() }; setFilters(empty); setPage(1); void load(empty, 1); }}>重置</button>
+        </div>
+        {error && <div className="mx-3 mt-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+        <div className="mx-3 mt-3 min-h-0 flex-1 overflow-hidden bg-white">
+          <CalendarView dsl={dsl} rows={rows} toolbar={toolbarDsl} onToolbar={onToolbar} onAction={onRowAction} />
+        </div>
+        {modal && (
+          <ModalRenderer
+            scope={scope}
+            schemaName={schemaName}
+            title={modalTitle}
+            fields={modalFields(modal)}
+            value={modal.value}
+            readonly={modal.type === "detail"}
+            onChange={(value) => setModal({ ...modal, value })}
+            onClose={() => setModal(null)}
+            onSubmit={submitModal}
+            presentation={dsl.presentation}
+            size={"action" in modal ? modal.action?.modalSize : undefined}
+          />
+        )}
+      </div>
+    );
+  }
+
   const hideHeader = dsl.presentation?.header?.hidden === true;
   const showFilterLabels = dsl.presentation?.filters?.showLabels !== false;
   const toolbarAlign = dsl.presentation?.toolbar?.align ?? "left";
@@ -920,7 +969,7 @@ export function GenericPageRenderer({
           <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
         </div>
       )}
-      <div className={`mx-0 shrink-0 ${hideHeader ? "mt-0" : ""} ${token.filterBar} rounded-none border-0 shadow-none`}>
+      <div className={`mx-3 mt-3 shrink-0 ${token.filterBar} rounded-[2px] border-0 shadow-none`}>
         {sortWithOrder(filtersDsl).map((field) => (
           <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
             {showFilterLabels && field.label}
@@ -934,11 +983,16 @@ export function GenericPageRenderer({
           重置
         </button>
       </div>
-      <div className={`flex shrink-0 flex-wrap gap-2 bg-white px-4 pb-3 ${toolbarAlign === "right" ? "justify-end" : "justify-start"}`}>
-        {sortWithOrder(toolbarDsl)
-          .map((action) => (
-          <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
-        ))}
+      <div className="mx-3 mt-3 flex shrink-0 items-center justify-between border-b border-[#edf0f5] bg-white px-5 py-4">
+        <div className="flex items-center gap-1 text-base font-semibold text-[#172033]">
+          {dsl.title}
+          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#c8ced8] text-[10px] font-bold text-white">i</span>
+        </div>
+        <div className={`flex flex-wrap gap-2 ${toolbarAlign === "left" ? "justify-start" : "justify-end"}`}>
+          {sortWithOrder(toolbarDsl).map((action) => (
+            <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
+          ))}
+        </div>
       </div>
       {error && <div className="mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {importConfig && (
@@ -958,7 +1012,7 @@ export function GenericPageRenderer({
           />
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto px-0">
+      <div className="mx-3 min-h-0 flex-1 overflow-auto bg-white px-0">
         <GenericTableRenderer
           columns={tableDsl.columns ?? []}
           rows={rows}
@@ -968,15 +1022,7 @@ export function GenericPageRenderer({
         />
       </div>
 
-      <div className="flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-          <span>数据合计：共 {total} 条</span>
-          {metrics.map((metric) => (
-            <button key={`${metric.label}-${metric.field ?? metric.source}`} className={metric.target ? "text-[#2f80ed] hover:underline" : "cursor-default"} onClick={() => openTarget(metric.target, metricLabel(metric))}>
-              {metricLabel(metric)}：<span className="font-semibold text-[#172033]">{metricValue(metric)}{metric.suffix ?? ""}</span>
-            </button>
-          ))}
-        </div>
+      <div className="mx-3 flex shrink-0 items-center justify-center border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
         <div className="flex items-center gap-2">
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
           <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
