@@ -2653,6 +2653,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
           columns: ["contract_no", "student_id", "sign_time", "total_amount", "paid_amount", "contract_status"]
         }
       },
+      { actionCode: "contract_list.import", label: "导入", type: "import", actionType: "import", variant: "default", importConfig: { apiCode: "contract_list.create" } },
       { actionCode: "contract_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
