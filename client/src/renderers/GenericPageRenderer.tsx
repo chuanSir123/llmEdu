@@ -430,32 +430,26 @@ export function GenericPageRenderer({
   }
 
   function renderFilterInput(field: typeof filtersDsl[number]) {
-    if (field.type === "date_range") {
-      const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : [];
+    if (field.type === "date_range" || field.type === "daterange") {
+      const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : currentMonthRange();
       const start = String(range[0] ?? "");
       const end = String(range[1] ?? "");
+      const displayValue = start && end ? `${start.replaceAll("-", "/")} - ${end.replaceAll("-", "/")}` : "";
       return (
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            className={token.input}
-            value={start}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value || start || currentMonthRange()[0], end || currentMonthRange()[1]] })}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
-            }}
-          />
-          <span className="text-[#8b95a7]">至</span>
-          <input
-            type="date"
-            className={token.input}
-            value={end}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [start || currentMonthRange()[0], event.target.value || end || currentMonthRange()[1]] })}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
-            }}
-          />
-        </div>
+        <input
+          type="text"
+          className={`${token.input} min-w-[252px]`}
+          value={displayValue}
+          placeholder={field.placeholder ?? "请选择日期范围"}
+          onChange={(event) => {
+            const matches = event.target.value.match(/(\d{4})[/-](\d{2})[/-](\d{2})\s*-\s*(\d{4})[/-](\d{2})[/-](\d{2})/);
+            if (!matches) return;
+            setFilters({ ...filters, [field.key]: [`${matches[1]}-${matches[2]}-${matches[3]}`, `${matches[4]}-${matches[5]}-${matches[6]}`] });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") { setPage(1); void load(filters, 1); }
+          }}
+        />
       );
     }
     const inputType = field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text";
@@ -987,6 +981,7 @@ export function GenericPageRenderer({
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
           <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next); }}>下一页</button>
+          <span className="ml-2">共 {total.toLocaleString()} 条</span>
         </div>
       </div>
       {modal && (
