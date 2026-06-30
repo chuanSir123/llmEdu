@@ -33,7 +33,7 @@ export async function loadApiDsl(scope: "admin" | "tenant", apiCode: string, sch
      from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant_default' and $2 = 'tenant'))
+         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
      order by case when schema_scope = $2 then 0 else 1 end
      limit 1`,
     [apiCode, scope, schemaName ?? null]
@@ -147,7 +147,7 @@ async function listPermissionConfig(schemaName: string, roleId: string) {
      left join admin.module_registry m
        on m.module_code = f.module_code and m.status = 'ACTIVE' and m.deleted = false
      where p.status = 'active' and p.deleted = false
-       and ((p.schema_scope = 'tenant' and p.schema_name = $1) or p.schema_scope = 'tenant_default')
+       and ((p.schema_scope = 'tenant' and p.schema_name = $1) or p.schema_scope = 'tenant' and schema_name = 'demo_school')
      order by case when p.schema_scope = 'tenant' then 0 else 1 end, module_sort, feature_sort, p.page_name`,
     [schemaName]
   );
@@ -160,8 +160,8 @@ async function listPermissionConfig(schemaName: string, roleId: string) {
     `select action_code, action_name, action_type, page_code, dsl_json, schema_scope
      from admin.action_dsl
      where status = 'active' and deleted = false and action_type <> 'modal'
-       and ((schema_scope = 'tenant' and schema_name = $1) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end, action_code`,
+       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end, action_code`,
     [schemaName]
   );
   const actionsByPage = new Map<string, Map<string, Record<string, unknown>>>();
@@ -300,7 +300,7 @@ async function queryApprovalTasks(schemaName: string, params: Record<string, unk
 async function queryBusinessRules(schemaName: string, params: Record<string, unknown>) {
   const filters = asObject(params.filters);
   const values: unknown[] = [schemaName];
-  const where = [`status = 'active'`, "deleted = false", `((schema_scope = 'tenant' and schema_name = $1) or schema_scope = 'tenant_default')`];
+  const where = [`status = 'active'`, "deleted = false", `((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))`];
   if (filters.rule_name) { values.push(`%${filters.rule_name}%`); where.push(`rule_name ilike $${values.length}`); }
   const page = Math.max(Number(params.page ?? 1), 1);
   const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
@@ -316,7 +316,7 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
   return {
     rows: rows.map(({ __total, ...row }) => ({
       ...row,
-      source_label: row.schema_scope === "tenant" ? "租户自定义" : "默认模板",
+      source_label: row.schema_name === "demo_school" ? "模板机构" : "租户自定义",
       rule_json: asObject(row.rule_json),
       category_label: businessRuleCategoryLabel(String(asObject(row.rule_json).category ?? "")),
       business_type_label: businessRuleTypeLabel(String(asObject(row.rule_json).businessType ?? "")),

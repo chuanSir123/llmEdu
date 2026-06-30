@@ -63,7 +63,7 @@ export const PLAN_CHANGES_TOOL = {
               op: {
                 type: "string",
                 enum: [
-                  "create_table", "add_field", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule",
+                  "create_table", "add_field", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule", "create_business_event_listener",
                   "add_column", "remove_column", "reorder_columns", "change_column",
                   "add_filter", "remove_filter", "add_toolbar", "add_row_action", "add_modal_field", "remove_modal_field",
                   "add_select_field", "remove_select_field", "add_allowed_field", "add_join", "add_where", "add_sort",
@@ -110,6 +110,7 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
 | create_approval_flow | approval_flow | 新增审批流 | resourceDef: {flowCode,flowName,moduleCode,businessType,trigger?,steps:[{stepCode,stepName,assigneeRole}],status?} |
 | create_print_template | print_template | 新增打印模板 | resourceDef: {templateCode,templateName,pageCode,moduleCode,paperSize?,orientation?,fields?,layout?} |
 | create_business_rule | business_rule | 新增/调整教务业务规则 | resourceDef 必须使用下方“教务规则结构”，不要只写自然语言 |
+| create_business_event_listener | business_rule | 新增业务事件触发/监听规则 | resourceDef: {ruleCode,ruleName,category:"workflow",businessType,triggerEvent,trigger:{event},listeners:[{type,target?,payloadMapping?}],listenerMode?,failurePolicy?} |
 | modify_permission | permission_policy | 调整角色权限策略 | resourceDef: {roleCode,pageCode,pagePermission,buttonPermission?,dataPermission?,fieldPermission?} |
 | add_column | page_dsl | 在表格中添加列 | {key, label, type, width?, sortable?, badge?, align?} |
 | remove_column | page_dsl | 移除表格列 | 无需 fieldDef |
@@ -172,8 +173,7 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
    - 打印模板使用 print_template(create_print_template)，系统会自动或同时添加页面打印按钮；模板字段来自当前页面/业务对象，不要编造表字段。
    - 数据权限使用 permission_policy(modify_permission)，dataPermission 在 self_only/own_courses/own_students/own_organization/organization_or_sub/all 中选择，fieldPermission 形如 {"phone":"hidden"}。
    - 业务校验规则使用 business_rule(create_business_rule)，validations 只描述规则，不要直接修改资金/课时余额字段。
-   - 监听已有业务并触发已有业务使用 business_rule(create_business_rule)，category="workflow"，resourceDef 结构为 {ruleCode,ruleName,category:"workflow",businessType,trigger:{event,conditions?},actions:[{type:"execute_command",command,ruleCode?,params?,paramsMapping?}]}；paramsMapping 支持 "payload.student_id"、"event.businessId" 这类路径。
-   - workflow 规则禁止形成循环触发：actions[].command 对应的新业务事件不能等于 trigger.event，也不能与同批 workflow 规则组成 A 触发 B、B 再触发 A 的链路。
+   - 业务触发/监听使用 business_rule(create_business_event_listener)，必须配置 triggerEvent/trigger.event 和 listeners；监听器只编排通知、待办、写入自定义表或调用既有安全业务动作，不要直接改财务/课时派生余额。
    - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType。category 只能是 funds_allocation/promotion_allocation/performance_allocation/approval_trigger/validation/workflow/refund/charge/attendance。
    - businessType 只能是 contract/funds/course/course_cancel/attendance/charge/charge_reverse/refund/contract_refund/product_price/performance。
    - 排课冲突规则必须同时包含老师冲突和学员冲突：validations=[
@@ -227,7 +227,7 @@ export const REPAIR_PROMPT_TEMPLATE = `上一次输出校验失败：
 23. 如果错误包含“报表字段不存在”或“missing metric/dimension/filter field”，说明你编造了不存在的表字段。必须重新阅读当前提示中的“当前功能结构（SKILL.md）”和“相关数据库表结构”，只从真实表字段中选择 sourceTable、dimensions、metrics.field、filters.field；禁止继续使用错误字段的同义词、英文直译或猜测字段。
 24. 报表字段修正时不要为了找 name/id/amount 字段随意切到 student、employee、contract 等无关表。先确定用户要统计的业务事实属于哪个相关 skill；例如业绩金额必须来自业绩分配记录的真实指标字段，员工维度必须来自该事实表里的员工 id 字段，员工姓名通过 displayKey/外键展示补充，不应把 sourceTable 改成学员表。
 25. 如果用户要求页面显示名称但事实表只有 *_id，report_dsl 的 dimensions 仍使用事实表中的 *_id 物理字段；页面名称展示由系统根据 displayKey/外键能力补齐，不要把 name 字段当作维度写进不存在的 sourceTable。
-26. 审批流必须使用 approval_flow(create_approval_flow)，导出必须使用 page_dsl add_toolbar 的 export action，打印模板必须使用 print_template(create_print_template)，业务校验或业务事件监听必须使用 business_rule(create_business_rule)，不要把这些资源塞进 page_dsl 普通字段。
+26. 审批流必须使用 approval_flow(create_approval_flow)，导出必须使用 page_dsl add_toolbar 的 export action，打印模板必须使用 print_template(create_print_template)，业务校验必须使用 business_rule(create_business_rule)，业务触发/监听必须使用 business_rule(create_business_event_listener)，不要把这些资源塞进 page_dsl 普通字段。
 27. 业务规则必须使用当前教务规则枚举：category 必须合法；排课冲突必须含老师和学员；业绩规则不要写 ownerField/amountField 这类客户看不懂的字段，必须用 performanceAllocation、productPriority、organizationPerformanceOwner、personalPerformanceOwner 等业务枚举。
 28. workflow 事件监听规则必须包含 trigger.event 和 actions；actions 只能触发既有业务 command，并且不能让 command 发布的事件回到当前 trigger.event 或形成跨规则循环。
 

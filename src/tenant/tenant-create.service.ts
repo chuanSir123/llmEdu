@@ -88,7 +88,7 @@ async function insertTenantSubscriptions(
 async function loadPageActionCodes(client: import("pg").PoolClient, pageCode: string) {
   const { rows } = await client.query(
     `select action_code from admin.action_dsl
-     where schema_scope = 'tenant_default' and page_code = $1 and status = 'active' and deleted = false`,
+     where schema_scope = 'tenant' and schema_name = 'demo_school' and page_code = $1 and status = 'active' and deleted = false`,
     [pageCode]
   );
   return rows.map((row) => String(row.action_code));
@@ -241,7 +241,7 @@ export async function createTenantWithModules(input: {
     if (catalog.modules.length === 0 || catalog.features.length === 0) {
       throw httpError(400, "请至少选择一个可用模块和功能");
     }
-    const agentCustomizationEnabled = catalog.modules.includes("ai_customization") || catalog.modules.includes("ai_agent");
+    const agentCustomizationEnabled = catalog.modules.includes("ai_agent") || catalog.features.some((feature) => ["customization_record_list", "tenant_version_list"].includes(feature.featureCode));
 
     await client.query(
       `insert into admin.tenant_manage(id, schema_name, name, status, contact_phone, owner_name, enabled_modules, enabled_features, expire_time, created_by, agent_customization_enabled)
@@ -263,7 +263,7 @@ export async function createTenantWithModules(input: {
     await ensureTenantTables(client, schemaName);
     await insertTenantSubscriptions(client, tenantId, schemaName, catalog.modules, catalog.features);
 
-    const versionResult = await initializeTenantVersion(schemaName);
+    const versionResult = await initializeTenantVersion(schemaName, { selectedFeatureCodes: catalog.features.map((feature) => feature.featureCode) });
     await client.query(
       `insert into admin.tenant_agent_config(id, schema_name, agent_customization_enabled, max_chat_rounds, module_scope)
        values($1,$2,$3,20,$4::jsonb)

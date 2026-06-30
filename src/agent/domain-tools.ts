@@ -47,6 +47,7 @@ const SELECT_DOMAIN_TOOLS_TOOL = {
                   "add_export_action",
                   "create_print_template",
                   "create_business_rule",
+                  "create_business_event_listener",
                 ],
               },
               args: { type: "object" },
@@ -113,8 +114,8 @@ async function selectLlmTools(input: {
     "结合用户完整需求、意图分类、当前页面/API/动作摘要选择合适工具，不要按单个关键词机械匹配。",
     "只有在需求能明确映射到某个标准工具时才选择工具；不明确、需要自由组合 DSL、或工具参数不够时返回空 invocations。",
     "区分统计/报表与业务动作：统计资金、课时、学员等数据时选择报表类工具；只有用户明确要按钮、入口、流程或执行动作时才选择工作流工具。",
-    "工具说明：add_ext_field_to_page=给现有页面增加普通展示/编辑扩展字段；add_physical_filter_field=增加需要查询、筛选、统计或唯一约束的物理字段；create_import_flow=新增导入模板/导入能力；create_report_page=新增报表，必须根据已加载的 skill.md 和表结构填写 sourceTable、dimensions、metrics、filters、rank、sort；add_followup_workflow=新增招生/学员跟进动作；add_charge_workflow=新增课消或扣费确认动作；add_contract_payment_workflow=新增合同收款/补缴/付款确认动作；add_refund_workflow=新增退费动作；add_course_scheduling_workflow=新增排课/约课动作；create_custom_feature=新增完整业务功能和数据表；modify_permission_policy=调整角色、按钮、字段或数据权限；create_approval_flow=新增审批流定义；add_export_action=给页面新增导出按钮；create_print_template=新增打印模板；create_business_rule=新增或调整教务业务规则，也用于 workflow 事件监听：trigger.event + actions[].command 触发既有业务。",
-    "业务规则枚举：category 必须是 funds_allocation/promotion_allocation/performance_allocation/approval_trigger/validation/workflow/refund/charge/attendance；businessType 必须是 contract/funds/course/course_cancel/attendance/charge/charge_reverse/refund/contract_refund/product_price/performance。",
+    "工具说明：add_ext_field_to_page=给现有页面增加普通展示/编辑扩展字段；add_physical_filter_field=增加需要查询、筛选、统计或唯一约束的物理字段；create_import_flow=新增导入模板/导入能力；create_report_page=新增报表，必须根据已加载的 skill.md 和表结构填写 sourceTable、dimensions、metrics、filters、rank、sort；add_followup_workflow=新增招生/学员跟进动作；add_charge_workflow=新增课消或扣费确认动作；add_contract_payment_workflow=新增合同收款/补缴/付款确认动作；add_refund_workflow=新增退费动作；add_course_scheduling_workflow=新增排课/约课动作；create_custom_feature=新增完整业务功能和数据表；modify_permission_policy=调整角色、按钮、字段或数据权限；create_approval_flow=新增审批流定义；add_export_action=给页面新增导出按钮；create_print_template=新增打印模板；create_business_rule=新增或调整教务业务规则；create_business_event_listener=新增业务事件触发/监听规则，用于在标准事件后执行通知、建待办、更新自定义表或调用已存在业务动作。",
+    "业务规则枚举：category 必须是 funds_allocation/promotion_allocation/performance_allocation/approval_trigger/validation/workflow/refund/charge/attendance；businessType 必须是 contract/funds/course/course_cancel/attendance/charge/charge_reverse/refund/contract_refund/product_price/performance。业务事件监听用 category=workflow，并写明 triggerEvent/listeners。",
     "常规教务规则：排课冲突必须包含老师冲突和学员冲突；业绩规则使用 performanceAllocation=byCpPaidRatio/oneToOneFirst/classCourseFirst，productPriority=none/oneToOneFirst/classCourseFirst/oneOnNFirst；资金分配使用 fundsAllocation=byCpRemainingAmount/byCpPaidRatio/oldestContractFirst/manual；优惠分配使用 promotionAllocation=byCpAmountRatio/byCpHourRatio/oneToOneFirst/classCourseFirst/manual。",
     "工具边界：用户要新增按钮、行操作、弹窗流程、调用业务命令时，不要选择 add_ext_field_to_page；必须选择对应 workflow 工具。排课/约课/课程时间老师校区课时 => add_course_scheduling_workflow；课消/扣费/确认扣费 => add_charge_workflow；合同收款/补缴/付款确认 => add_contract_payment_workflow；退费/申请退费 => add_refund_workflow；跟进/新增跟进 => add_followup_workflow。",
     "新增完整业务功能、独立页面、完整 CRUD 或新数据表时，优先选择 create_custom_feature；即使 tableName/pageCode 不能完全确定，也要给出 featureCode、featureName、moduleName 和 fields，后续工程会推断缺省编码。",
@@ -243,6 +244,8 @@ function buildDiffs(invocation: ToolInvocation, intent: IntentResult, policy: Te
       return createPrintTemplate(invocation.args, intent);
     case "create_business_rule":
       return createBusinessRule(invocation.args, intent);
+    case "create_business_event_listener":
+      return createBusinessEventListener(invocation.args, intent);
     default:
       return [];
   }
@@ -763,6 +766,40 @@ function createPrintTemplate(args: Record<string, unknown>, intent: IntentResult
       type: "display",
       actionType: "display",
       printTemplateCode: targetCode,
+    },
+  }];
+}
+
+function createBusinessEventListener(args: Record<string, unknown>, intent: IntentResult): DslDiff[] {
+  const event = String(args.triggerEvent ?? args.event ?? args.businessEvent ?? "").trim();
+  const inferredCode = event
+    ? `${event.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase()}_listener_rule`
+    : `${pageCode(args, intent) || intent.featureCode}_listener_rule`;
+  const targetCode = String(args.ruleCode ?? inferredCode);
+  if (!targetCode) return [];
+  const listenerList = Array.isArray(args.listeners)
+    ? args.listeners
+    : Array.isArray(args.actions)
+      ? args.actions
+      : [];
+  return [{
+    targetType: "business_rule",
+    targetCode,
+    op: "create_business_rule",
+    resourceDef: {
+      ruleCode: targetCode,
+      ruleName: args.ruleName ?? args.name ?? "业务事件监听规则",
+      moduleCode: args.moduleCode ?? intent.moduleCode ?? moduleCodeForBusinessType(String(args.businessType ?? inferBusinessType("workflow", intent.featureCode, JSON.stringify(args).toLowerCase()))),
+      featureCode: args.featureCode ?? intent.featureCode,
+      category: "workflow",
+      businessType: args.businessType ?? inferBusinessType("workflow", intent.featureCode, JSON.stringify(args).toLowerCase()),
+      triggerEvent: event || String(args.trigger ?? ""),
+      trigger: typeof args.trigger === "object" && args.trigger !== null && !Array.isArray(args.trigger) ? args.trigger : { event: event || args.trigger },
+      listeners: listenerList,
+      conditions: Array.isArray(args.conditions) ? args.conditions : [],
+      listenerMode: args.listenerMode ?? "after_commit",
+      failurePolicy: args.failurePolicy ?? "record_and_continue",
+      remark: args.remark ?? "由 AI 定制生成的业务事件监听规则",
     },
   }];
 }

@@ -83,7 +83,7 @@ async function loadSkillSummaries(schemaName: string): Promise<SkillSummary[]> {
   const { rows } = await pool.query(
     `select skill_code, skill_name, feature_code, skill_md_content
      from admin.skill_registry
-     where (schema_scope = 'tenant' and schema_name = $1 or schema_scope = 'tenant_default')
+     where (schema_scope = 'tenant' and schema_name = $1 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false
      order by module_code, feature_code`,
     [schemaName]

@@ -102,8 +102,8 @@ async function loadRule(client: pg.PoolClient, schemaName: string, ruleCode: str
     `select rule_json
      from admin.business_rule
      where rule_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
      limit 1`,
     [ruleCode, schemaName]
   );

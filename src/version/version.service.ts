@@ -348,20 +348,26 @@ async function grantFeaturePageAccess(
   }
 }
 
-async function loadCurrentBundleItems(client: import("pg").PoolClient, schemaName: string): Promise<BundleSnapshotItem[]> {
+async function loadCurrentBundleItems(client: import("pg").PoolClient, schemaName: string, options: { selectedFeatureCodes?: string[] } = {}): Promise<BundleSnapshotItem[]> {
+  const selectedFeatures = new Set((options.selectedFeatureCodes ?? []).filter(Boolean));
+  const { rows: selectedPageRows } = selectedFeatures.size > 0
+    ? await client.query(`select page_code from admin.feature_registry where feature_code = any($1::text[]) and deleted = false`, [[...selectedFeatures]])
+    : { rows: [] };
+  const selectedPages = new Set(selectedPageRows.map((row: { page_code: string }) => String(row.page_code)));
   const items: BundleSnapshotItem[] = [];
   for (const source of DSL_SOURCES) {
     const { rows } = await client.query(
       `select * from ${source.table}
        where status = 'active' and deleted = false
-         and ((schema_scope = 'tenant' and schema_name = $1) or schema_scope = 'tenant_default')
-       order by case when schema_scope = 'tenant' then 0 else 1 end`,
+         and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+       order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
       [schemaName]
     );
     const seen = new Set<string>();
     for (const row of rows) {
       const targetCode = String(row[source.codeCol]);
       if (seen.has(targetCode)) continue;
+      if (!tenantDslRowEnabledForSelection(source.targetType, row, selectedFeatures, selectedPages)) continue;
       seen.add(targetCode);
       items.push({
         targetType: source.targetType,
@@ -439,8 +445,8 @@ async function applySnapshotItem(
     const { rows: srcRows } = await client.query(
       `select * from ${dslTable}
        where ${codeCol} = $1 and status = 'active' and deleted = false
-         and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or schema_scope = 'tenant_default')
-       order by case when schema_scope = 'tenant' then 0 else 1 end
+         and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+       order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
        limit 1`,
       [item.targetCode, schemaName]
     );
@@ -563,8 +569,8 @@ export async function publishVersion(versionId: string, userId: string) {
           const { rows: srcRows } = await client.query(
             `select * from ${dslTable}
              where ${codeCol} = $1 and status = 'active' and deleted = false
-               and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or schema_scope = 'tenant_default')
-             order by case when schema_scope = 'tenant' then 0 else 1 end
+               and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+             order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
              limit 1`,
             [ver.target_code, ver.schema_name]
           );
@@ -710,19 +716,83 @@ export async function rejectVersion(versionId: string, reason: string, userId: s
   return { id: versionId, status: "rejected" };
 }
 
-export async function initializeTenantVersion(schemaName: string) {
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item)).filter(Boolean);
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function resourceFeatureHints(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => resourceFeatureHints(item));
+  if (!value || typeof value !== "object") return [];
+  const resource = value as Record<string, unknown>;
+  const direct = stringList(resource.featureCodes ?? resource.relatedFeatureCodes);
+  const featureCode = String(resource.featureCode ?? resource.feature_code ?? "");
+  const pageCode = String(resource.pageCode ?? resource.page_code ?? "");
+  const targetPage = String(resource.targetPageCode ?? resource.targetPage ?? "");
+  const targetAction = String(resource.targetAction ?? resource.actionCode ?? resource.action_code ?? "");
+  const targetApi = String(resource.targetApi ?? resource.apiCode ?? resource.api_code ?? "");
+  return [featureCode, pageCode, targetPage, targetAction.split(".")[0], targetApi.split(".")[0], ...direct].filter(Boolean);
+}
+
+function featureHintsFromResource(resource: Record<string, unknown>): string[] {
+  const trigger = objectValue(resource.trigger);
+  return [
+    ...resourceFeatureHints(resource),
+    ...resourceFeatureHints(trigger),
+    ...resourceFeatureHints(resource.listeners),
+    ...resourceFeatureHints(resource.actions),
+  ];
+}
+
+function tenantDslRowEnabledForSelection(
+  targetType: string,
+  row: Record<string, unknown>,
+  selectedFeatures: Set<string>,
+  selectedPages: Set<string>,
+) {
+  if (selectedFeatures.size === 0) return true;
+  const featureCode = String(row.feature_code ?? "");
+  const pageCode = String(row.page_code ?? "");
+  if (featureCode && selectedFeatures.has(featureCode)) return true;
+  if (pageCode && selectedPages.has(pageCode)) return true;
+  if (targetType === "page" && selectedPages.has(String(row.page_code ?? row.page_code ?? ""))) return true;
+  if (targetType === "skill" && selectedFeatures.has(String(row.skill_code ?? "").replace(/^skill_/, ""))) return true;
+  const content = row.dsl_json ?? row.rule_json;
+  const resource = objectValue(content);
+  return featureHintsFromResource(resource).some((code) => selectedFeatures.has(code) || selectedPages.has(code));
+}
+
+export async function initializeTenantVersion(schemaName: string, options: { selectedFeatureCodes?: string[]; templateSchemaName?: string } = {}) {
   return withClient(async (client) => {
+    const selectedFeatures = new Set((options.selectedFeatureCodes ?? []).filter(Boolean));
+    const { rows: selectedPageRows } = selectedFeatures.size > 0
+      ? await client.query(`select feature_code, page_code from admin.feature_registry where feature_code = any($1::text[]) and deleted = false`, [[...selectedFeatures]])
+      : { rows: [] };
+    const selectedPages = new Set(selectedPageRows.map((row: { page_code: string }) => String(row.page_code)));
     const dslTables = [
       { table: "admin.page_dsl", type: "page", codeCol: "page_code" },
       { table: "admin.api_dsl", type: "api", codeCol: "api_code" },
       { table: "admin.action_dsl", type: "action", codeCol: "action_code" },
       { table: "admin.skill_registry", type: "skill", codeCol: "skill_code" },
+      { table: "admin.import_dsl", type: "import", codeCol: "import_code" },
+      { table: "admin.report_dsl", type: "report", codeCol: "report_code" },
+      { table: "admin.print_template", type: "print_template", codeCol: "template_code" },
+      { table: "admin.business_rule", type: "business_rule", codeCol: "rule_code" },
     ];
+    const templateSchema = options.templateSchemaName ?? "demo_school";
     for (const dt of dslTables) {
       const { rows: dslRows } = await client.query(
-        `select * from ${dt.table} where schema_scope = 'tenant_default' and status = 'active' and deleted = false`
+        `select * from ${dt.table}
+         where status = 'active' and deleted = false
+           and schema_scope = 'tenant' and schema_name = $1`,
+        [templateSchema]
       );
       for (const dsl of dslRows) {
+        if (!tenantDslRowEnabledForSelection(dt.type, dsl, selectedFeatures, selectedPages)) continue;
         const cols = Object.keys(dsl).filter(k => k !== "id" && k !== "created_at" && k !== "updated_at");
         const vals = cols.map(c => {
           const v = dsl[c];
@@ -743,7 +813,7 @@ export async function initializeTenantVersion(schemaName: string) {
       }
     }
 
-    const items = await loadCurrentBundleItems(client, schemaName);
+    const items = await loadCurrentBundleItems(client, schemaName, { selectedFeatureCodes: [...selectedFeatures] });
     const existing = await client.query(
       `select id from admin.dsl_version where schema_scope = 'tenant' and schema_name = $1 and target_type = 'bundle' and status = 'active' and deleted = false limit 1`,
       [schemaName]
@@ -771,7 +841,7 @@ async function loadDefaultDslVersionSources(client: import("pg").PoolClient) {
   ];
   for (const source of sources) {
     const { rows } = await client.query(
-      `select * from ${source.table} where schema_scope = 'tenant_default' and status = 'active' and deleted = false`
+      `select * from ${source.table} where schema_scope = 'tenant' and schema_name = 'demo_school' and status = 'active' and deleted = false`
     );
     for (const row of rows) {
       result.push({

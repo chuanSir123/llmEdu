@@ -31,6 +31,9 @@ export type FieldDsl = {
   validation?: Record<string, unknown>;
   options?: Array<{ label: string; value: string }>;
   defaultFutureOnly?: boolean;
+  field?: string;
+  defaultRange?: "current_month";
+  maxRangeDays?: number;
 };
 
 export type WhereCondition = {
@@ -136,6 +139,7 @@ export type PageDsl = {
     theme?: "flatTech" | "default";
     density?: "compact" | "comfortable";
     header?: {
+      hidden?: boolean;
       subtitle?: string;
       metrics?: Array<{
         label: string;
@@ -146,7 +150,14 @@ export type PageDsl = {
         target?: PageTargetDsl;
       }>;
     };
+    filters?: {
+      showLabels?: boolean;
+    };
+    toolbar?: {
+      align?: "left" | "right" | "split";
+    };
     table?: {
+      pageSize?: number;
       rowActionMode?: "inline" | "menu";
       rowActionStyle?: "button" | "linkGroup";
       primaryRowActions?: string[];

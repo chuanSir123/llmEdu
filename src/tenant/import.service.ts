@@ -110,8 +110,8 @@ async function loadPageDslForImport(schemaName: string, pageCode: string) {
     `select dsl_json
      from admin.page_dsl
      where page_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
      limit 1`,
     [pageCode, schemaName]
   );
@@ -123,8 +123,8 @@ async function loadApiDslForImport(schemaName: string, apiCode: string) {
     `select dsl_json
      from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
      limit 1`,
     [apiCode, schemaName]
   );
@@ -137,9 +137,9 @@ async function loadImportDslConfigs(schemaName: string, pageCode: string) {
     `select dsl_json
      from admin.import_dsl
      where status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $1) or schema_scope = 'tenant_default')
+       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and (dsl_json->>'pageCode' = $2 or import_code = $3)
-     order by case when schema_scope = 'tenant' then 0 else 1 end`,
+     order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
     [schemaName, pageCode, `${pageCode}.import`]
   );
   return rows.map((row) => asObject(row.dsl_json));
