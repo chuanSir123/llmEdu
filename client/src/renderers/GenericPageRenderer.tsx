@@ -63,6 +63,8 @@ export function GenericPageRenderer({
   const [filters, setFilters] = useState<Record<string, unknown>>(initialFilters ?? {});
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
@@ -165,16 +167,52 @@ export function GenericPageRenderer({
     return `${dsl.title}详情`;
   }, [dsl.title, modal]);
 
-  async function load(nextFilters = filters) {
+  function currentMonthRange() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const fmt = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return [fmt(start), fmt(end)];
+  }
+
+  function daysBetween(start: string, end: string) {
+    return Math.floor((new Date(`${end}T00:00:00`).getTime() - new Date(`${start}T00:00:00`).getTime()) / 86400000) + 1;
+  }
+
+  function normalizedFilters(input: Record<string, unknown>) {
+    const next = { ...input };
+    for (const field of filtersDsl) {
+      if (field.type !== "date_range" && field.type !== "daterange") continue;
+      const fallback = field.defaultRange === "current_month" || field.required ? currentMonthRange() : [];
+      const rawValue = next[field.key];
+      const raw = Array.isArray(rawValue) ? rawValue.map(String) : [];
+      let start = raw[0] && /^\d{4}-\d{2}-\d{2}$/.test(raw[0]) ? raw[0] : fallback[0];
+      let end = raw[1] && /^\d{4}-\d{2}-\d{2}$/.test(raw[1]) ? raw[1] : fallback[1];
+      if (start && end && start > end) [start, end] = [end, start];
+      const maxRangeDays = field.maxRangeDays ?? 366;
+      if (start && end && daysBetween(start, end) > maxRangeDays) {
+        const startDate = new Date(`${start}T00:00:00`);
+        startDate.setDate(startDate.getDate() + maxRangeDays - 1);
+        end = startDate.toISOString().slice(0, 10);
+        toast.error(`${field.label ?? "日期范围"}最大只能查询1年`);
+      }
+      if (start && end) next[field.key] = [start, end];
+    }
+    return next;
+  }
+
+  async function load(nextFilters = filters, nextPage = page) {
     setLoading(true);
     setError("");
     try {
+      const effectiveFilters = normalizedFilters(nextFilters);
+      setFilters(effectiveFilters);
       const result = await GatewayClient.executeApi({
         scope,
         schemaName,
         pageCode: dsl.pageCode,
         apiCode: dsl.dataApi,
-        params: { filters: nextFilters, page: 1, pageSize: 20, schemaName }
+        params: { filters: effectiveFilters, page: nextPage, pageSize, schemaName }
       });
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
@@ -187,11 +225,12 @@ export function GenericPageRenderer({
   }
 
   useEffect(() => {
-    const nextFilters = initialFilters ?? {};
+    const nextFilters = normalizedFilters(initialFilters ?? {});
     setFilters(nextFilters);
+    setPage(1);
     setEnrollmentValue({});
     setImportConfig(null);
-    void load(nextFilters);
+    void load(nextFilters, 1);
   }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey]);
 
   async function submitModal() {
@@ -208,7 +247,7 @@ export function GenericPageRenderer({
       });
       toast.success(`${actionLabel}成功`);
       setModal(null);
-      await load();
+      await load(filters, page);
     } catch (err) {
       toast.error(`${actionLabel}失败：${err instanceof Error ? err.message : String(err)}`);
     }
@@ -252,7 +291,7 @@ export function GenericPageRenderer({
       });
       toast.success(`${createAction.label ?? "保存"}成功`);
       setEnrollmentValue({});
-      await load();
+      await load(filters, page);
     } catch (err) {
       toast.error(`${createAction.label ?? "保存"}失败：${err instanceof Error ? err.message : String(err)}`);
     }
@@ -330,7 +369,7 @@ export function GenericPageRenderer({
           params
         });
         toast.success(`${action.label ?? "操作"}成功`);
-        await load();
+        await load(filters, page);
       } catch (err) {
         toast.error(`${action.label ?? "操作"}失败：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -346,7 +385,7 @@ export function GenericPageRenderer({
           params: { id: row.id }
         });
         toast.success("删除成功");
-        await load();
+        await load(filters, page);
       } catch (err) {
         toast.error(`删除失败：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -391,9 +430,9 @@ export function GenericPageRenderer({
             type="date"
             className={token.input}
             value={start}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value, end] })}
+            onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value || start || currentMonthRange()[0], end || currentMonthRange()[1]] })}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void load();
+              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
             }}
           />
           <span className="text-[#8b95a7]">至</span>
@@ -401,9 +440,9 @@ export function GenericPageRenderer({
             type="date"
             className={token.input}
             value={end}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [start, event.target.value] })}
+            onChange={(event) => setFilters({ ...filters, [field.key]: [start || currentMonthRange()[0], event.target.value || end || currentMonthRange()[1]] })}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void load();
+              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
             }}
           />
         </div>
@@ -418,7 +457,7 @@ export function GenericPageRenderer({
         placeholder={field.placeholder}
         onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
         onKeyDown={(event) => {
-          if (event.key === "Enter") void load();
+          if (event.key === "Enter") { setPage(1); void load(filters, 1); }
         }}
       />
     );
@@ -871,42 +910,26 @@ export function GenericPageRenderer({
         </div>
         <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
       </div>
-      {metrics.length > 0 && (
-        <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          {metrics.map((metric) => (
-            <button
-              key={`${metric.label}-${metric.field ?? metric.source}`}
-              className={`border border-[#d9e3ed] bg-white px-4 py-3 text-left transition ${metric.target ? "hover:border-[#2f80ed]" : "cursor-default"}`}
-              onClick={() => openTarget(metric.target, metricLabel(metric))}
-            >
-              <div className="text-xs font-medium text-[#607083]">{metricLabel(metric)}</div>
-              <div className="mt-1 text-xl font-semibold text-[#172033]">
-                {metricValue(metric)}
-                {metric.suffix && <span className="ml-1 text-xs font-normal text-[#607083]">{metric.suffix}</span>}
-              </div>
-            </button>
+      <div className={token.filterBar}>
+        <div className="flex flex-1 flex-wrap items-end gap-3">
+          {sortWithOrder(filtersDsl).map((field) => (
+            <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
+              {field.label}
+              {renderFilterInput(field)}
+            </label>
+          ))}
+          <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>
+            查询
+          </button>
+          <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = normalizedFilters({}); setFilters(empty); setPage(1); void load(empty, 1); }}>
+            重置
+          </button>
+        </div>
+        <div className="ml-auto flex flex-wrap items-end justify-end gap-2">
+          {sortWithOrder(toolbarDsl).map((action) => (
+            <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
           ))}
         </div>
-      )}
-      <div className={token.filterBar}>
-        {sortWithOrder(filtersDsl).map((field) => (
-          <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
-            {field.label}
-            {renderFilterInput(field)}
-          </label>
-        ))}
-        <button className={`${token.button} ${token.primaryButton}`} onClick={() => void load()}>
-          查询
-        </button>
-        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { setFilters({}); void load({}); }}>
-          重置
-        </button>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-2">
-        {sortWithOrder(toolbarDsl)
-          .map((action) => (
-          <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
-        ))}
       </div>
       {error && <div className="mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {importConfig && (
@@ -934,6 +957,17 @@ export function GenericPageRenderer({
           onAction={onRowAction}
           presentation={dsl.presentation}
         />
+      </div>
+
+      <div className="mt-3 flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-3 py-2 text-sm text-[#607083]">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <span>共 {total} 条</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
+          <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next); }}>下一页</button>
+        </div>
       </div>
       {modal && (
         <ModalRenderer

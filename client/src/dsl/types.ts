@@ -31,6 +31,9 @@ export type FieldDsl = {
   validation?: Record<string, unknown>;
   options?: Array<{ label: string; value: string }>;
   defaultFutureOnly?: boolean;
+  field?: string;
+  defaultRange?: "current_month";
+  maxRangeDays?: number;
 };
 
 export type WhereCondition = {

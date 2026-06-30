@@ -12,7 +12,6 @@ export const modules = [
   ["report", "报表", "business", "经营数据分析", 70, "BarChart3"],
   ["system", "系统", "business", "组织、角色和权限", 80, "Settings"],
   ["ai_agent", "AI 工程化", "platform", "自然语言变更任务", 90, "Bot"],
-  ["ai_customization", "AI 定制", "business", "AI 定制化记录与对话", 85, "Sparkles"]
 ] as const;
 
 type Field = {
@@ -29,6 +28,10 @@ type Field = {
   span?: 1 | 2 | 3 | "full";
   defaultValue?: unknown;
   defaultFutureOnly?: boolean;
+  required?: boolean;
+  maxRangeDays?: number;
+  defaultRange?: "current_month";
+  field?: string;
 };
 
 type PageSeed = {
@@ -130,6 +133,27 @@ const couponClaimSelect = { pageCode: "coupon_claim_list", apiCode: "coupon_clai
 const derivedArrangePages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list"]);
 const readOnlyPages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "student_ele_account", "student_ele_account_record"]);
 const standardImportPageCodes = new Set(["student_list", "contract_list", "funds_history", "course_list", "charge_record", "refund_record"]);
+
+const businessTimeFieldCandidates = [
+  "course_date",
+  "transaction_time",
+  "sign_time",
+  "refund_time",
+  "created_at",
+  "updated_at",
+  "published_at",
+  "claim_time",
+  "used_at",
+  "cost_date",
+  "target_month",
+  "trial_time",
+  "next_follow_time"
+];
+
+function businessTimeField(page: Pick<PageSeed, "fields" | "table">) {
+  const fieldKeys = new Set(page.fields.map((field) => field.key));
+  return businessTimeFieldCandidates.find((field) => fieldKeys.has(field)) ?? "created_at";
+}
 
 function fieldComponent(field: Field) {
   const base = isLongTextField(field)
@@ -615,14 +639,14 @@ export const pages: PageSeed[] = [
     ]
   },
   {
-    module: "ai_customization",
+    module: "system",
     feature: "customization_record_list",
     page: "customization_record_list",
     name: "AI 定制记录",
     table: "agent_customization_record",
     softDelete: false,
     apiSchema: "admin",
-    group: "AI 定制",
+    group: "AI 能力",
     fields: [
       { key: "user_prompt", label: "用户需求" },
       { key: "record_type", label: "类型", hidden: true },
@@ -634,14 +658,14 @@ export const pages: PageSeed[] = [
     ]
   },
   {
-    module: "ai_customization",
+    module: "system",
     feature: "assistant_record_list",
     page: "assistant_record_list",
     name: "AI 助手记录",
     table: "agent_customization_record",
     softDelete: false,
     apiSchema: "admin",
-    group: "AI 助手",
+    group: "AI 能力",
     fields: [
       { key: "user_prompt", label: "用户提问" },
       { key: "record_type", label: "类型", hidden: true },
@@ -653,14 +677,14 @@ export const pages: PageSeed[] = [
     ]
   },
   {
-    module: "ai_customization",
+    module: "system",
     feature: "tenant_version_list",
     page: "tenant_version_list",
     name: "版本管理",
     table: "dsl_version",
     softDelete: false,
     apiSchema: "admin",
-    group: "AI 定制",
+    group: "AI 能力",
     fields: [
       { key: "target_type", label: "对象类型", filter: true },
       { key: "target_code", label: "对象编码", filter: true },
@@ -2021,11 +2045,11 @@ export const actionDslSeeds: Array<{ actionCode: string; actionName: string; act
   { actionCode: "performance_arrange_list.detail", actionName: "详情", actionType: "open_modal", pageCode: "performance_arrange_list", module: "finance", feature: "performance_arrange_list", dsl: { actionCode: "performance_arrange_list.detail", actionName: "详情", actionType: "open_modal", modalCode: "performance_arrange_detail_modal" } },
   { actionCode: "finance_report.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "finance_report", module: "report", feature: "finance_report", dsl: { actionCode: "finance_report.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "finance_report.query" } },
   { actionCode: "course_report.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "course_report", module: "report", feature: "course_report", dsl: { actionCode: "course_report.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "course_report.query" } },
-  { actionCode: "customization_record_list.new_customization", actionName: "新增定制化", actionType: "open_ai_customization", pageCode: "customization_record_list", module: "ai_customization", feature: "customization_record_list", dsl: { actionCode: "customization_record_list.new_customization", actionName: "新增定制化", actionType: "open_ai_customization", variant: "primary" } },
-  { actionCode: "tenant_version_list.publish", actionName: "发布版本", actionType: "execute_api", pageCode: "tenant_version_list", module: "ai_customization", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.publish", actionName: "发布版本", actionType: "execute_api", apiCode: "dsl_version.publish", confirm: "确认发布此版本？", afterSuccess: [{ type: "toast", message: "版本已发布" }, { type: "refreshPage" }] } },
-  { actionCode: "tenant_version_list.rollback", actionName: "回滚到此版本", actionType: "execute_api", pageCode: "tenant_version_list", module: "ai_customization", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.rollback", actionName: "回滚到此版本", actionType: "execute_api", apiCode: "dsl_version.rollback", confirm: "确认回滚到此版本？将创建新版本并恢复DSL。", afterSuccess: [{ type: "toast", message: "回滚成功" }, { type: "refreshPage" }] } },
-  { actionCode: "tenant_version_list.rollback_preview", actionName: "回滚预览", actionType: "execute_api", pageCode: "tenant_version_list", module: "ai_customization", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.rollback_preview", actionName: "回滚预览", actionType: "execute_api", apiCode: "dsl_version.rollback_preview", afterSuccess: [{ type: "toast", message: "回滚预览已生成" }, { type: "refreshPage" }] } },
-  { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "tenant_version_list", module: "ai_customization", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "tenant_version_list.query" } },
+  { actionCode: "customization_record_list.new_customization", actionName: "新增定制化", actionType: "open_ai_customization", pageCode: "customization_record_list", module: "system", feature: "customization_record_list", dsl: { actionCode: "customization_record_list.new_customization", actionName: "新增定制化", actionType: "open_ai_customization", variant: "primary" } },
+  { actionCode: "tenant_version_list.publish", actionName: "发布版本", actionType: "execute_api", pageCode: "tenant_version_list", module: "system", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.publish", actionName: "发布版本", actionType: "execute_api", apiCode: "dsl_version.publish", confirm: "确认发布此版本？", afterSuccess: [{ type: "toast", message: "版本已发布" }, { type: "refreshPage" }] } },
+  { actionCode: "tenant_version_list.rollback", actionName: "回滚到此版本", actionType: "execute_api", pageCode: "tenant_version_list", module: "system", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.rollback", actionName: "回滚到此版本", actionType: "execute_api", apiCode: "dsl_version.rollback", confirm: "确认回滚到此版本？将创建新版本并恢复DSL。", afterSuccess: [{ type: "toast", message: "回滚成功" }, { type: "refreshPage" }] } },
+  { actionCode: "tenant_version_list.rollback_preview", actionName: "回滚预览", actionType: "execute_api", pageCode: "tenant_version_list", module: "system", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.rollback_preview", actionName: "回滚预览", actionType: "execute_api", apiCode: "dsl_version.rollback_preview", afterSuccess: [{ type: "toast", message: "回滚预览已生成" }, { type: "refreshPage" }] } },
+  { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "tenant_version_list", module: "system", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "tenant_version_list.query" } },
   { actionCode: "contract_list.refund", actionName: "合同退费", actionType: "open_modal", pageCode: "contract_list", module: "finance", feature: "contract_list", dsl: { actionCode: "contract_list.refund", actionName: "合同退费", actionType: "open_modal", modalCode: "contract_refund_modal", afterSuccess: [{ type: "toast", message: "退费成功" }, { type: "refreshPage" }] } },
   { actionCode: "refund_record.delete", actionName: "删除退费记录", actionType: "execute_api", pageCode: "refund_record", module: "finance", feature: "refund_record", dsl: { actionCode: "refund_record.delete", actionName: "删除退费记录", actionType: "execute_api", apiCode: "refund.delete", confirm: "确认删除该退费记录？删除后将恢复合同产品余额", afterSuccess: [{ type: "toast", message: "退费记录已删除，余额已恢复" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.attendance", actionName: "考勤签到", actionType: "open_modal", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.attendance", actionName: "考勤签到", actionType: "open_modal", modalCode: "attendance_check_in_modal", afterSuccess: [{ type: "toast", message: "考勤成功" }, { type: "refreshPage" }] } },
@@ -2321,12 +2345,28 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       ((join as { fields?: Array<{ as: string }> }).fields ?? []).map((field) => field.as)
     )
   );
-  const filters = page.fields.filter((field) => field.filter).map((field) => ({
+  const timeField = businessTimeField(page);
+  const timeFieldSeed = page.fields.find((field) => field.key === timeField);
+  const fieldFilters = page.fields.filter((field) => field.filter && field.key !== timeField).map((field) => ({
     key: field.key,
     label: field.label,
     type: field.type ?? "text",
     placeholder: `请输入${field.label}`
   }));
+  const filters = [
+    {
+      key: timeField,
+      field: timeField,
+      label: timeFieldSeed?.label ?? "查询时间",
+      type: "date_range",
+      placeholder: "请选择日期范围",
+      required: true,
+      defaultRange: "current_month" as const,
+      maxRangeDays: 366,
+      sortOrder: -1000
+    },
+    ...fieldFilters
+  ];
   const baseDsl: Record<string, any> = {
     pageCode: page.page,
     title: page.name,
@@ -3304,7 +3344,7 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
     operation: apiType,
     softDelete: page.softDelete ?? true,
     allowedFields: page.fields.filter((field) => !joinAliases.has(field.key)).map((field) => field.key),
-    filters: [...new Set([...page.fields.filter((field) => field.filter).map((field) => field.key), ...(page.apiFilters ?? [])])],
+    filters: [...new Set([businessTimeField(page), ...page.fields.filter((field) => field.filter).map((field) => field.key), ...(page.apiFilters ?? [])])],
     fixedFilters: page.page === "tenant_version_list"
       ? [...(page.fixedFilters ?? []), { field: "target_type", op: "eq", value: "bundle" }]
       : page.fixedFilters ?? [],
