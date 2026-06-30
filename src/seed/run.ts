@@ -585,8 +585,8 @@ async function seedTenantData() {
     ["mini_class", [{ id: "mc_001", name: "三年级语文小班", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", product_id: "prod_002", grade: "三年级", subject: "语文", capacity: 12, status: "ACTIVE" }]],
     ["one_on_n_group", [{ id: "ong_001", name: "英语一对三 A 组", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", grade: "三年级", subject: "英语", capacity: 3, status: "ACTIVE" }]],
     ["generic_course", [
-      { id: "course_001", course_type: "ONE_ON_ONE_COURSE", course_date: "2026-06-11", start_time: "09:00", end_time: "10:00", teacher_id: "user_002", study_manager_id: "user_003", course_status: "FINISHED", organization_id: "org_001", course_title: "姚锦鹏一对一数学", course_hour: 1 },
-      { id: "course_002", course_type: "SMALL_CLASS", course_date: "2026-06-11", start_time: "14:00", end_time: "15:30", teacher_id: "user_002", study_manager_id: "user_003", course_status: "SCHEDULED", organization_id: "org_001", mini_class_id: "mc_001", course_title: "三年级语文小班", course_hour: 1.5 }
+      { id: "course_001", course_type: "ONE_ON_ONE_COURSE", course_date: "2026-06-30", start_time: "09:00", end_time: "10:00", teacher_id: "user_002", study_manager_id: "user_003", course_status: "FINISHED", organization_id: "org_001", course_title: "姚锦鹏一对一数学", course_hour: 1 },
+      { id: "course_002", course_type: "SMALL_CLASS", course_date: "2026-06-30", start_time: "14:00", end_time: "15:30", teacher_id: "user_002", study_manager_id: "user_003", course_status: "SCHEDULED", organization_id: "org_001", mini_class_id: "mc_001", course_title: "三年级语文小班", course_hour: 1.5 }
     ]],
     ["generic_course_student", [
       { id: "cs_001", course_id: "course_001", student_id: "stu_001", attendance_status: "PRESENT", contract_product_id: "cp_001" },

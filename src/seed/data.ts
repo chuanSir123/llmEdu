@@ -155,6 +155,26 @@ function businessTimeField(page: Pick<PageSeed, "fields" | "table">) {
   return businessTimeFieldCandidates.find((field) => fieldKeys.has(field)) ?? "created_at";
 }
 
+
+function apiFiltersFor(page: PageSeed) {
+  const timeField = businessTimeField(page);
+  const filters: Array<string | { key: string; field: string; type?: string; op?: "eq" | "ilike" | "between" | "in" | "gt" | "gte" | "lt" | "lte" }> = [
+    { key: timeField, field: timeField, type: "date_range", op: "between" }
+  ];
+  for (const field of page.fields.filter((item) => item.filter && item.key !== timeField)) {
+    filters.push({
+      key: field.key,
+      field: field.field ?? field.key,
+      type: field.type ?? "text",
+      op: field.type === "date" ? "eq" : "ilike"
+    });
+  }
+  for (const key of page.apiFilters ?? []) {
+    if (!filters.some((filter) => (typeof filter === "string" ? filter : filter.key) === key)) filters.push(key);
+  }
+  return filters;
+}
+
 function fieldComponent(field: Field) {
   const base = isLongTextField(field)
     ? { type: "textarea", span: "full" as const, rows: 4 }
@@ -2782,6 +2802,15 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   }
 
   if (page.page === "course_week_schedule") {
+    baseDsl.layout = "calendar";
+    baseDsl.presentation.type = "calendar";
+    baseDsl.presentation.calendarField = "course_date";
+    baseDsl.toolbar = [
+      { actionCode: "course_week_schedule.create", label: "新增排课", type: "open_page", target: { pageCode: "course_list", title: "排课列表" }, variant: "primary" },
+      { actionCode: "course_week_schedule.sort", label: "排序", type: "display", actionType: "display", variant: "default" },
+      { actionCode: "course_week_schedule.settings", label: "课表设置", type: "display", actionType: "display", variant: "default" },
+      { actionCode: "course_week_schedule.export", label: "导出", type: "export", actionType: "export", variant: "default" }
+    ];
     baseDsl.table.rowActions = [
       { actionCode: "course_week_schedule.detail", label: "详情", type: "open_modal" },
       { actionCode: "course_week_schedule.attendance", label: "考勤", type: "open_modal", apiCode: "attendance.checkIn", modalTitle: "学员考勤", fields: attendanceCheckInFields, mapRowToValue: { course_id: "id" } },
@@ -3353,7 +3382,7 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
     operation: apiType,
     softDelete: page.softDelete ?? true,
     allowedFields: page.fields.filter((field) => !joinAliases.has(field.key)).map((field) => field.key),
-    filters: [...new Set([businessTimeField(page), ...page.fields.filter((field) => field.filter).map((field) => field.key), ...(page.apiFilters ?? [])])],
+    filters: apiFiltersFor(page),
     fixedFilters: page.page === "tenant_version_list"
       ? [...(page.fixedFilters ?? []), { field: "target_type", op: "eq", value: "bundle" }]
       : page.fixedFilters ?? [],

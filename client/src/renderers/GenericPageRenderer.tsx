@@ -11,6 +11,7 @@ import { GenericFormRenderer } from "./GenericFormRenderer";
 import { ImportHandler } from "./ImportHandler";
 import { exportToExcel } from "./ExportHandler";
 import { CustomizationRecordDetail } from "./CustomizationRecordDetail";
+import { CalendarView } from "./CalendarView";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type MetricDsl = {
@@ -896,6 +897,41 @@ export function GenericPageRenderer({
               保存合同
             </button>
           </div>
+        </div>
+        {modal && (
+          <ModalRenderer
+            scope={scope}
+            schemaName={schemaName}
+            title={modalTitle}
+            fields={modalFields(modal)}
+            value={modal.value}
+            readonly={modal.type === "detail"}
+            onChange={(value) => setModal({ ...modal, value })}
+            onClose={() => setModal(null)}
+            onSubmit={submitModal}
+            presentation={dsl.presentation}
+            size={"action" in modal ? modal.action?.modalSize : undefined}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (dsl.layout === "calendar" || dsl.presentation?.type === "calendar") {
+    return (
+      <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
+        <div className={`mx-3 mt-3 shrink-0 ${token.filterBar} rounded-[2px] border-0 shadow-none`}>
+          {sortWithOrder(filtersDsl).map((field) => (
+            <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
+              {renderFilterInput(field)}
+            </label>
+          ))}
+          <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>查询</button>
+          <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = { course_date: currentWeekRange() }; setFilters(empty); setPage(1); void load(empty, 1); }}>重置</button>
+        </div>
+        {error && <div className="mx-3 mt-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+        <div className="mx-3 mt-3 min-h-0 flex-1 overflow-hidden bg-white">
+          <CalendarView dsl={dsl} rows={rows} toolbar={toolbarDsl} onToolbar={onToolbar} onAction={onRowAction} />
         </div>
         {modal && (
           <ModalRenderer
