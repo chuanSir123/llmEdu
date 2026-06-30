@@ -905,7 +905,7 @@ export function GenericPageRenderer({
 
   const hideHeader = dsl.presentation?.header?.hidden === true;
   const showFilterLabels = dsl.presentation?.filters?.showLabels !== false;
-  const toolbarAlign = dsl.presentation?.toolbar?.align ?? "right";
+  const toolbarAlign = dsl.presentation?.toolbar?.align ?? "left";
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
@@ -920,7 +920,7 @@ export function GenericPageRenderer({
           <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
         </div>
       )}
-      <div className={`shrink-0 ${hideHeader ? "mt-0" : ""} ${token.filterBar} mb-3 rounded-none border-0 px-8 py-5 shadow-none`}>
+      <div className={`mx-0 shrink-0 ${hideHeader ? "mt-0" : ""} ${token.filterBar} rounded-none border-0 shadow-none`}>
         {sortWithOrder(filtersDsl).map((field) => (
           <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
             {showFilterLabels && field.label}
@@ -934,7 +934,13 @@ export function GenericPageRenderer({
           重置
         </button>
       </div>
-      {error && <div className="mx-3 mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+      <div className={`flex shrink-0 flex-wrap gap-2 bg-white px-4 pb-3 ${toolbarAlign === "right" ? "justify-end" : "justify-start"}`}>
+        {sortWithOrder(toolbarDsl)
+          .map((action) => (
+          <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
+        ))}
+      </div>
+      {error && <div className="mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {importConfig && (
         <div className="mb-3 border border-[#d9e3ed] bg-white p-3">
           <div className="mb-2 flex items-center justify-between">
@@ -952,15 +958,7 @@ export function GenericPageRenderer({
           />
         </div>
       )}
-      <div className="mx-3 min-h-0 flex-1 overflow-hidden bg-white">
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#edf0f5] px-5">
-          <div className="text-base font-semibold text-[#172033]">{dsl.title}<span className="ml-1 text-[#a7b0bf]">ⓘ</span></div>
-          <div className={`flex flex-wrap gap-5 text-sm ${toolbarAlign === "right" ? "justify-end" : "justify-start"}`}>
-            {sortWithOrder(toolbarDsl).map((action) => (
-              <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
-            ))}
-          </div>
-        </div>
+      <div className="min-h-0 flex-1 overflow-auto px-0">
         <GenericTableRenderer
           columns={tableDsl.columns ?? []}
           rows={rows}
@@ -970,7 +968,15 @@ export function GenericPageRenderer({
         />
       </div>
 
-      <div className="flex h-14 shrink-0 items-center justify-center gap-8 border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
+      <div className="flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <span>数据合计：共 {total} 条</span>
+          {metrics.map((metric) => (
+            <button key={`${metric.label}-${metric.field ?? metric.source}`} className={metric.target ? "text-[#2f80ed] hover:underline" : "cursor-default"} onClick={() => openTarget(metric.target, metricLabel(metric))}>
+              {metricLabel(metric)}：<span className="font-semibold text-[#172033]">{metricValue(metric)}{metric.suffix ?? ""}</span>
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
           <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
