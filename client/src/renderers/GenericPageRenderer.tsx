@@ -63,6 +63,8 @@ export function GenericPageRenderer({
   const [filters, setFilters] = useState<Record<string, unknown>>(initialFilters ?? {});
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
@@ -165,7 +167,17 @@ export function GenericPageRenderer({
     return `${dsl.title}详情`;
   }, [dsl.title, modal]);
 
-  async function load(nextFilters = filters) {
+  function currentWeekRange() {
+    const now = new Date();
+    const day = now.getDay() || 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - day + 1);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return [monday.toISOString().slice(0, 10), sunday.toISOString().slice(0, 10)];
+  }
+
+  async function load(nextFilters = filters, nextPage = page) {
     setLoading(true);
     setError("");
     try {
@@ -174,7 +186,7 @@ export function GenericPageRenderer({
         schemaName,
         pageCode: dsl.pageCode,
         apiCode: dsl.dataApi,
-        params: { filters: nextFilters, page: 1, pageSize: 20, schemaName }
+        params: { filters: nextFilters, page: nextPage, pageSize, schemaName }
       });
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
@@ -187,11 +199,12 @@ export function GenericPageRenderer({
   }
 
   useEffect(() => {
-    const nextFilters = initialFilters ?? {};
+    const nextFilters = initialFilters ?? (dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {});
     setFilters(nextFilters);
+    setPage(1);
     setEnrollmentValue({});
     setImportConfig(null);
-    void load(nextFilters);
+    void load(nextFilters, 1);
   }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey]);
 
   async function submitModal() {
@@ -208,7 +221,7 @@ export function GenericPageRenderer({
       });
       toast.success(`${actionLabel}成功`);
       setModal(null);
-      await load();
+      await load(filters, page);
     } catch (err) {
       toast.error(`${actionLabel}失败：${err instanceof Error ? err.message : String(err)}`);
     }
@@ -252,7 +265,7 @@ export function GenericPageRenderer({
       });
       toast.success(`${createAction.label ?? "保存"}成功`);
       setEnrollmentValue({});
-      await load();
+      await load(filters, page);
     } catch (err) {
       toast.error(`${createAction.label ?? "保存"}失败：${err instanceof Error ? err.message : String(err)}`);
     }
@@ -330,7 +343,7 @@ export function GenericPageRenderer({
           params
         });
         toast.success(`${action.label ?? "操作"}成功`);
-        await load();
+        await load(filters, page);
       } catch (err) {
         toast.error(`${action.label ?? "操作"}失败：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -346,7 +359,7 @@ export function GenericPageRenderer({
           params: { id: row.id }
         });
         toast.success("删除成功");
-        await load();
+        await load(filters, page);
       } catch (err) {
         toast.error(`删除失败：${err instanceof Error ? err.message : String(err)}`);
       }
@@ -393,7 +406,7 @@ export function GenericPageRenderer({
             value={start}
             onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value, end] })}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void load();
+              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
             }}
           />
           <span className="text-[#8b95a7]">至</span>
@@ -403,7 +416,7 @@ export function GenericPageRenderer({
             value={end}
             onChange={(event) => setFilters({ ...filters, [field.key]: [start, event.target.value] })}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void load();
+              if (event.key === "Enter") { setPage(1); void load(filters, 1); }
             }}
           />
         </div>
@@ -418,7 +431,7 @@ export function GenericPageRenderer({
         placeholder={field.placeholder}
         onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
         onKeyDown={(event) => {
-          if (event.key === "Enter") void load();
+          if (event.key === "Enter") { setPage(1); void load(filters, 1); }
         }}
       />
     );
@@ -871,23 +884,6 @@ export function GenericPageRenderer({
         </div>
         <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
       </div>
-      {metrics.length > 0 && (
-        <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          {metrics.map((metric) => (
-            <button
-              key={`${metric.label}-${metric.field ?? metric.source}`}
-              className={`border border-[#d9e3ed] bg-white px-4 py-3 text-left transition ${metric.target ? "hover:border-[#2f80ed]" : "cursor-default"}`}
-              onClick={() => openTarget(metric.target, metricLabel(metric))}
-            >
-              <div className="text-xs font-medium text-[#607083]">{metricLabel(metric)}</div>
-              <div className="mt-1 text-xl font-semibold text-[#172033]">
-                {metricValue(metric)}
-                {metric.suffix && <span className="ml-1 text-xs font-normal text-[#607083]">{metric.suffix}</span>}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
       <div className={token.filterBar}>
         {sortWithOrder(filtersDsl).map((field) => (
           <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
@@ -895,10 +891,10 @@ export function GenericPageRenderer({
             {renderFilterInput(field)}
           </label>
         ))}
-        <button className={`${token.button} ${token.primaryButton}`} onClick={() => void load()}>
+        <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>
           查询
         </button>
-        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { setFilters({}); void load({}); }}>
+        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1); }}>
           重置
         </button>
       </div>
@@ -934,6 +930,22 @@ export function GenericPageRenderer({
           onAction={onRowAction}
           presentation={dsl.presentation}
         />
+      </div>
+
+      <div className="mt-3 flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-3 py-2 text-sm text-[#607083]">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <span>数据合计：共 {total} 条</span>
+          {metrics.map((metric) => (
+            <button key={`${metric.label}-${metric.field ?? metric.source}`} className={metric.target ? "text-[#2f80ed] hover:underline" : "cursor-default"} onClick={() => openTarget(metric.target, metricLabel(metric))}>
+              {metricLabel(metric)}：<span className="font-semibold text-[#172033]">{metricValue(metric)}{metric.suffix ?? ""}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
+          <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next); }}>下一页</button>
+        </div>
       </div>
       {modal && (
         <ModalRenderer
