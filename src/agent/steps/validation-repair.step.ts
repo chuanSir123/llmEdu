@@ -169,7 +169,7 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
   for (const diff of normalizedDiffs) {
     if (!VALID_TARGET_TYPES.has(diff.targetType)) errors.push(`invalid targetType: ${diff.targetType}`);
     if (!VALID_OPS.has(diff.op)) errors.push(`invalid op: ${diff.op}`);
-    if (["modify", "create_table", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule"].includes(diff.op)) {
+    if (["modify", "create_table", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule", "create_business_event_listener"].includes(diff.op)) {
       const resourceKey = `${diff.targetType}:${diff.targetCode}:${diff.op}`;
       if (seenResourceWrites.has(resourceKey)) {
         errors.push(`重复资源变更: ${diff.targetType}/${diff.targetCode} ${diff.op}，请合并为一条变更`);
@@ -177,7 +177,7 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
       seenResourceWrites.add(resourceKey);
     }
     if (OPS_REQUIRE_FIELD_DEF.has(diff.op) && !diff.fieldDef) errors.push(`${diff.op} requires fieldDef for ${diff.targetCode}`);
-    if ((diff.op === "create_table" || diff.op === "add_field" || diff.op === "create_import" || diff.op === "create_report" || diff.op === "create_feature" || diff.op === "create_approval_flow" || diff.op === "create_print_template" || diff.op === "create_business_rule" || diff.op === "modify_permission") && !diff.resourceDef) {
+    if ((diff.op === "create_table" || diff.op === "add_field" || diff.op === "create_import" || diff.op === "create_report" || diff.op === "create_feature" || diff.op === "create_approval_flow" || diff.op === "create_print_template" || diff.op === "create_business_rule" || diff.op === "create_business_event_listener" || diff.op === "modify_permission") && !diff.resourceDef) {
       errors.push(`${diff.op} requires resourceDef for ${diff.targetCode}`);
     }
     if (diff.targetType === "db_schema" && diff.resourceDef) {
@@ -569,8 +569,8 @@ async function loadExistingPageActions(schemaName: string, pageCode: string): Pr
   const { rows } = await pool.query(
     `select dsl_json from admin.page_dsl
      where page_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end limit 1`,
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
     [pageCode, schemaName]
   );
   const dsl = rows[0]?.dsl_json;
@@ -612,7 +612,7 @@ async function collectExistingActionModalFields(schemaName: string, pageCode: st
      WHERE page_code = $1
        AND action_type = 'open_modal'
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR schema_scope = 'tenant_default')
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [pageCode, schemaName]
   );
@@ -628,7 +628,7 @@ async function collectExistingActionModalFields(schemaName: string, pageCode: st
     `SELECT dsl_json FROM admin.action_dsl
      WHERE action_code = ANY($1)
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR schema_scope = 'tenant_default')
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [[...modalCodes], schemaName]
   );
@@ -662,8 +662,8 @@ async function loadExistingApiShape(schemaName: string, apiCode: string): Promis
   const { rows } = await pool.query(
     `select dsl_json from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end limit 1`,
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
     [apiCode, schemaName]
   );
   const dsl = rows[0]?.dsl_json;
@@ -866,8 +866,8 @@ async function resolveApiTable(apiCode: string, schemaName: string, diffs: DslDi
   const { rows } = await pool.query(
     `select dsl_json from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
-     order by case when schema_scope = 'tenant' then 0 else 1 end limit 1`,
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
     [apiCode, schemaName]
   );
   const dsl = rows[0]?.dsl_json as Record<string, unknown> | undefined;
@@ -935,7 +935,7 @@ async function discoverPageModalCodes(pageCode: string, schemaName: string): Pro
      WHERE page_code = $1
        AND action_type = 'open_modal'
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR schema_scope = 'tenant_default')
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [pageCode, schemaName]
   );

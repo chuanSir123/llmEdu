@@ -17,6 +17,7 @@ const DEFAULT_TOOLS = [
   "add_export_action",
   "create_print_template",
   "create_business_rule",
+  "create_business_event_listener",
 ];
 
 const DEFAULT_TARGET_TYPES: TargetType[] = [

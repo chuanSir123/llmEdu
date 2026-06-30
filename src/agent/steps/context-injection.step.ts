@@ -144,7 +144,7 @@ async function loadSkillSummaries(schemaName: string): Promise<Array<{ featureCo
   const { rows } = await pool.query(
     `select skill_code, feature_code, skill_name, skill_md_content
      from admin.skill_registry
-     where (schema_scope = 'tenant' and schema_name = $1 or schema_scope = 'tenant_default')
+     where (schema_scope = 'tenant' and schema_name = $1 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false and feature_code is not null
      order by module_code, feature_code`,
     [schemaName]
@@ -186,9 +186,9 @@ async function loadSkillMd(schemaName: string, featureCode: string): Promise<str
   const skillCode = `skill_${featureCode}`;
   const { rows } = await pool.query(
     `select skill_md_content from admin.skill_registry
-     where skill_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default')
+     where skill_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false
-     order by case when schema_scope = 'tenant' then 0 else 1 end limit 1`,
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
     [skillCode, schemaName]
   );
   const content = rows[0]?.skill_md_content ?? "";
@@ -196,9 +196,9 @@ async function loadSkillMd(schemaName: string, featureCode: string): Promise<str
 
   const { rows: pageRows } = await pool.query(
     `select page_code, page_name, dsl_json from admin.page_dsl
-     where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default')
+     where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false
-     order by case when schema_scope = 'tenant' then 0 else 1 end limit 1`,
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
     [featureCode, schemaName]
   );
   if (pageRows.length > 0) {
@@ -233,9 +233,9 @@ async function loadReferenceSkillMd(schemaName: string, moduleCode?: string): Pr
   if (moduleCode) {
     const { rows } = await pool.query(
       `select skill_md_content from admin.skill_registry
-       where module_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default')
+       where module_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
          and status = 'active' and deleted = false and length(skill_md_content) > 50
-       order by case when schema_scope = 'tenant' then 0 else 1 end limit 1`,
+       order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
       [moduleCode, schemaName]
     );
     if (rows[0]?.skill_md_content) return rows[0].skill_md_content;
@@ -243,7 +243,7 @@ async function loadReferenceSkillMd(schemaName: string, moduleCode?: string): Pr
 
   const { rows } = await pool.query(
     `select skill_md_content from admin.skill_registry
-     where (schema_scope = 'tenant_default')
+     where (schema_scope = 'tenant' and schema_name = 'demo_school')
        and status = 'active' and deleted = false and length(skill_md_content) > 50
      limit 1`
   );
@@ -305,7 +305,7 @@ async function loadPageSummaries(schemaName: string, pageCodes: string[]): Promi
     `select distinct on (page_code) page_code, page_name, dsl_json
      from admin.page_dsl
      where page_code = ANY($1::text[])
-       and (schema_scope = 'tenant' and schema_name = $2 or schema_scope = 'tenant_default')
+       and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false
      order by page_code, case when schema_scope = 'tenant' then 0 else 1 end`,
     [pageCodes, schemaName]
@@ -321,7 +321,7 @@ async function loadApiSummaries(schemaName: string, apiLikeCodes: string[], feat
     `select distinct on (api_code) api_code, dsl_json
      from admin.api_dsl
      where (api_code like any($1::text[]) or feature_code = $2)
-       and (schema_scope = 'tenant' and schema_name = $3 or schema_scope = 'tenant_default')
+       and (schema_scope = 'tenant' and schema_name = $3 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false
      order by api_code, case when schema_scope = 'tenant' then 0 else 1 end
      limit 20`,
@@ -336,7 +336,7 @@ async function loadActionSummaries(schemaName: string, pageCodes: string[], feat
     `select distinct on (action_code) action_code, action_name, page_code, action_type, dsl_json
      from admin.action_dsl
      where (page_code = any($1::text[]) or feature_code = $2)
-       and (schema_scope = 'tenant' and schema_name = $3 or schema_scope = 'tenant_default')
+       and (schema_scope = 'tenant' and schema_name = $3 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false
      order by action_code, case when schema_scope = 'tenant' then 0 else 1 end
      limit 20`,
