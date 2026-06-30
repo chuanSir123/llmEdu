@@ -112,8 +112,8 @@ const valueLabels = {
   attendance_status: { PENDING: "待签到", PRESENT: "已签到", ABSENT: "缺勤", LEAVE: "请假" },
   refund_type: { CONTRACT_PRODUCT: "合同产品退费", CONTRACT: "合同退费" },
   target_type: { bundle: "整包配置", page: "页面", action: "按钮动作", api: "接口", modal: "弹窗", business_rule: "业务规则", print_template: "打印模板" },
-  schema_scope: { tenant_default: "默认模板", tenant: "租户自定义", admin: "平台管理" },
-  source_label: { "租户自定义": "租户自定义", "默认模板": "默认模板" }
+  schema_scope: { tenant: "机构模板/租户自定义", admin: "平台管理" },
+  source_label: { "租户自定义": "租户自定义", "模板机构": "模板机构" }
 };
 
 const studentSelect = { pageCode: "student_list", apiCode: "student_list.query", labelField: "name" };
@@ -2350,7 +2350,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   const fieldFilters = page.fields.filter((field) => field.filter && field.key !== timeField).map((field) => ({
     key: field.key,
     label: field.label,
-    type: field.type ?? "text",
+    type: page.page === "course_week_schedule" && field.key === "course_date" ? "date_range" : field.type ?? "text",
     placeholder: `请输入${field.label}`
   }));
   const filters = [

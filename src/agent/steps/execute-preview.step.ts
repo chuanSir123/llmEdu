@@ -120,9 +120,9 @@ async function loadCurrentSnapshot(targetType: string, targetCode: string, schem
   const { rows } = await pool.query(
     `select ${mapping.contentCol} as content from ${mapping.table}
      where ${mapping.codeCol} = $1
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
        and status = 'active' and deleted = false
-     order by case when schema_scope = 'tenant' then 0 else 1 end limit 1`,
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
     [targetCode, schemaName]
   );
   if (!rows[0]) return null;

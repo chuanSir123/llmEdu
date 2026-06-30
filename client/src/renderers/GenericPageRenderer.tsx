@@ -199,6 +199,14 @@ export function GenericPageRenderer({
       if (start && end) next[field.key] = [start, end];
     }
     return next;
+  function currentWeekRange() {
+    const now = new Date();
+    const day = now.getDay() || 7;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - day + 1);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return [monday.toISOString().slice(0, 10), sunday.toISOString().slice(0, 10)];
   }
 
   async function load(nextFilters = filters, nextPage = page) {
@@ -225,7 +233,7 @@ export function GenericPageRenderer({
   }
 
   useEffect(() => {
-    const nextFilters = normalizedFilters(initialFilters ?? {});
+    const nextFilters = initialFilters ?? (dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {});
     setFilters(nextFilters);
     setPage(1);
     setEnrollmentValue({});
@@ -911,25 +919,24 @@ export function GenericPageRenderer({
         <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
       </div>
       <div className={token.filterBar}>
-        <div className="flex flex-1 flex-wrap items-end gap-3">
-          {sortWithOrder(filtersDsl).map((field) => (
-            <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
-              {field.label}
-              {renderFilterInput(field)}
-            </label>
-          ))}
-          <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>
-            查询
-          </button>
-          <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = normalizedFilters({}); setFilters(empty); setPage(1); void load(empty, 1); }}>
-            重置
-          </button>
-        </div>
-        <div className="ml-auto flex flex-wrap items-end justify-end gap-2">
-          {sortWithOrder(toolbarDsl).map((action) => (
-            <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
-          ))}
-        </div>
+        {sortWithOrder(filtersDsl).map((field) => (
+          <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
+            {field.label}
+            {renderFilterInput(field)}
+          </label>
+        ))}
+        <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>
+          查询
+        </button>
+        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1); }}>
+          重置
+        </button>
+      </div>
+      <div className="mb-3 flex flex-wrap gap-2">
+        {sortWithOrder(toolbarDsl)
+          .map((action) => (
+          <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
+        ))}
       </div>
       {error && <div className="mb-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {importConfig && (
@@ -961,7 +968,12 @@ export function GenericPageRenderer({
 
       <div className="mt-3 flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-3 py-2 text-sm text-[#607083]">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-          <span>共 {total} 条</span>
+          <span>数据合计：共 {total} 条</span>
+          {metrics.map((metric) => (
+            <button key={`${metric.label}-${metric.field ?? metric.source}`} className={metric.target ? "text-[#2f80ed] hover:underline" : "cursor-default"} onClick={() => openTarget(metric.target, metricLabel(metric))}>
+              {metricLabel(metric)}：<span className="font-semibold text-[#172033]">{metricValue(metric)}{metric.suffix ?? ""}</span>
+            </button>
+          ))}
         </div>
         <div className="flex items-center gap-2">
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
