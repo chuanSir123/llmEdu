@@ -10,6 +10,7 @@ import { validateTenantPolicy } from "../validators/tenant-policy.validator.js";
 import { validateEduDomainGuardrails } from "../validators/edu-domain.validator.js";
 import { executeDiffs } from "../diff-executor.js";
 import { validateApiDslAgainstSchema } from "../../db/dsl-validator.js";
+import { BUSINESS_COMMAND_EVENT_MAP, KNOWN_BUSINESS_COMMANDS } from "../../gateway/business-event.service.js";
 
 const FIELD_RE = /^[a-z][a-z0-9_]{0,62}$/;
 const MAX_RETRIES = 3;
@@ -139,6 +140,7 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
       .map((diff) => `${diff.targetCode}:${String(diff.fieldDef?.key ?? diff.field ?? "")}`)
   );
   const physicalFieldAdds = collectPhysicalFieldAdds(normalizedDiffs);
+  const businessRuleResources: Array<{ targetCode: string; resource: Record<string, unknown> }> = [];
   const seenResourceWrites = new Set<string>();
   const toolbarWrites = new Map<string, string>();
   const existingPageActionCache = new Map<string, Promise<ExistingPageActions>>();
@@ -244,6 +246,7 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
       if (!FIELD_RE.test(String(diff.resourceDef.ruleCode ?? diff.targetCode))) errors.push(`business_rule ${diff.targetCode} ruleCode 不合法`);
       if (!diff.resourceDef.ruleName) errors.push(`business_rule ${diff.targetCode} missing ruleName`);
       validateBusinessRuleResource(errors, diff.targetCode, diff.resourceDef);
+      businessRuleResources.push({ targetCode: diff.targetCode, resource: diff.resourceDef });
     }
     if ((diff.op === "add_column" || diff.op === "add_filter" || diff.op === "add_modal_field") && diff.fieldDef && !diff.fieldDef.key) errors.push(`${diff.op} fieldDef missing key`);
     if (diff.op === "add_select_field" && diff.fieldDef && !diff.fieldDef.field && !diff.fieldDef.key) errors.push(`add_select_field fieldDef missing field`);
@@ -339,6 +342,9 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
         }
       }
     }
+  }
+  if (errors.length === 0) {
+    errors.push(...validateBusinessEventRuleCycles(businessRuleResources));
   }
   if (errors.length === 0) {
     errors.push(...await validateExecutedApiDsl(normalizedDiffs, schemaName));
@@ -1092,4 +1098,77 @@ function validateBusinessRuleResource(errors: string[], targetCode: string, reso
     const allowed = new Set(["byCpAmountRatio", "byCpHourRatio", "oneToOneFirst", "classCourseFirst", "manual"]);
     if (!allowed.has(String(resource.promotionAllocation ?? ""))) errors.push(`business_rule ${targetCode} 优惠规则 promotionAllocation 不合法`);
   }
+
+  if (category === "workflow") {
+    validateBusinessEventRuleShape(errors, targetCode, resource);
+  }
+}
+
+function asRuleObjects(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((item) => item && typeof item === "object" && !Array.isArray(item)) as Array<Record<string, unknown>>
+    : [];
+}
+
+function validateBusinessEventRuleShape(errors: string[], targetCode: string, resource: Record<string, unknown>) {
+  const trigger = resource.trigger && typeof resource.trigger === "object" && !Array.isArray(resource.trigger) ? resource.trigger as Record<string, unknown> : {};
+  const event = String(trigger.event ?? "");
+  if (!event) errors.push(`business_rule ${targetCode} workflow 必须配置 trigger.event`);
+  if (event && !/^[a-z][a-z0-9_.-]{1,80}$/.test(event)) errors.push(`business_rule ${targetCode} trigger.event 不合法`);
+  const actions = asRuleObjects(resource.actions);
+  if (actions.length === 0) errors.push(`business_rule ${targetCode} workflow 必须配置 actions`);
+  for (const [index, action] of actions.entries()) {
+    const type = String(action.type ?? "execute_command");
+    const command = String(action.command ?? "");
+    if (type !== "execute_command") errors.push(`business_rule ${targetCode} actions[${index}].type 只能是 execute_command`);
+    if (!command) errors.push(`business_rule ${targetCode} actions[${index}].command 不能为空`);
+    if (command && !KNOWN_BUSINESS_COMMANDS.has(command)) {
+      errors.push(`business_rule ${targetCode} actions[${index}].command 必须是既有业务命令`);
+    }
+    const paramsMapping = action.paramsMapping ?? action.map ?? action.mapping;
+    if (paramsMapping && (typeof paramsMapping !== "object" || Array.isArray(paramsMapping))) {
+      errors.push(`business_rule ${targetCode} actions[${index}].paramsMapping 必须是对象`);
+    }
+  }
+}
+
+export function validateBusinessEventRuleCycles(rules: Array<{ targetCode: string; resource: Record<string, unknown> }>) {
+  const errors: string[] = [];
+  const edges = new Map<string, Array<{ nextEvent: string; ruleCode: string; command: string }>>();
+  for (const { targetCode, resource } of rules) {
+    if (String(resource.category ?? "") !== "workflow") continue;
+    const trigger = resource.trigger && typeof resource.trigger === "object" && !Array.isArray(resource.trigger) ? resource.trigger as Record<string, unknown> : {};
+    const event = String(trigger.event ?? "");
+    if (!event) continue;
+    for (const action of asRuleObjects(resource.actions)) {
+      const command = String(action.command ?? "");
+      const nextEvent = BUSINESS_COMMAND_EVENT_MAP[command];
+      if (!nextEvent) continue;
+      if (nextEvent === event) {
+        errors.push(`business_rule ${targetCode} 会形成自循环: ${event} -> ${command} -> ${nextEvent}`);
+      }
+      const list = edges.get(event) ?? [];
+      list.push({ nextEvent, ruleCode: targetCode, command });
+      edges.set(event, list);
+    }
+  }
+
+  for (const event of edges.keys()) {
+    const stack: string[] = [];
+    const visit = (current: string, seen: Set<string>) => {
+      if (seen.has(current)) {
+        errors.push(`business_rule workflow 事件链存在循环: ${[...stack, current].join(" -> ")}`);
+        return;
+      }
+      const nextEdges = edges.get(current) ?? [];
+      if (nextEdges.length === 0) return;
+      const nextSeen = new Set(seen);
+      nextSeen.add(current);
+      stack.push(current);
+      for (const edge of nextEdges) visit(edge.nextEvent, nextSeen);
+      stack.pop();
+    };
+    visit(event, new Set());
+  }
+  return [...new Set(errors)];
 }

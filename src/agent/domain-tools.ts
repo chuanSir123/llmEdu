@@ -113,7 +113,7 @@ async function selectLlmTools(input: {
     "结合用户完整需求、意图分类、当前页面/API/动作摘要选择合适工具，不要按单个关键词机械匹配。",
     "只有在需求能明确映射到某个标准工具时才选择工具；不明确、需要自由组合 DSL、或工具参数不够时返回空 invocations。",
     "区分统计/报表与业务动作：统计资金、课时、学员等数据时选择报表类工具；只有用户明确要按钮、入口、流程或执行动作时才选择工作流工具。",
-    "工具说明：add_ext_field_to_page=给现有页面增加普通展示/编辑扩展字段；add_physical_filter_field=增加需要查询、筛选、统计或唯一约束的物理字段；create_import_flow=新增导入模板/导入能力；create_report_page=新增报表，必须根据已加载的 skill.md 和表结构填写 sourceTable、dimensions、metrics、filters、rank、sort；add_followup_workflow=新增招生/学员跟进动作；add_charge_workflow=新增课消或扣费确认动作；add_contract_payment_workflow=新增合同收款/补缴/付款确认动作；add_refund_workflow=新增退费动作；add_course_scheduling_workflow=新增排课/约课动作；create_custom_feature=新增完整业务功能和数据表；modify_permission_policy=调整角色、按钮、字段或数据权限；create_approval_flow=新增审批流定义；add_export_action=给页面新增导出按钮；create_print_template=新增打印模板；create_business_rule=新增或调整教务业务规则。",
+    "工具说明：add_ext_field_to_page=给现有页面增加普通展示/编辑扩展字段；add_physical_filter_field=增加需要查询、筛选、统计或唯一约束的物理字段；create_import_flow=新增导入模板/导入能力；create_report_page=新增报表，必须根据已加载的 skill.md 和表结构填写 sourceTable、dimensions、metrics、filters、rank、sort；add_followup_workflow=新增招生/学员跟进动作；add_charge_workflow=新增课消或扣费确认动作；add_contract_payment_workflow=新增合同收款/补缴/付款确认动作；add_refund_workflow=新增退费动作；add_course_scheduling_workflow=新增排课/约课动作；create_custom_feature=新增完整业务功能和数据表；modify_permission_policy=调整角色、按钮、字段或数据权限；create_approval_flow=新增审批流定义；add_export_action=给页面新增导出按钮；create_print_template=新增打印模板；create_business_rule=新增或调整教务业务规则，也用于 workflow 事件监听：trigger.event + actions[].command 触发既有业务。",
     "业务规则枚举：category 必须是 funds_allocation/promotion_allocation/performance_allocation/approval_trigger/validation/workflow/refund/charge/attendance；businessType 必须是 contract/funds/course/course_cancel/attendance/charge/charge_reverse/refund/contract_refund/product_price/performance。",
     "常规教务规则：排课冲突必须包含老师冲突和学员冲突；业绩规则使用 performanceAllocation=byCpPaidRatio/oneToOneFirst/classCourseFirst，productPriority=none/oneToOneFirst/classCourseFirst/oneOnNFirst；资金分配使用 fundsAllocation=byCpRemainingAmount/byCpPaidRatio/oldestContractFirst/manual；优惠分配使用 promotionAllocation=byCpAmountRatio/byCpHourRatio/oneToOneFirst/classCourseFirst/manual。",
     "工具边界：用户要新增按钮、行操作、弹窗流程、调用业务命令时，不要选择 add_ext_field_to_page；必须选择对应 workflow 工具。排课/约课/课程时间老师校区课时 => add_course_scheduling_workflow；课消/扣费/确认扣费 => add_charge_workflow；合同收款/补缴/付款确认 => add_contract_payment_workflow；退费/申请退费 => add_refund_workflow；跟进/新增跟进 => add_followup_workflow。",
@@ -860,6 +860,13 @@ function normalizeBusinessRuleResource(targetCode: string, args: Record<string, 
       generateLogTable: "promotion_arrange_log",
     };
   }
+  if (category === "workflow") {
+    return {
+      ...base,
+      trigger: args.trigger,
+      actions: Array.isArray(args.actions) ? args.actions : [],
+    };
+  }
   return {
     ...base,
     targetApi: args.targetApi ?? args.apiCode,
@@ -877,7 +884,7 @@ function inferRuleCategory(text: string, featureCode: string) {
   if (/退费/.test(text)) return "refund";
   if (/扣费|课消/.test(text)) return "charge";
   if (/考勤|签到/.test(text)) return "attendance";
-  if (/取消|流转/.test(text)) return "workflow";
+  if (/监听|触发|流转|事件|workflow|event/.test(text)) return "workflow";
   if (/course|排课|冲突/.test(`${text} ${featureCode}`)) return "validation";
   return "validation";
 }

@@ -9,6 +9,7 @@ import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
+import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -462,19 +463,13 @@ export async function executeGatewayApi(scope: "admin" | "tenant", schemaName: s
   }
 
   if (scope === "tenant") {
-    const eventMap: Record<string, string> = {
-      "contract_list.create": "contract.created",
-      "funds_history.create": "funds.created",
-      "funds_history.delete": "funds.deleted",
-      "funds.delete": "funds.deleted",
-      "charge_record.create": "charge.created",
-      "chargeRecord.reverse": "charge.deleted",
-      "refund_record.create": "refund.created",
-      "refund_record.delete": "refund.deleted",
-      "refund.delete": "refund.deleted",
-    };
-    const event = eventMap[apiCode];
-    if (event) await processMarketingEvent(schemaName, event, params.id ?? (data as Record<string, unknown> | undefined)?.id, { ...params, table: apiCode.split(".")[0] });
+    const event = BUSINESS_API_EVENT_MAP[apiCode];
+    if (event) {
+      const businessId = params.id ?? (data as Record<string, unknown> | undefined)?.id;
+      const eventPayload = { ...params, table: apiCode.split(".")[0] };
+      await processBusinessEventRules(schemaName, event, businessId, eventPayload, { userId: user?.userId });
+      await processMarketingEvent(schemaName, event, businessId, eventPayload);
+    }
   }
 
   if (dsl.outputSchema) {

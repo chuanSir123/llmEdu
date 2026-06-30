@@ -1,4 +1,5 @@
 import { pool } from "../db/pool.js";
+import { BUSINESS_API_EVENT_MAP, BUSINESS_COMMAND_EVENT_MAP } from "../gateway/business-event.service.js";
 
 type PageDslJson = {
   title?: string;
@@ -20,6 +21,16 @@ type ApiDslJson = {
   where?: Array<{ field?: string; op?: string; source?: string; value?: unknown }>;
   filters?: string[];
   operation?: string;
+};
+
+type BusinessEventRelation = {
+  ruleCode: string;
+  ruleName: string;
+  listenerFeatureCode: string;
+  triggerEvent: string;
+  sourceFeatures: string[];
+  actionCommands: string[];
+  targetFeatures: string[];
 };
 
 export type SkillMdMetadata = {
@@ -121,6 +132,10 @@ export function generateSkillMd(input: {
   featureDescription?: string;
   // 主数据表的真实物理列（来自 information_schema），让 SKILL.md 自动包含表的全部已有字段
   tableColumns?: Record<string, Array<{ column_name: string; data_type: string }>>;
+  businessEventRelations?: {
+    listensTo: BusinessEventRelation[];
+    listenedBy: BusinessEventRelation[];
+  };
 }): string {
   const primaryTables = collectPrimaryTables(input.apiDsls);
   const lines: string[] = [];
@@ -135,6 +150,33 @@ export function generateSkillMd(input: {
 
   lines.push("## 功能描述");
   lines.push(input.featureDescription ?? input.pageDsl?.title ?? input.featureName);
+  lines.push("");
+
+  lines.push("## 业务事件监听关系");
+  lines.push("");
+  lines.push("### 监听了哪些功能");
+  const listensTo = input.businessEventRelations?.listensTo ?? [];
+  if (listensTo.length > 0) {
+    lines.push("| 规则 | 触发事件 | 被监听功能 | 触发命令 | 命令目标功能 |");
+    lines.push("|------|----------|------------|----------|--------------|");
+    for (const relation of listensTo) {
+      lines.push(`| ${relation.ruleCode} ${relation.ruleName} | ${relation.triggerEvent} | ${relation.sourceFeatures.join(", ")} | ${relation.actionCommands.join(", ")} | ${relation.targetFeatures.join(", ")} |`);
+    }
+  } else {
+    lines.push("（未监听其他功能）");
+  }
+  lines.push("");
+  lines.push("### 被哪些功能监听");
+  const listenedBy = input.businessEventRelations?.listenedBy ?? [];
+  if (listenedBy.length > 0) {
+    lines.push("| 监听方功能 | 规则 | 触发事件 | 触发命令 | 命令目标功能 |");
+    lines.push("|------------|------|----------|----------|--------------|");
+    for (const relation of listenedBy) {
+      lines.push(`| ${relation.listenerFeatureCode} | ${relation.ruleCode} ${relation.ruleName} | ${relation.triggerEvent} | ${relation.actionCommands.join(", ")} | ${relation.targetFeatures.join(", ")} |`);
+    }
+  } else {
+    lines.push("（未被其他功能监听）");
+  }
   lines.push("");
 
   lines.push("## 数据表");
@@ -288,6 +330,7 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
     schemaName === "tenant_default" ? "demo_school" : schemaName,
     collectPrimaryTables(apiDsls),
   );
+  const businessEventRelations = await loadBusinessEventRelations(schemaName, featureCode);
 
   const content = generateSkillMd({
     pageDsl,
@@ -302,6 +345,7 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
     featureName: skillName,
     featureDescription: pageDsl?.title,
     tableColumns,
+    businessEventRelations,
   });
 
   try {
@@ -334,6 +378,88 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
   } catch (err) {
     console.warn("[SKILL.md] sync failed for %s: %s", featureCode, err instanceof Error ? err.message : String(err));
   }
+}
+
+function featureFromApiCode(apiCode: string) {
+  return apiCode.replace(/\.(query|detail|create|update|delete|cancel)$/, "");
+}
+
+function eventSourceFeatures(event: string): string[] {
+  return [...new Set(
+    Object.entries(BUSINESS_API_EVENT_MAP)
+      .filter(([, mappedEvent]) => mappedEvent === event)
+      .map(([apiCode]) => featureFromApiCode(apiCode))
+      .filter(Boolean)
+  )];
+}
+
+function commandTargetFeatures(command: string): string[] {
+  const event = BUSINESS_COMMAND_EVENT_MAP[command];
+  if (event) return eventSourceFeatures(event);
+  const directMap: Record<string, string> = {
+    "student.assignManager": "student_list",
+    "role.permission.save": "role_list",
+    "user.create": "user_list",
+    "user.update": "user_list",
+    "user.softDelete": "user_list",
+    "user.resetPassword": "user_list",
+    "report.student": "student_list",
+    "report.finance": "finance_report",
+    "report.course": "course_report",
+  };
+  return directMap[command] ? [directMap[command]] : [];
+}
+
+function relationFromRule(ruleCode: string, rule: Record<string, unknown>): BusinessEventRelation | null {
+  if (String(rule.category ?? "") !== "workflow") return null;
+  const trigger = rule.trigger && typeof rule.trigger === "object" && !Array.isArray(rule.trigger) ? rule.trigger as Record<string, unknown> : {};
+  const triggerEvent = String(trigger.event ?? "");
+  if (!triggerEvent) return null;
+  const actions = Array.isArray(rule.actions) ? rule.actions.filter((item) => item && typeof item === "object" && !Array.isArray(item)) as Array<Record<string, unknown>> : [];
+  const actionCommands = actions.map((action) => String(action.command ?? "")).filter(Boolean);
+  return {
+    ruleCode,
+    ruleName: String(rule.ruleName ?? rule.rule_name ?? ""),
+    listenerFeatureCode: String(rule.featureCode ?? rule.feature_code ?? ""),
+    triggerEvent,
+    sourceFeatures: eventSourceFeatures(triggerEvent),
+    actionCommands,
+    targetFeatures: [...new Set(actionCommands.flatMap(commandTargetFeatures))],
+  };
+}
+
+export function collectBusinessEventRelationsForFeature(featureCode: string, rules: Array<{ ruleCode: string; rule: Record<string, unknown> }>) {
+  const relations = rules.map(({ ruleCode, rule }) => relationFromRule(ruleCode, rule)).filter((item): item is BusinessEventRelation => Boolean(item));
+  return {
+    listensTo: relations.filter((relation) => relation.listenerFeatureCode === featureCode),
+    listenedBy: relations.filter((relation) => relation.sourceFeatures.includes(featureCode)),
+  };
+}
+
+export function collectBusinessEventRelatedFeatureCodes(rule: Record<string, unknown>) {
+  const relation = relationFromRule(String(rule.ruleCode ?? rule.rule_code ?? ""), rule);
+  if (!relation) return [];
+  return [...new Set([
+    relation.listenerFeatureCode,
+    ...relation.sourceFeatures,
+    ...relation.targetFeatures,
+  ].filter(Boolean))];
+}
+
+async function loadBusinessEventRelations(schemaName: string, featureCode: string) {
+  const { rows } = await pool.query(
+    `select rule_code, rule_json
+     from admin.business_rule
+     where status = 'active' and deleted = false
+       and ((schema_scope = 'tenant' and schema_name = $1) or schema_scope = 'tenant_default')
+       and coalesce(rule_json->>'category', '') = 'workflow'
+     order by case when schema_scope = 'tenant' then 0 else 1 end, created_at`,
+    [schemaName]
+  );
+  return collectBusinessEventRelationsForFeature(
+    featureCode,
+    rows.map((row) => ({ ruleCode: String(row.rule_code ?? ""), rule: row.rule_json as Record<string, unknown> }))
+  );
 }
 
 async function loadPhysicalTableColumns(
