@@ -167,6 +167,38 @@ export function GenericPageRenderer({
     return `${dsl.title}详情`;
   }, [dsl.title, modal]);
 
+  function currentMonthRange() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const fmt = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return [fmt(start), fmt(end)];
+  }
+
+  function daysBetween(start: string, end: string) {
+    return Math.floor((new Date(`${end}T00:00:00`).getTime() - new Date(`${start}T00:00:00`).getTime()) / 86400000) + 1;
+  }
+
+  function normalizedFilters(input: Record<string, unknown>) {
+    const next = { ...input };
+    for (const field of filtersDsl) {
+      if (field.type !== "date_range" && field.type !== "daterange") continue;
+      const fallback = field.defaultRange === "current_month" || field.required ? currentMonthRange() : [];
+      const rawValue = next[field.key];
+      const raw = Array.isArray(rawValue) ? rawValue.map(String) : [];
+      let start = raw[0] && /^\d{4}-\d{2}-\d{2}$/.test(raw[0]) ? raw[0] : fallback[0];
+      let end = raw[1] && /^\d{4}-\d{2}-\d{2}$/.test(raw[1]) ? raw[1] : fallback[1];
+      if (start && end && start > end) [start, end] = [end, start];
+      const maxRangeDays = field.maxRangeDays ?? 366;
+      if (start && end && daysBetween(start, end) > maxRangeDays) {
+        const startDate = new Date(`${start}T00:00:00`);
+        startDate.setDate(startDate.getDate() + maxRangeDays - 1);
+        end = startDate.toISOString().slice(0, 10);
+        toast.error(`${field.label ?? "日期范围"}最大只能查询1年`);
+      }
+      if (start && end) next[field.key] = [start, end];
+    }
+    return next;
   function currentWeekRange() {
     const now = new Date();
     const day = now.getDay() || 7;
@@ -181,12 +213,14 @@ export function GenericPageRenderer({
     setLoading(true);
     setError("");
     try {
+      const effectiveFilters = normalizedFilters(nextFilters);
+      setFilters(effectiveFilters);
       const result = await GatewayClient.executeApi({
         scope,
         schemaName,
         pageCode: dsl.pageCode,
         apiCode: dsl.dataApi,
-        params: { filters: nextFilters, page: nextPage, pageSize, schemaName }
+        params: { filters: effectiveFilters, page: nextPage, pageSize, schemaName }
       });
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
@@ -404,7 +438,7 @@ export function GenericPageRenderer({
             type="date"
             className={token.input}
             value={start}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value, end] })}
+            onChange={(event) => setFilters({ ...filters, [field.key]: [event.target.value || start || currentMonthRange()[0], end || currentMonthRange()[1]] })}
             onKeyDown={(event) => {
               if (event.key === "Enter") { setPage(1); void load(filters, 1); }
             }}
@@ -414,7 +448,7 @@ export function GenericPageRenderer({
             type="date"
             className={token.input}
             value={end}
-            onChange={(event) => setFilters({ ...filters, [field.key]: [start, event.target.value] })}
+            onChange={(event) => setFilters({ ...filters, [field.key]: [start || currentMonthRange()[0], event.target.value || end || currentMonthRange()[1]] })}
             onKeyDown={(event) => {
               if (event.key === "Enter") { setPage(1); void load(filters, 1); }
             }}

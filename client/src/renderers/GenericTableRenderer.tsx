@@ -201,7 +201,7 @@ export function GenericTableRenderer({
             <tr className="border-t border-[#d9e3ed] bg-[#fbfcff] font-semibold text-[#263445]">
               {sortedColumns.map((column, index) => (
                 <td key={column.key} className={`${token.td} ${tdDensity} ${alignClass(column.align)} whitespace-nowrap`}>
-                  {index === 0 ? "本页合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toLocaleString(undefined, { maximumFractionDigits: 2 }) : ""}
+                  {index === 0 ? "合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toLocaleString(undefined, { maximumFractionDigits: 2 }) : ""}
                 </td>
               ))}
               {hasActions && <td className={`${token.td} ${tdDensity}`} />}

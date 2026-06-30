@@ -28,6 +28,10 @@ type Field = {
   span?: 1 | 2 | 3 | "full";
   defaultValue?: unknown;
   defaultFutureOnly?: boolean;
+  required?: boolean;
+  maxRangeDays?: number;
+  defaultRange?: "current_month";
+  field?: string;
 };
 
 type PageSeed = {
@@ -129,6 +133,27 @@ const couponClaimSelect = { pageCode: "coupon_claim_list", apiCode: "coupon_clai
 const derivedArrangePages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list"]);
 const readOnlyPages = new Set(["money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "student_ele_account", "student_ele_account_record"]);
 const standardImportPageCodes = new Set(["student_list", "contract_list", "funds_history", "course_list", "charge_record", "refund_record"]);
+
+const businessTimeFieldCandidates = [
+  "course_date",
+  "transaction_time",
+  "sign_time",
+  "refund_time",
+  "created_at",
+  "updated_at",
+  "published_at",
+  "claim_time",
+  "used_at",
+  "cost_date",
+  "target_month",
+  "trial_time",
+  "next_follow_time"
+];
+
+function businessTimeField(page: Pick<PageSeed, "fields" | "table">) {
+  const fieldKeys = new Set(page.fields.map((field) => field.key));
+  return businessTimeFieldCandidates.find((field) => fieldKeys.has(field)) ?? "created_at";
+}
 
 function fieldComponent(field: Field) {
   const base = isLongTextField(field)
@@ -2320,12 +2345,28 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       ((join as { fields?: Array<{ as: string }> }).fields ?? []).map((field) => field.as)
     )
   );
-  const filters = page.fields.filter((field) => field.filter).map((field) => ({
+  const timeField = businessTimeField(page);
+  const timeFieldSeed = page.fields.find((field) => field.key === timeField);
+  const fieldFilters = page.fields.filter((field) => field.filter && field.key !== timeField).map((field) => ({
     key: field.key,
     label: field.label,
     type: page.page === "course_week_schedule" && field.key === "course_date" ? "date_range" : field.type ?? "text",
     placeholder: `请输入${field.label}`
   }));
+  const filters = [
+    {
+      key: timeField,
+      field: timeField,
+      label: timeFieldSeed?.label ?? "查询时间",
+      type: "date_range",
+      placeholder: "请选择日期范围",
+      required: true,
+      defaultRange: "current_month" as const,
+      maxRangeDays: 366,
+      sortOrder: -1000
+    },
+    ...fieldFilters
+  ];
   const baseDsl: Record<string, any> = {
     pageCode: page.page,
     title: page.name,
@@ -3303,7 +3344,7 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
     operation: apiType,
     softDelete: page.softDelete ?? true,
     allowedFields: page.fields.filter((field) => !joinAliases.has(field.key)).map((field) => field.key),
-    filters: [...new Set([...page.fields.filter((field) => field.filter).map((field) => field.key), ...(page.apiFilters ?? [])])],
+    filters: [...new Set([businessTimeField(page), ...page.fields.filter((field) => field.filter).map((field) => field.key), ...(page.apiFilters ?? [])])],
     fixedFilters: page.page === "tenant_version_list"
       ? [...(page.fixedFilters ?? []), { field: "target_type", op: "eq", value: "bundle" }]
       : page.fixedFilters ?? [],
