@@ -12,8 +12,9 @@ import {
   findPageActionConflictErrors,
   findPageFieldConflictErrors,
   buildRepairUserPrompt,
+  validateBusinessEventRuleCycles,
 } from "./steps/validation-repair.step.js";
-import { extractSkillMdMetadata, formatSkillSummaryFromMd, hasStandardSkillMdMetadata } from "./skill-md.service.js";
+import { collectBusinessEventRelationsForFeature, extractSkillMdMetadata, formatSkillSummaryFromMd, generateSkillMd, hasStandardSkillMdMetadata } from "./skill-md.service.js";
 import { summarizeActionDsl, summarizeApiDsl, summarizePageDsl } from "./steps/context-injection.step.js";
 import { defaultTenantAgentPolicy } from "./tenant-policy.service.js";
 import type { DslDiff } from "./types.js";
@@ -408,6 +409,93 @@ const tests: TestCase[] = [
       expectEqual(print?.templateCode, "contract_receipt_print", "unexpected print template code");
       const rule = executed.find((item) => item.diff.targetType === "business_rule")?.modifiedDslJson as Record<string, unknown> | undefined;
       expectEqual(rule?.ruleCode, "contract_discount_rule", "unexpected business rule code");
+    },
+  },
+  {
+    name: "renders business event listener relationships in skill md",
+    run: () => {
+      const rules = [{
+        ruleCode: "contract_created_create_funds",
+        rule: {
+          ruleCode: "contract_created_create_funds",
+          ruleName: "合同后自动收款",
+          category: "workflow",
+          businessType: "contract",
+          featureCode: "funds_history",
+          trigger: { event: "contract.created" },
+          actions: [{ type: "execute_command", command: "funds.create" }],
+        },
+      }];
+      const fundsRelations = collectBusinessEventRelationsForFeature("funds_history", rules);
+      const contractRelations = collectBusinessEventRelationsForFeature("contract_list", rules);
+      const fundsMd = generateSkillMd({
+        pageDsl: { title: "收款流水" },
+        apiDsls: [],
+        actionDsls: [],
+        featureCode: "funds_history",
+        featureName: "收款流水",
+        businessEventRelations: fundsRelations,
+      });
+      const contractMd = generateSkillMd({
+        pageDsl: { title: "合同列表" },
+        apiDsls: [],
+        actionDsls: [],
+        featureCode: "contract_list",
+        featureName: "合同列表",
+        businessEventRelations: contractRelations,
+      });
+      expectEqual(fundsMd.includes("## 业务事件监听关系"), true, "missing listener relationship section");
+      expectEqual(fundsMd.includes("contract.created"), true, "listener skill should list listened event");
+      expectEqual(fundsMd.includes("contract_list"), true, "listener skill should list listened feature");
+      expectEqual(contractMd.includes("funds_history"), true, "source skill should list listening feature");
+      expectEqual(contractMd.includes("funds.create"), true, "source skill should list triggered command");
+    },
+  },
+  {
+    name: "detects workflow business event self cycles in harness validation",
+    run: () => {
+      const errors = validateBusinessEventRuleCycles([{
+        targetCode: "funds_created_create_funds_loop",
+        resource: {
+          ruleCode: "funds_created_create_funds_loop",
+          ruleName: "收款后再次收款循环规则",
+          category: "workflow",
+          businessType: "funds",
+          trigger: { event: "funds.created" },
+          actions: [{ type: "execute_command", command: "funds.create" }],
+        },
+      }]);
+      expectEqual(errors.some((error) => error.includes("自循环")), true, `expected self cycle error, got ${errors.join("; ")}`);
+    },
+  },
+  {
+    name: "detects workflow business event cross-rule cycles in harness validation",
+    run: () => {
+      const errors = validateBusinessEventRuleCycles([
+        {
+          targetCode: "contract_created_create_funds",
+          resource: {
+            ruleCode: "contract_created_create_funds",
+            ruleName: "合同后收款",
+            category: "workflow",
+            businessType: "contract",
+            trigger: { event: "contract.created" },
+            actions: [{ type: "execute_command", command: "funds.create" }],
+          },
+        },
+        {
+          targetCode: "funds_created_create_contract",
+          resource: {
+            ruleCode: "funds_created_create_contract",
+            ruleName: "收款后合同",
+            category: "workflow",
+            businessType: "funds",
+            trigger: { event: "funds.created" },
+            actions: [{ type: "execute_command", command: "contract.create" }],
+          },
+        },
+      ]);
+      expectEqual(errors.some((error) => error.includes("事件链存在循环")), true, `expected cross-rule cycle error, got ${errors.join("; ")}`);
     },
   },
   {

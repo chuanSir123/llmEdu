@@ -229,6 +229,7 @@ export const REPAIR_PROMPT_TEMPLATE = `上一次输出校验失败：
 25. 如果用户要求页面显示名称但事实表只有 *_id，report_dsl 的 dimensions 仍使用事实表中的 *_id 物理字段；页面名称展示由系统根据 displayKey/外键能力补齐，不要把 name 字段当作维度写进不存在的 sourceTable。
 26. 审批流必须使用 approval_flow(create_approval_flow)，导出必须使用 page_dsl add_toolbar 的 export action，打印模板必须使用 print_template(create_print_template)，业务校验必须使用 business_rule(create_business_rule)，业务触发/监听必须使用 business_rule(create_business_event_listener)，不要把这些资源塞进 page_dsl 普通字段。
 27. 业务规则必须使用当前教务规则枚举：category 必须合法；排课冲突必须含老师和学员；业绩规则不要写 ownerField/amountField 这类客户看不懂的字段，必须用 performanceAllocation、productPriority、organizationPerformanceOwner、personalPerformanceOwner 等业务枚举。
+28. workflow 事件监听规则必须包含 trigger.event 和 actions；actions 只能触发既有业务 command，并且不能让 command 发布的事件回到当前 trigger.event 或形成跨规则循环。
 
 修正示例：
 错误：add_select_field requires fieldDef for student_list.query

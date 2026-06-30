@@ -897,6 +897,13 @@ function normalizeBusinessRuleResource(targetCode: string, args: Record<string, 
       generateLogTable: "promotion_arrange_log",
     };
   }
+  if (category === "workflow") {
+    return {
+      ...base,
+      trigger: args.trigger,
+      actions: Array.isArray(args.actions) ? args.actions : [],
+    };
+  }
   return {
     ...base,
     targetApi: args.targetApi ?? args.apiCode,
@@ -914,7 +921,7 @@ function inferRuleCategory(text: string, featureCode: string) {
   if (/退费/.test(text)) return "refund";
   if (/扣费|课消/.test(text)) return "charge";
   if (/考勤|签到/.test(text)) return "attendance";
-  if (/取消|流转/.test(text)) return "workflow";
+  if (/监听|触发|流转|事件|workflow|event/.test(text)) return "workflow";
   if (/course|排课|冲突/.test(`${text} ${featureCode}`)) return "validation";
   return "validation";
 }

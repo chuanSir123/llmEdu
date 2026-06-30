@@ -575,8 +575,8 @@ async function seedTenantData() {
       { id: "promo_discount_9", name: "新生 9 折", type: "DISCOUNT", value: 9, status: "ACTIVE" }
     ]],
     ["contract", [
-      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "ONE_ON_ONE_COURSE", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-01-05T10:00:00+08:00", total_amount: 4000, paid_amount: 2000, promotion_amount: 300, contract_status: "ACTIVE" },
-      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "SMALL_CLASS", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-01-06T11:00:00+08:00", total_amount: 3000, paid_amount: 3000, promotion_amount: 0, contract_status: "ACTIVE" }
+      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "ONE_ON_ONE_COURSE", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 4000, paid_amount: 2000, promotion_amount: 300, contract_status: "ACTIVE" },
+      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "SMALL_CLASS", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 3000, paid_amount: 3000, promotion_amount: 0, contract_status: "ACTIVE" }
     ]],
     ["contract_product", [
       { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 2, plan_real_amount: 4000, plan_promotion_amount: 300, paid_real_hour: 10, paid_promotion_hour: 2, paid_real_amount: 2000, paid_promotion_amount: 300, consumed_real_hour: 2, remaining_real_hour: 8, remaining_promotion_hour: 2, remaining_real_amount: 1600, remaining_promotion_amount: 300 },
@@ -585,8 +585,8 @@ async function seedTenantData() {
     ["mini_class", [{ id: "mc_001", name: "三年级语文小班", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", product_id: "prod_002", grade: "三年级", subject: "语文", capacity: 12, status: "ACTIVE" }]],
     ["one_on_n_group", [{ id: "ong_001", name: "英语一对三 A 组", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", grade: "三年级", subject: "英语", capacity: 3, status: "ACTIVE" }]],
     ["generic_course", [
-      { id: "course_001", course_type: "ONE_ON_ONE_COURSE", course_date: "2026-06-11", start_time: "09:00", end_time: "10:00", teacher_id: "user_002", study_manager_id: "user_003", course_status: "FINISHED", organization_id: "org_001", course_title: "姚锦鹏一对一数学", course_hour: 1 },
-      { id: "course_002", course_type: "SMALL_CLASS", course_date: "2026-06-11", start_time: "14:00", end_time: "15:30", teacher_id: "user_002", study_manager_id: "user_003", course_status: "SCHEDULED", organization_id: "org_001", mini_class_id: "mc_001", course_title: "三年级语文小班", course_hour: 1.5 }
+      { id: "course_001", course_type: "ONE_ON_ONE_COURSE", course_date: "2026-06-30", start_time: "09:00", end_time: "10:00", teacher_id: "user_002", study_manager_id: "user_003", course_status: "FINISHED", organization_id: "org_001", course_title: "姚锦鹏一对一数学", course_hour: 1 },
+      { id: "course_002", course_type: "SMALL_CLASS", course_date: "2026-06-30", start_time: "14:00", end_time: "15:30", teacher_id: "user_002", study_manager_id: "user_003", course_status: "SCHEDULED", organization_id: "org_001", mini_class_id: "mc_001", course_title: "三年级语文小班", course_hour: 1.5 }
     ]],
     ["generic_course_student", [
       { id: "cs_001", course_id: "course_001", student_id: "stu_001", attendance_status: "PRESENT", contract_product_id: "cp_001" },
@@ -612,9 +612,9 @@ async function seedTenantData() {
     ]],
     ["account_charge_records", [{ id: "charge_001", course_id: "course_001", charge_type: "NORMAL", charge_hour: 1, charge_amount: 200, contract_product_id: "cp_001", organization_id: "org_001", student_id: "stu_001", charge_status: "CONFIRMED" }]],
     ["funds_change_history", [
-      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 2000, transaction_time: "2026-01-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
-      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 3000, transaction_time: "2026-01-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
-      { id: "fund_003", student_id: "stu_001", transaction_amount: 500, transaction_time: "2026-01-10T09:00:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "PRE_STORE", organization_id: "org_001" }
+      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 2000, transaction_time: "2026-06-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 3000, transaction_time: "2026-06-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_003", student_id: "stu_001", transaction_amount: 500, transaction_time: "2026-06-10T09:00:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "PRE_STORE", organization_id: "org_001" }
     ]],
     ["pay_way_config", [
       { id: "pay_cash", name: "现金", pay_way_type: "CASH", status: "ACTIVE" },
@@ -629,7 +629,7 @@ async function seedTenantData() {
       { id: "sear_001", student_id: "stu_001", account_id: "sea_001", change_type: "PRESTORE_IN", change_amount: 500, balance_after: 500, source_funds_id: "fund_003", remark: "初始化预存" }
     ]],
     ["ele_account", [{ id: "ele_001", name: "默认电子账户", account_type: "DEFAULT", status: "ACTIVE" }]],
-    ["refund_record", [{ id: "refund_001", student_id: "stu_001", contract_product_id: "cp_001", refund_real_hour: 0, refund_real_amount: 0, refund_promotion_amount: 0, refund_promotion_hour: 0, refund_way_config_id: "pay_wechat", refund_time: "2026-01-20T10:00:00+08:00", remark: "测试空退费记录" }]],
+    ["refund_record", [{ id: "refund_001", student_id: "stu_001", contract_product_id: "cp_001", refund_real_hour: 0, refund_real_amount: 0, refund_promotion_amount: 0, refund_promotion_hour: 0, refund_way_config_id: "pay_wechat", refund_time: "2026-06-20T10:00:00+08:00", remark: "测试空退费记录" }]],
 
     ["wechat_account_binding", [{ id: "wx_bind_public", account_name: "小墨斗教育公有服务号", appid: "wx_public_demo", authorizer_appid: "wx_public_demo", service_type: "SERVICE_ACCOUNT", binding_type: "PUBLIC", authorized_status: "AUTHORIZED", public_account_id: "wx_public_default", component_appid: "wx_component_demo", oauth_domain: "edu.example.com", is_default: true, menu_json: JSON.stringify({ button: [{ type: "view", name: "主页", url: "https://edu.example.com/wx/home" }, { type: "view", name: "商城", url: "https://edu.example.com/wx/mall" }] }) }]],
     ["wechat_menu_config", [{ id: "wx_menu_default", binding_id: "wx_bind_public", menu_name: "默认双入口菜单", publish_status: "PUBLISHED", last_published_at: "2026-06-01T10:00:00+08:00", menu_json: JSON.stringify({ button: [{ type: "view", name: "主页", url: "https://edu.example.com/wx/home" }, { type: "view", name: "商城", url: "https://edu.example.com/wx/mall" }] }) }]],
