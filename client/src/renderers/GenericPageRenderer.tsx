@@ -212,7 +212,7 @@ export function GenericPageRenderer({
     return [monday.toISOString().slice(0, 10), sunday.toISOString().slice(0, 10)];
   }
 
-  async function load(nextFilters = filters, nextPage = page) {
+  async function load(nextFilters = filters, nextPage = page, nextPageSize = pageSize) {
     setLoading(true);
     setError("");
     try {
@@ -223,7 +223,7 @@ export function GenericPageRenderer({
         schemaName,
         pageCode: dsl.pageCode,
         apiCode: dsl.dataApi,
-        params: { filters: effectiveFilters, page: nextPage, pageSize, schemaName }
+        params: { filters: effectiveFilters, page: nextPage, pageSize: nextPageSize, schemaName }
       });
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
@@ -239,10 +239,11 @@ export function GenericPageRenderer({
     const nextFilters = initialFilters ?? (dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {});
     setFilters(nextFilters);
     setPage(1);
+    setPageSize(defaultPageSize);
     setEnrollmentValue({});
     setImportConfig(null);
-    void load(nextFilters, 1);
-  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey]);
+    void load(nextFilters, 1, defaultPageSize);
+  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, defaultPageSize]);
 
   async function submitModal() {
     if (!modal) return;
@@ -976,10 +977,10 @@ export function GenericPageRenderer({
             {renderFilterInput(field)}
           </label>
         ))}
-        <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>
+        <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1, pageSize); }}>
           查询
         </button>
-        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1); }}>
+        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1, pageSize); }}>
           重置
         </button>
       </div>
@@ -1024,7 +1025,7 @@ export function GenericPageRenderer({
 
       <div className="mx-3 flex shrink-0 items-center justify-center border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
         <div className="flex items-center gap-2">
-          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next); }}>上一页</button>
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next, pageSize); }}>上一页</button>
           <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next); }}>下一页</button>
           <span className="ml-2">共 {total.toLocaleString()} 条</span>
