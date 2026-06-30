@@ -2411,7 +2411,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         align: "right"
       },
       table: {
-        pageSize: 20,
+        pageSize: 10,
         rowActionMode: "inline",
         rowActionStyle: "linkGroup",
         primaryRowActions: [`${page.page}.detail`, `${page.page}.edit`, `${page.page}.delete`],
@@ -2798,7 +2798,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         mapRowToValue: { course_id: "id" }
       },
       { actionCode: "course_list.leave", label: "请假", type: "open_modal", apiCode: "leave_record.create", modalTitle: "学员请假", fields: leaveCreateFields, mapRowToValue: { course_id: "id", organization_id: "organization_id" } },
-      { actionCode: "course_list.makeup", label: "安排补课", type: "open_modal", apiCode: "makeup_course_record.create", modalTitle: "安排补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" }, mapRowToValue: { original_course_id: "id", organization_id: "organization_id", teacher_id: "teacher_id" } },
+      { actionCode: "course_list.makeup", label: "安排补课", type: "open_modal", apiCode: "makeup_course_record.create", modalTitle: "安排补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" }, mapRowToValue: { original_course_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id" } },
       { actionCode: "course_list.delete", label: "删除", type: "execute_api", apiCode: "course.delete", confirm: "确认删除该排课？将回滚关联考勤和扣费", variant: "danger" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["course_list.detail", "course_list.attendance", "course_list.leave", "course_list.makeup", "course_list.delete"];
@@ -2827,7 +2827,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "course_week_schedule.detail", label: "详情", type: "open_modal" },
       { actionCode: "course_week_schedule.attendance", label: "考勤", type: "open_modal", apiCode: "attendance.checkIn", modalTitle: "学员考勤", fields: attendanceCheckInFields, mapRowToValue: { course_id: "id" } },
       { actionCode: "course_week_schedule.leave", label: "请假", type: "open_modal", apiCode: "leave_record.create", modalTitle: "学员请假", fields: leaveCreateFields, mapRowToValue: { course_id: "id", organization_id: "organization_id" } },
-      { actionCode: "course_week_schedule.makeup", label: "安排补课", type: "open_modal", apiCode: "makeup_course_record.create", modalTitle: "安排补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" }, mapRowToValue: { original_course_id: "id", organization_id: "organization_id", teacher_id: "teacher_id" } },
+      { actionCode: "course_week_schedule.makeup", label: "安排补课", type: "open_modal", apiCode: "makeup_course_record.create", modalTitle: "安排补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" }, mapRowToValue: { original_course_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id" } },
       { actionCode: "course_week_schedule.course", label: "打开排课", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "id" } }
     ];
     baseDsl.presentation.table.primaryRowActions = ["course_week_schedule.detail", "course_week_schedule.attendance", "course_week_schedule.leave", "course_week_schedule.makeup", "course_week_schedule.course"];
