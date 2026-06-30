@@ -39,7 +39,7 @@ async function loadActionDsl(scope: "admin" | "tenant", actionCode: string, sche
     `select dsl_json from admin.action_dsl
      where action_code = $1 and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant_default' and $2 = 'tenant'))
+         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
      order by case when schema_scope = $2 then 0 else 1 end
      limit 1`,
     [actionCode, scope, schemaName ?? null]
@@ -53,7 +53,7 @@ async function loadModalDsl(scope: "admin" | "tenant", modalCode: string, schema
     `select dsl_json from admin.action_dsl
      where action_code = $1 and action_type = 'modal' and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant_default' and $2 = 'tenant'))
+         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
      order by case when schema_scope = $2 then 0 else 1 end
      limit 1`,
     [modalCode, scope, schemaName ?? null]

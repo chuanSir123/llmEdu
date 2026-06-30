@@ -7,6 +7,7 @@ export type OpType =
   | "create_approval_flow"
   | "create_print_template"
   | "create_business_rule"
+  | "create_business_event_listener"
   | "add_column"
   | "remove_column"
   | "reorder_columns"
@@ -43,7 +44,7 @@ export type TargetType =
 
 export const VALID_OPS: ReadonlySet<string> = new Set<OpType>([
   "create_table", "add_field", "create_import", "create_report", "create_feature",
-  "create_approval_flow", "create_print_template", "create_business_rule",
+  "create_approval_flow", "create_print_template", "create_business_rule", "create_business_event_listener",
   "add_column", "remove_column", "reorder_columns", "change_column",
   "add_filter", "remove_filter", "add_toolbar", "add_row_action", "add_modal_field", "remove_modal_field",
   "add_select_field", "remove_select_field", "add_allowed_field", "add_join", "add_where", "add_sort",

@@ -373,13 +373,13 @@ async function runTool(input: {
   throw Object.assign(new Error(`未知工具: ${name}`), { statusCode: 400 });
 }
 
-// 枚举该租户已配置导入能力的页面（import_dsl，含 tenant 覆盖与 tenant_default），覆盖定制新增的导入功能
+// 枚举该租户已配置导入能力的页面（import_dsl，含 tenant 覆盖与 demo_school），覆盖定制新增的导入功能
 async function loadImportablePageCodes(schemaName: string): Promise<string[]> {
   const { rows } = await pool.query(
     `select distinct coalesce(dsl_json->>'pageCode', dsl_json->>'page_code') as page_code
      from admin.import_dsl
      where status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $1) or schema_scope = 'tenant_default')`,
+       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))`,
     [schemaName]
   );
   return rows.map((r: { page_code: string | null }) => String(r.page_code ?? "")).filter((code) => SAFE_FIELD_RE.test(code));
@@ -739,7 +739,7 @@ async function loadWriteApiCatalog(schemaName: string, pageCodes: string[]): Pro
     `select distinct on (page_code) page_code, dsl_json from admin.page_dsl
      where page_code = any($1)
        and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
      order by page_code, case when schema_scope = 'tenant' then 0 else 1 end`,
     [pages, schemaName]
   );
@@ -753,7 +753,7 @@ async function loadWriteApiCatalog(schemaName: string, pageCodes: string[]): Pro
      where (api_code like any($1) or api_code = any($3))
        and dsl_json->>'operation' in ('create','update','delete','command')
        and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or schema_scope = 'tenant_default')
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
      order by api_code, case when schema_scope = 'tenant' then 0 else 1 end`,
     [likeCodes, schemaName, actionApiCodes]
   );
