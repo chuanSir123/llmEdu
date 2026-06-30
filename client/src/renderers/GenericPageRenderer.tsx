@@ -64,7 +64,7 @@ export function GenericPageRenderer({
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const pageSize = 20;
+  const pageSize = dsl.presentation?.table?.pageSize ?? 50;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
@@ -199,6 +199,8 @@ export function GenericPageRenderer({
       if (start && end) next[field.key] = [start, end];
     }
     return next;
+  }
+
   function currentWeekRange() {
     const now = new Date();
     const day = now.getDay() || 7;
@@ -907,21 +909,27 @@ export function GenericPageRenderer({
     );
   }
 
+  const hideHeader = dsl.presentation?.header?.hidden === true;
+  const showFilterLabels = dsl.presentation?.filters?.showLabels !== false;
+  const toolbarAlign = dsl.presentation?.toolbar?.align ?? "left";
+
   return (
-    <div className="flex h-full flex-col overflow-hidden p-4">
-      <div className="mb-3 flex items-start justify-between border-b border-[#d9e3ed] pb-3">
-        <div>
-          <h1 className="text-base font-semibold text-[#172033]">{dsl.title}</h1>
-          {(dsl.presentation?.header?.subtitle ?? dsl.subtitle) && (
-            <p className="mt-1 text-xs text-[#607083]">{dsl.presentation?.header?.subtitle ?? dsl.subtitle}</p>
-          )}
+    <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
+      {!hideHeader && (
+        <div className="mx-4 mt-4 mb-3 flex items-start justify-between border-b border-[#d9e3ed] bg-white px-4 py-3">
+          <div>
+            <h1 className="text-base font-semibold text-[#172033]">{dsl.title}</h1>
+            {(dsl.presentation?.header?.subtitle ?? dsl.subtitle) && (
+              <p className="mt-1 text-xs text-[#607083]">{dsl.presentation?.header?.subtitle ?? dsl.subtitle}</p>
+            )}
+          </div>
+          <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
         </div>
-        <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
-      </div>
-      <div className={token.filterBar}>
+      )}
+      <div className={`mx-0 shrink-0 ${hideHeader ? "mt-0" : ""} ${token.filterBar} rounded-none border-0 shadow-none`}>
         {sortWithOrder(filtersDsl).map((field) => (
           <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
-            {field.label}
+            {showFilterLabels && field.label}
             {renderFilterInput(field)}
           </label>
         ))}
@@ -932,7 +940,7 @@ export function GenericPageRenderer({
           重置
         </button>
       </div>
-      <div className="mb-3 flex flex-wrap gap-2">
+      <div className={`flex shrink-0 flex-wrap gap-2 bg-white px-4 pb-3 ${toolbarAlign === "right" ? "justify-end" : "justify-start"}`}>
         {sortWithOrder(toolbarDsl)
           .map((action) => (
           <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
@@ -956,7 +964,7 @@ export function GenericPageRenderer({
           />
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto px-0">
         <GenericTableRenderer
           columns={tableDsl.columns ?? []}
           rows={rows}
@@ -966,7 +974,7 @@ export function GenericPageRenderer({
         />
       </div>
 
-      <div className="mt-3 flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-3 py-2 text-sm text-[#607083]">
+      <div className="flex shrink-0 items-center justify-between border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
           <span>数据合计：共 {total} 条</span>
           {metrics.map((metric) => (
