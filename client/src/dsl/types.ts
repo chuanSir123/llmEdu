@@ -138,6 +138,7 @@ export type PageDsl = {
   presentation?: {
     theme?: "flatTech" | "default";
     density?: "compact" | "comfortable";
+    fontSize?: "default" | "compact";
     header?: {
       hidden?: boolean;
       subtitle?: string;
@@ -152,12 +153,14 @@ export type PageDsl = {
     };
     filters?: {
       showLabels?: boolean;
+      density?: "default" | "compact";
     };
     toolbar?: {
       align?: "left" | "right" | "split";
     };
     table?: {
       pageSize?: number;
+      rowDensity?: "default" | "compact";
       rowActionMode?: "inline" | "menu";
       rowActionStyle?: "button" | "linkGroup";
       primaryRowActions?: string[];
