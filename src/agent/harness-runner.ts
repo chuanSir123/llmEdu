@@ -210,13 +210,21 @@ async function harnessRunInner(input: {
         : "没有生成可执行的 DSL 变更，正在尝试修正。",
       { attempt, diffsCount: planning.data.length, ops: planning.data.map((d) => d.op) },
     );
-    for (const diff of planning.data) {
+    if (planning.data.length > 0) {
       await emit(
         "tool_start",
-        toolTitle(diff),
-        toolMessage(diff),
-        { targetType: diff.targetType, targetCode: diff.targetCode, op: diff.op, field: diff.field ?? diff.fieldDef?.key ?? diff.resourceDef?.tableName },
-        { toolName: diff.op, status: "running" },
+        "准备更新配置",
+        summarizePlannedDiffs(planning.data),
+        {
+          attempt,
+          diffs: planning.data.map((diff) => ({
+            targetType: diff.targetType,
+            targetCode: diff.targetCode,
+            op: diff.op,
+            field: diff.field ?? diff.fieldDef?.key ?? diff.resourceDef?.tableName,
+          })),
+        },
+        { toolName: "batch_update", status: "running" },
       );
     }
 
@@ -460,6 +468,15 @@ function buildEffectiveUserMessage(
     .map((msg) => `${msg.role === "user" ? "用户" : "助手"}：${msg.content.substring(0, 800)}`);
   if (recent.length === 0) return userMessage;
   return `请基于以下多轮对话理解完整需求，最后一条用户消息是对前文需求的补充或确认，不要丢失前文目标。\n\n## 历史对话\n${recent.join("\n")}\n\n## 当前用户消息\n${userMessage}`;
+}
+
+function summarizePlannedDiffs(diffs: DslDiff[]) {
+  const fieldLabels = [...new Set(diffs.map((diff) => diff.field ?? String(diff.fieldDef?.key ?? diff.resourceDef?.tableName ?? "")).filter(Boolean))];
+  const targetLabels = [...new Set(diffs.map((diff) => diff.targetCode).filter(Boolean))];
+  const opLabels = [...new Set(diffs.map((diff) => diff.op).filter(Boolean))];
+  const fieldText = fieldLabels.length ? `内容：${fieldLabels.join("、")}` : `操作：${opLabels.join("、")}`;
+  const targetText = targetLabels.length <= 3 ? targetLabels.join("、") : `${targetLabels.slice(0, 3).join("、")} 等 ${targetLabels.length} 个目标`;
+  return `将合并执行 ${diffs.length} 项更新；目标：${targetText}；${fieldText}。`;
 }
 
 function toolTitle(diff: DslDiff) {

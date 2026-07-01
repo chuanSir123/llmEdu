@@ -4,7 +4,7 @@ import { harnessRun } from "../agent/harness-runner.js";
 import { publishVersionAndSyncSkillMd, rejectVersion } from "../version/version.service.js";
 import { writeCustomizationRecord } from "./tenant-customization-record.service.js";
 import { ensureTestSchema, writePreviewDslToTestSchema } from "./test-schema.service.js";
-import type { AgentProgressCallback, DslDiff, HarnessResult } from "../agent/types.js";
+import type { AgentProgressCallback, AgentRunEvent, DslDiff, HarnessResult } from "../agent/types.js";
 import { callWithToolCalling } from "../agent/llm.service.js";
 import { validateApiDslAgainstSchema } from "../db/dsl-validator.js";
 import { loadAttachments } from "./attachment.service.js";
@@ -121,6 +121,12 @@ export async function tenantAgentChat(input: {
       );
     }
 
+    const progressEvents: AgentRunEvent[] = [];
+    const onProgress: AgentProgressCallback = async (event) => {
+      progressEvents.push(event);
+      await input.onProgress?.(event);
+    };
+
     let harnessResult;
     try {
       const chatHistory = buildChatHistory(context);
@@ -132,7 +138,7 @@ export async function tenantAgentChat(input: {
         sessionId: sessionId!,
         userId: input.userId,
         chatHistory,
-        onProgress: input.onProgress,
+        onProgress,
       });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -211,7 +217,7 @@ export async function tenantAgentChat(input: {
       sessionId: sessionId!,
       userId: input.userId,
       recordType: "customization",
-      chatRound: { userInput: input.message, aiReply: reply, dslDiff: diffs, timestamp: new Date().toISOString() },
+      chatRound: { userInput: input.message, aiReply: reply, dslDiff: diffs, progressEvents, timestamp: new Date().toISOString() },
       changeSummary: draftSummary
         ? `${draftSummary}（${diffs.length}项变更：${diffs.map((d: DslDiff) => `${d.targetType}/${d.targetCode} ${d.op}${d.field ? ` ${d.field}` : ""}`).join("、")}）`
         : undefined,
