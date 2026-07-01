@@ -80,7 +80,7 @@ export function GenericTableRenderer({
   const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
   const stickyHeader = presentation?.table?.stickyHeader ?? true;
   const density = presentation?.density ?? "compact";
-  const tdDensity = density === "compact" ? "py-2" : "py-3";
+  const tdDensity = density === "compact" ? "py-1.5" : "py-2.5";
   const hasActions = rowActions.length > 0;
   const actionStyle = presentation?.table?.rowActionStyle ?? "button";
   const primaryRowActions = new Set(presentation?.table?.primaryRowActions ?? []);
@@ -120,7 +120,7 @@ export function GenericTableRenderer({
               {hasActions && (
                 <td className={`${token.td} ${tdDensity} w-[220px] min-w-[220px] whitespace-nowrap`}>
                   {actionStyle === "linkGroup" ? (
-                    <div className="relative flex flex-nowrap items-center justify-center gap-3 text-sm">
+                    <div className="relative flex flex-nowrap items-center justify-center gap-3 text-[13px]">
                       {(() => {
                         const filteredActions = rowActions.filter((action) => isVisibleAction(action, row));
                         const preferred = filteredActions.filter((action) => primaryRowActions.has(action.actionCode));
@@ -154,7 +154,7 @@ export function GenericTableRenderer({
                                     {moreActions.map((action) => (
                                       <button
                                         key={action.actionCode}
-                                        className={`block h-8 w-full whitespace-nowrap px-3 text-left text-sm ${
+                                        className={`block h-8 w-full whitespace-nowrap px-3 text-left text-[13px] ${
                                           action.actionCode.endsWith(".delete") ? "text-[#ff4d64] hover:bg-[#fff1f3]" : "text-[#2f80ed] hover:bg-[#f2f7ff]"
                                         }`}
                                         onClick={() => {

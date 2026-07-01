@@ -513,6 +513,9 @@ export function GenericPageRenderer({
   }
 
   const metrics = dsl.presentation?.header?.metrics ?? [];
+  const headerMetricTip = metrics
+    .map((metric) => `${metricLabel(metric)}：${metricValue(metric)}${metric.suffix ?? ""}`)
+    .join("\n");
   const dashboard = dsl.presentation?.dashboard;
   const dashboardRows = rows.slice(0, dashboard?.panels?.[0]?.limit ?? 6);
 
@@ -989,7 +992,14 @@ export function GenericPageRenderer({
       <div className="mx-3 mt-3 flex shrink-0 items-center justify-between border-b border-[#edf0f5] bg-white px-5 py-4">
         <div className="flex items-center gap-1 text-base font-semibold text-[#172033]">
           {dsl.title}
-          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#c8ced8] text-[10px] font-bold text-white">i</span>
+          {headerMetricTip && (
+            <span
+              className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#c8ced8] text-[10px] font-bold text-white"
+              title={headerMetricTip}
+            >
+              i
+            </span>
+          )}
         </div>
         <div className={`flex flex-wrap gap-2 ${toolbarAlign === "left" ? "justify-start" : "justify-end"}`}>
           {sortWithOrder(toolbarDsl).map((action) => (
