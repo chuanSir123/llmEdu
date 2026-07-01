@@ -65,8 +65,8 @@ export function GenericPageRenderer({
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const defaultPageSize = dsl.presentation?.table?.pageSize ?? 10;
-  const [pageSize, setPageSize] = useState(defaultPageSize);
+  const configuredPageSize = Number(dsl.presentation?.table?.pageSize ?? 10);
+  const [pageSize, setPageSize] = useState(configuredPageSize);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
@@ -240,11 +240,12 @@ export function GenericPageRenderer({
     const nextFilters = initialFilters ?? (dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {});
     setFilters(nextFilters);
     setPage(1);
-    setPageSize(defaultPageSize);
+    const nextPageSize = Number(dsl.presentation?.table?.pageSize ?? 10);
+    setPageSize(nextPageSize);
     setEnrollmentValue({});
     setImportConfig(null);
-    void load(nextFilters, 1, defaultPageSize);
-  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, defaultPageSize]);
+    void load(nextFilters, 1, nextPageSize);
+  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, dsl.presentation?.table?.pageSize]);
 
   async function submitModal() {
     if (!modal) return;
