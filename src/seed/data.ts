@@ -2405,13 +2405,15 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         metrics: metricsFor(page)
       },
       filters: {
-        showLabels: false
+        showLabels: false,
+        density: "compact"
       },
       toolbar: {
         align: "right"
       },
       table: {
-        pageSize: 10,
+        pageSize: 20,
+        rowDensity: "compact",
         rowActionMode: "inline",
         rowActionStyle: "linkGroup",
         primaryRowActions: [`${page.page}.detail`, `${page.page}.edit`, `${page.page}.delete`],

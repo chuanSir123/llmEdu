@@ -79,7 +79,7 @@ export function GenericTableRenderer({
   const sortedColumns = sortWithOrder(columns);
   const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
   const stickyHeader = presentation?.table?.stickyHeader ?? true;
-  const density = presentation?.density ?? "compact";
+  const density = presentation?.table?.rowDensity ?? presentation?.density ?? "compact";
   const tdDensity = density === "compact" ? "py-1.5" : "py-2.5";
   const hasActions = rowActions.length > 0;
   const actionStyle = presentation?.table?.rowActionStyle ?? "button";

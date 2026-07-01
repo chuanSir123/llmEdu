@@ -433,6 +433,11 @@ export function GenericPageRenderer({
     return text;
   }
 
+  function filterControlClass(extra = "") {
+    const compact = dsl.presentation?.filters?.density === "compact";
+    return `${token.input} ${compact ? "h-7 min-w-[120px] px-2 text-xs" : ""} ${extra}`.trim();
+  }
+
   function renderFilterInput(field: typeof filtersDsl[number]) {
     if (field.type === "date_range" || field.type === "daterange") {
       const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : currentMonthRange();
@@ -447,7 +452,7 @@ export function GenericPageRenderer({
         <div className="flex items-center gap-2">
           <input
             type="date"
-            className={`${token.input} min-w-[150px]`}
+            className={filterControlClass("min-w-[120px]")}
             value={start}
             aria-label={`${field.label ?? "日期"}开始日期`}
             onChange={(event) => updateRange(0, event.target.value)}
@@ -458,7 +463,7 @@ export function GenericPageRenderer({
           <span className="text-sm text-[#8b95a7]">至</span>
           <input
             type="date"
-            className={`${token.input} min-w-[150px]`}
+            className={filterControlClass("min-w-[120px]")}
             value={end}
             aria-label={`${field.label ?? "日期"}结束日期`}
             onChange={(event) => updateRange(1, event.target.value)}
@@ -473,7 +478,7 @@ export function GenericPageRenderer({
     return (
       <input
         type={inputType}
-        className={token.input}
+        className={filterControlClass()}
         value={String(filters[field.key] ?? "")}
         placeholder={field.placeholder}
         onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
@@ -923,17 +928,32 @@ export function GenericPageRenderer({
     );
   }
 
+  const hideHeader = dsl.presentation?.header?.hidden === true;
+  const showFilterLabels = dsl.presentation?.filters?.showLabels !== false;
+  const compactFilters = dsl.presentation?.filters?.density === "compact";
+  const filterBarClass = compactFilters
+    ? "mx-2 mt-2 mb-2 flex flex-wrap items-end gap-2 rounded-[2px] border-0 bg-white px-3 py-2 shadow-none"
+    : `mx-3 mt-3 shrink-0 ${token.filterBar} rounded-[2px] border-0 shadow-none`;
+  const titleBarClass = compactFilters
+    ? "mx-2 mt-2 flex shrink-0 items-center justify-between border-b border-[#edf0f5] bg-white px-4 py-3"
+    : "mx-3 mt-3 flex shrink-0 items-center justify-between border-b border-[#edf0f5] bg-white px-5 py-4";
+  const tableWrapClass = compactFilters ? "mx-2 min-h-0 flex-1 overflow-auto bg-white px-0" : "mx-3 min-h-0 flex-1 overflow-auto bg-white px-0";
+  const pagerClass = compactFilters
+    ? "mx-2 flex shrink-0 items-center justify-center border-t border-[#d9e3ed] bg-white px-4 py-1.5 text-sm text-[#607083]"
+    : "mx-3 flex shrink-0 items-center justify-center border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]";
+  const toolbarAlign = dsl.presentation?.toolbar?.align ?? "left";
+
   if (dsl.layout === "calendar" || dsl.presentation?.type === "calendar") {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
-        <div className={`mx-3 mt-3 shrink-0 ${token.filterBar} rounded-[2px] border-0 shadow-none`}>
+        <div className={filterBarClass}>
           {sortWithOrder(filtersDsl).map((field) => (
             <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
               {renderFilterInput(field)}
             </label>
           ))}
-          <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1); }}>查询</button>
-          <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = { course_date: currentWeekRange() }; setFilters(empty); setPage(1); void load(empty, 1); }}>重置</button>
+          <button className={`${token.button} ${token.primaryButton} ${compactFilters ? "h-7 px-4 text-xs" : ""}`} onClick={() => { setPage(1); void load(filters, 1); }}>查询</button>
+          <button className={`${token.button} ${token.defaultButton} ${compactFilters ? "h-7 px-4 text-xs" : ""}`} onClick={() => { const empty = { course_date: currentWeekRange() }; setFilters(empty); setPage(1); void load(empty, 1); }}>重置</button>
         </div>
         {error && <div className="mx-3 mt-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         <div className="mx-3 mt-3 min-h-0 flex-1 overflow-hidden bg-white">
@@ -958,10 +978,6 @@ export function GenericPageRenderer({
     );
   }
 
-  const hideHeader = dsl.presentation?.header?.hidden === true;
-  const showFilterLabels = dsl.presentation?.filters?.showLabels !== false;
-  const toolbarAlign = dsl.presentation?.toolbar?.align ?? "left";
-
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
       {!hideHeader && (
@@ -975,21 +991,21 @@ export function GenericPageRenderer({
           <div className="text-sm text-[#607083]">{loading ? "加载中..." : `共 ${total} 条`}</div>
         </div>
       )}
-      <div className={`mx-3 mt-3 shrink-0 ${token.filterBar} rounded-[2px] border-0 shadow-none`}>
+      <div className={filterBarClass}>
         {sortWithOrder(filtersDsl).map((field) => (
           <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
             {showFilterLabels && field.label}
             {renderFilterInput(field)}
           </label>
         ))}
-        <button className={`${token.button} ${token.primaryButton}`} onClick={() => { setPage(1); void load(filters, 1, pageSize); }}>
+        <button className={`${token.button} ${token.primaryButton} ${compactFilters ? "h-7 px-4 text-xs" : ""}`} onClick={() => { setPage(1); void load(filters, 1, pageSize); }}>
           查询
         </button>
-        <button className={`${token.button} ${token.defaultButton}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1, pageSize); }}>
+        <button className={`${token.button} ${token.defaultButton} ${compactFilters ? "h-7 px-4 text-xs" : ""}`} onClick={() => { const empty = dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {}; setFilters(empty); setPage(1); void load(empty, 1, pageSize); }}>
           重置
         </button>
       </div>
-      <div className="mx-3 mt-3 flex shrink-0 items-center justify-between border-b border-[#edf0f5] bg-white px-5 py-4">
+      <div className={titleBarClass}>
         <div className="flex items-center gap-1 text-base font-semibold text-[#172033]">
           {dsl.title}
           {headerMetricTip && (
@@ -1025,7 +1041,7 @@ export function GenericPageRenderer({
           />
         </div>
       )}
-      <div className="mx-3 min-h-0 flex-1 overflow-auto bg-white px-0">
+      <div className={tableWrapClass}>
         <GenericTableRenderer
           columns={tableDsl.columns ?? []}
           rows={rows}
@@ -1035,7 +1051,7 @@ export function GenericPageRenderer({
         />
       </div>
 
-      <div className="mx-3 flex shrink-0 items-center justify-center border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]">
+      <div className={pagerClass}>
         <div className="flex items-center gap-2">
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next, pageSize); }}>上一页</button>
           <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>

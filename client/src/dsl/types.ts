@@ -152,12 +152,14 @@ export type PageDsl = {
     };
     filters?: {
       showLabels?: boolean;
+      density?: "default" | "compact";
     };
     toolbar?: {
       align?: "left" | "right" | "split";
     };
     table?: {
       pageSize?: number;
+      rowDensity?: "default" | "compact";
       rowActionMode?: "inline" | "menu";
       rowActionStyle?: "button" | "linkGroup";
       primaryRowActions?: string[];
