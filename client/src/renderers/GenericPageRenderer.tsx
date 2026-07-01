@@ -65,7 +65,8 @@ export function GenericPageRenderer({
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const pageSize = dsl.presentation?.table?.pageSize ?? 50;
+  const configuredPageSize = Number(dsl.presentation?.table?.pageSize ?? 10);
+  const [pageSize, setPageSize] = useState(configuredPageSize);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
@@ -239,11 +240,12 @@ export function GenericPageRenderer({
     const nextFilters = initialFilters ?? (dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {});
     setFilters(nextFilters);
     setPage(1);
-    setPageSize(defaultPageSize);
+    const nextPageSize = Number(dsl.presentation?.table?.pageSize ?? 10);
+    setPageSize(nextPageSize);
     setEnrollmentValue({});
     setImportConfig(null);
-    void load(nextFilters, 1, defaultPageSize);
-  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, defaultPageSize]);
+    void load(nextFilters, 1, nextPageSize);
+  }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, dsl.presentation?.table?.pageSize]);
 
   async function submitModal() {
     if (!modal) return;
@@ -1027,7 +1029,21 @@ export function GenericPageRenderer({
         <div className="flex items-center gap-2">
           <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page <= 1} onClick={() => { const next = Math.max(1, page - 1); setPage(next); void load(filters, next, pageSize); }}>上一页</button>
           <span>第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页</span>
-          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next); }}>下一页</button>
+          <button className={`${token.button} ${token.defaultButton} h-8`} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} onClick={() => { const next = page + 1; setPage(next); void load(filters, next, pageSize); }}>下一页</button>
+          <select
+            className="ml-2 h-8 rounded-[3px] border border-[#dde3ee] bg-white px-2 text-sm text-[#526075] outline-none"
+            value={pageSize}
+            onChange={(event) => {
+              const nextPageSize = Number(event.target.value);
+              setPageSize(nextPageSize);
+              setPage(1);
+              void load(filters, 1, nextPageSize);
+            }}
+          >
+            {[10, 20, 50, 100].map((size) => (
+              <option key={size} value={size}>每页{size}条</option>
+            ))}
+          </select>
           <span className="ml-2">共 {total.toLocaleString()} 条</span>
         </div>
       </div>
