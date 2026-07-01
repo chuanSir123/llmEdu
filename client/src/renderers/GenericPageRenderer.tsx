@@ -521,6 +521,9 @@ export function GenericPageRenderer({
   const headerMetricTip = metrics
     .map((metric) => `${metricLabel(metric)}：${metricValue(metric)}${metric.suffix ?? ""}`)
     .join("\n");
+  const compactFont = dsl.presentation?.fontSize === "compact";
+  const pageFontClass = compactFont ? "text-[13px]" : "";
+  const pageTitleClass = compactFont ? "text-sm" : "text-base";
   const dashboard = dsl.presentation?.dashboard;
   const dashboardRows = rows.slice(0, dashboard?.panels?.[0]?.limit ?? 6);
 
@@ -745,7 +748,7 @@ export function GenericPageRenderer({
       <div className="h-full overflow-auto bg-[#eef0f8] p-4">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <h1 className="text-base font-semibold text-[#172033]">{dsl.title}</h1>
+            <h1 className={`${pageTitleClass} font-semibold text-[#172033]`}>{dsl.title}</h1>
             <p className="mt-1 text-xs text-[#607083]">{dsl.presentation?.header?.subtitle ?? dsl.subtitle}</p>
           </div>
         </div>
@@ -945,7 +948,7 @@ export function GenericPageRenderer({
 
   if (dsl.layout === "calendar" || dsl.presentation?.type === "calendar") {
     return (
-      <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
+      <div className={`flex h-full flex-col overflow-hidden bg-[#eef0f8] ${pageFontClass}`}>
         <div className={filterBarClass}>
           {sortWithOrder(filtersDsl).map((field) => (
             <label key={field.key} className="flex flex-col gap-1 text-xs font-medium text-[#607083]">
@@ -979,11 +982,11 @@ export function GenericPageRenderer({
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-[#eef0f8]">
+    <div className={`flex h-full flex-col overflow-hidden bg-[#eef0f8] ${pageFontClass}`}>
       {!hideHeader && (
         <div className="mx-4 mt-4 mb-3 flex items-start justify-between border-b border-[#d9e3ed] bg-white px-4 py-3">
           <div>
-            <h1 className="text-base font-semibold text-[#172033]">{dsl.title}</h1>
+            <h1 className={`${pageTitleClass} font-semibold text-[#172033]`}>{dsl.title}</h1>
             {(dsl.presentation?.header?.subtitle ?? dsl.subtitle) && (
               <p className="mt-1 text-xs text-[#607083]">{dsl.presentation?.header?.subtitle ?? dsl.subtitle}</p>
             )}
@@ -1006,7 +1009,7 @@ export function GenericPageRenderer({
         </button>
       </div>
       <div className={titleBarClass}>
-        <div className="flex items-center gap-1 text-base font-semibold text-[#172033]">
+        <div className={`flex items-center gap-1 ${pageTitleClass} font-semibold text-[#172033]`}>
           {dsl.title}
           {headerMetricTip && (
             <span

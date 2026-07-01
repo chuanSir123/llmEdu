@@ -2399,6 +2399,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     presentation: {
       theme: "flatTech",
       density: "compact",
+      fontSize: "compact",
       header: {
         hidden: true,
         subtitle: pageSubtitles[page.page] ?? `${page.name}业务数据维护`,

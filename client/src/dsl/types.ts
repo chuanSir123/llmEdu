@@ -138,6 +138,7 @@ export type PageDsl = {
   presentation?: {
     theme?: "flatTech" | "default";
     density?: "compact" | "comfortable";
+    fontSize?: "default" | "compact";
     header?: {
       hidden?: boolean;
       subtitle?: string;
