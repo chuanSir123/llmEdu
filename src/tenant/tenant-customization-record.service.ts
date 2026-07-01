@@ -5,6 +5,7 @@ type StoredChatRound = {
   userInput?: string;
   aiReply?: string;
   dslDiff?: unknown;
+  progressEvents?: unknown;
   timestamp?: string;
 };
 
@@ -13,7 +14,7 @@ export async function writeCustomizationRecord(input: {
   sessionId: string;
   userId: string;
   recordType?: "assistant" | "customization";
-  chatRound: { userInput: string; aiReply: string; dslDiff: unknown; timestamp: string };
+  chatRound: { userInput: string; aiReply: string; dslDiff: unknown; progressEvents?: unknown; timestamp: string };
   skillMdSnapshot?: string;
   changeSummary?: Record<string, unknown> | string;
 }) {
@@ -95,6 +96,7 @@ export async function getCustomizationRecordDetail(recordId: string) {
       role: "assistant",
       content: round.aiReply ?? "",
       dslDiff: round.dslDiff,
+      progressEvents: round.progressEvents,
       timestamp: round.timestamp ?? row.updated_at ?? row.created_at
     }
   ]);

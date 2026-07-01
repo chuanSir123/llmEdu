@@ -519,6 +519,38 @@ async function seedDsl(schemaScope: string, schemaName: string | null, page: (ty
   });
 }
 
+function remapDefaultBusinessIds(rows: Array<[string, Record<string, unknown>[]]>) {
+  const idMap = new Map<string, string>();
+  for (const [, tableRows] of rows) {
+    tableRows.forEach((row, index) => {
+      const currentId = row.id;
+      if (typeof currentId === "string") {
+        idMap.set(currentId, String(index + 1));
+        row.id = String(index + 1);
+      }
+    });
+  }
+
+  const remapValue = (value: unknown): unknown => {
+    if (typeof value === "string") return idMap.get(value) ?? value;
+    if (Array.isArray(value)) return value.map(remapValue);
+    if (value && typeof value === "object" && !(value instanceof Date)) {
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, remapValue(nested)]));
+    }
+    return value;
+  };
+
+  for (const [, tableRows] of rows) {
+    for (const row of tableRows) {
+      for (const [key, value] of Object.entries(row)) {
+        if (key === "id") continue;
+        row[key] = remapValue(value);
+      }
+    }
+  }
+  return idMap;
+}
+
 async function seedTenantData() {
   const schema = "demo_school";
   const rows: Array<[string, Record<string, unknown>[]]> = [
@@ -675,6 +707,8 @@ async function seedTenantData() {
     ]]
   ];
 
+  const businessIdMap = remapDefaultBusinessIds(rows);
+
   for (const [table, tableRows] of rows) {
     for (const row of tableRows) {
       await upsert(`"${schema}".${table === "user" ? "\"user\"" : table}`, "id", row);
@@ -682,19 +716,20 @@ async function seedTenantData() {
   }
 
   const roleDefaults = [
-    { prefix: "rr_principal", roleId: "role_001", dataPermission: "all", fieldPermission: {} },
-    { prefix: "rr_teacher", roleId: "role_002", dataPermission: "own_courses", fieldPermission: { contact: "hidden" } },
-    { prefix: "rr_manager", roleId: "role_003", dataPermission: "own_students", fieldPermission: {} },
-    { prefix: "rr_sales", roleId: "role_004", dataPermission: "own_organization", fieldPermission: {} },
+    { prefix: "rr_principal", roleId: businessIdMap.get("role_001") ?? "role_001", dataPermission: "all", fieldPermission: {} },
+    { prefix: "rr_teacher", roleId: businessIdMap.get("role_002") ?? "role_002", dataPermission: "own_courses", fieldPermission: { contact: "hidden" } },
+    { prefix: "rr_manager", roleId: businessIdMap.get("role_003") ?? "role_003", dataPermission: "own_students", fieldPermission: {} },
+    { prefix: "rr_sales", roleId: businessIdMap.get("role_004") ?? "role_004", dataPermission: "own_organization", fieldPermission: {} },
   ];
   await pool.query(
     `update "${schema}".role_resource set deleted = true, updated_at = now() where role_id = any($1::text[])`,
     [roleDefaults.map((role) => role.roleId)]
   );
+  let roleResourceId = 1;
   for (const role of roleDefaults) {
     for (const page of collectPermissionPageSeeds()) {
       await upsert(`"${schema}".role_resource`, "id", {
-        id: id(role.prefix, page.pageCode),
+        id: String(roleResourceId++),
         role_id: role.roleId,
         resource_code: page.pageCode,
         resource_type: "page",
@@ -710,9 +745,10 @@ async function seedTenantData() {
     }
   }
 
+  let approvalFlowId = 1;
   for (const flow of approvalFlows) {
     await upsert(`"${schema}".approval_flow`, "id", {
-      id: id("approval", flow.flow_code),
+      id: String(approvalFlowId++),
       name: flow.flow_name,
       flow_code: flow.flow_code,
       module_code: flow.module_code,

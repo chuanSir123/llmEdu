@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react";
 import { GatewayClient } from "../api/GatewayClient";
 
+type ProgressEvent = {
+  title: string;
+  message: string;
+  stage: string;
+  createdAt: string;
+  toolName?: string;
+  status?: string;
+};
+
 type TimelineEntry = {
   role: string;
   content: string;
   dslDiff?: unknown;
+  progressEvents?: ProgressEvent[];
   timestamp: string;
 };
 
@@ -19,6 +29,59 @@ type RecordDetail = {
   chatTimeline: TimelineEntry[];
 };
 
+function progressStatusLabel(status?: string) {
+  if (status === "running") return "执行中";
+  if (status === "success") return "完成";
+  if (status === "failed") return "失败";
+  if (status === "skipped") return "跳过";
+  return "";
+}
+
+function normalizeProgressEvents(value: unknown): ProgressEvent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => item && typeof item === "object" ? item as Record<string, unknown> : null)
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => ({
+      title: String(item.title ?? "执行步骤"),
+      message: String(item.message ?? ""),
+      stage: String(item.stage ?? "step"),
+      createdAt: String(item.createdAt ?? item.created_at ?? ""),
+      toolName: item.toolName ? String(item.toolName) : undefined,
+      status: item.status ? String(item.status) : undefined,
+    }));
+}
+
+function ProgressTimeline({ events }: { events: ProgressEvent[] }) {
+  if (!events.length) return null;
+  return (
+    <div className="mt-2 rounded-[8px] border border-[#e8edf5] bg-white px-3 py-3">
+      <div className="mb-2 text-xs font-medium text-[#2f80ed]">执行过程</div>
+      <div className="space-y-2">
+        {events.map((event, eventIdx) => {
+          const statusLabel = progressStatusLabel(event.status);
+          return (
+            <div key={`${event.stage}-${eventIdx}`} className="flex gap-2 text-xs leading-relaxed text-[#526075]">
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#b8c2d2]" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-[#263445]">{event.title}</span>
+                  {statusLabel && (
+                    <span className="rounded-[3px] bg-[#eef3f8] px-1.5 py-0.5 text-[10px] text-[#607083]">
+                      {statusLabel}
+                    </span>
+                  )}
+                </div>
+                <div>{event.message}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function CustomizationRecordDetail({
   recordId,
   onClose,
@@ -31,7 +94,6 @@ export function CustomizationRecordDetail({
   const [detail, setDetail] = useState<RecordDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [expandedDiffs, setExpandedDiffs] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -49,7 +111,12 @@ export function CustomizationRecordDetail({
           ...(res.record as RecordDetail),
           changeSummary: res.record.changeSummary ?? "",
           skillMd: res.record.skillMd ?? "",
-          chatTimeline: Array.isArray(res.record.chatTimeline) ? res.record.chatTimeline : []
+          chatTimeline: Array.isArray(res.record.chatTimeline)
+            ? res.record.chatTimeline.map((entry) => ({
+                ...entry,
+                progressEvents: normalizeProgressEvents(entry.progressEvents),
+              }))
+            : []
         });
       })
       .catch((err) => {
@@ -61,10 +128,6 @@ export function CustomizationRecordDetail({
     return () => { cancelled = true; };
   }, [recordId]);
 
-  function toggleDiff(idx: number) {
-    setExpandedDiffs((prev) => ({ ...prev, [idx]: !prev[idx] }));
-  }
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
       <div className="flex h-[92vh] w-full max-w-[1180px] flex-col rounded-lg bg-white shadow-[0_18px_48px_rgba(15,23,42,0.28)]">
@@ -74,6 +137,14 @@ export function CustomizationRecordDetail({
             {detail && <div className="text-xs text-[#8b95a7]">{detail.schemaName} / {detail.sessionId}</div>}
           </div>
           <div className="flex items-center gap-2">
+            {detail && onContinue && (
+              <button
+                className="inline-flex h-7 items-center rounded-[3px] border border-[#2f80ed] bg-white px-3 text-xs font-medium text-[#2f80ed] hover:bg-[#edf3ff]"
+                onClick={() => onContinue(detail.schemaName, detail.sessionId)}
+              >
+                继续对话
+              </button>
+            )}
             <button className="text-xl leading-none text-[#9aa4b5] hover:text-[#526075]" onClick={onClose}>×</button>
           </div>
         </div>
@@ -98,6 +169,7 @@ export function CustomizationRecordDetail({
                 <div className="mx-auto max-w-[920px] space-y-5">
                   {(detail.chatTimeline ?? []).map((entry, idx) => {
                     const isUser = entry.role === "user";
+                    const progressEvents = normalizeProgressEvents(entry.progressEvents);
                     return (
                       <div key={idx} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
                         {!isUser && (
@@ -110,22 +182,8 @@ export function CustomizationRecordDetail({
                           }`}>
                             {entry.content}
                           </div>
-                        {entry.dslDiff != null && (
-                          <div className="mt-2">
-                            <button
-                              className="text-xs text-[#2f80ed] hover:underline"
-                              onClick={() => toggleDiff(idx)}
-                            >
-                              {expandedDiffs[idx] ? "收起 DSL 变更" : "展开 DSL 变更"}
-                            </button>
-                            {expandedDiffs[idx] && (
-                              <pre className="mt-2 max-h-60 overflow-auto rounded bg-[#f7f8fa] p-3 text-xs text-[#526075]">
-                                {typeof entry.dslDiff === "string" ? entry.dslDiff : JSON.stringify(entry.dslDiff, null, 2)}
-                              </pre>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                          {!isUser && <ProgressTimeline events={progressEvents} />}
+                        </div>
                         {isUser && (
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#2f80ed] text-xs font-semibold text-white">我</div>
                         )}
