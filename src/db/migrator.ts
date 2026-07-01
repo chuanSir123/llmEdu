@@ -942,8 +942,42 @@ export async function migrate() {
   await exec(`ALTER TABLE IF EXISTS admin.tenant_agent_config ADD COLUMN IF NOT EXISTS publish_policy jsonb NOT NULL DEFAULT '{}'::jsonb`);
   await exec(`ALTER TABLE IF EXISTS admin.tenant_agent_config ADD COLUMN IF NOT EXISTS data_policy jsonb NOT NULL DEFAULT '{}'::jsonb`);
   await exec(`UPDATE admin.tenant_agent_config SET agent_customization_enabled = false WHERE schema_name LIKE '%\\_test' ESCAPE '\\'`);
+  await ensureTextIdSequences();
   await backfillSubscribedFeatureAccess();
   await syncReportCompanionDsl();
+}
+
+async function ensureTextIdSequences() {
+  const { rows } = await pool.query<{ table_schema: string; table_name: string }>(`
+    select c.table_schema, c.table_name
+    from information_schema.columns c
+    join information_schema.table_constraints tc
+      on tc.table_schema = c.table_schema
+     and tc.table_name = c.table_name
+     and tc.constraint_type = 'PRIMARY KEY'
+    join information_schema.key_column_usage kcu
+      on kcu.constraint_schema = tc.constraint_schema
+     and kcu.constraint_name = tc.constraint_name
+     and kcu.table_schema = c.table_schema
+     and kcu.table_name = c.table_name
+     and kcu.column_name = c.column_name
+    where c.column_name = 'id'
+      and c.data_type = 'text'
+      and c.table_schema not in ('pg_catalog', 'information_schema')
+  `);
+  for (const row of rows) {
+    const schemaName = row.table_schema.replace(/"/g, '""');
+    const tableName = row.table_name.replace(/"/g, '""');
+    const sequenceName = `${schemaName}_${tableName}_id_seq`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
+    await pool.query(`CREATE SEQUENCE IF NOT EXISTS "${schemaName}"."${sequenceName}" START WITH 1 INCREMENT BY 1`);
+    await pool.query(
+      `ALTER TABLE "${schemaName}"."${tableName}" ALTER COLUMN id SET DEFAULT nextval('"${schemaName}"."${sequenceName}"'::regclass)::text`
+    );
+    await pool.query(`ALTER SEQUENCE "${schemaName}"."${sequenceName}" OWNED BY "${schemaName}"."${tableName}".id`);
+    await pool.query(
+      `SELECT setval('\"${schemaName}\".\"${sequenceName}\"'::regclass, GREATEST(COALESCE((SELECT max(id::bigint) FROM \"${schemaName}\".\"${tableName}\" WHERE id ~ '^[0-9]+$'), 0), 1), EXISTS (SELECT 1 FROM \"${schemaName}\".\"${tableName}\" WHERE id ~ '^[0-9]+$'))`
+    );
+  }
 }
 
 function asObject(value: unknown): Record<string, unknown> {
