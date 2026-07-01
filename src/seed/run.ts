@@ -1,4 +1,5 @@
 import { pool, withClient } from "../db/pool.js";
+import { seedSystemDictionaries } from "../dictionary.service.js";
 import { migrate } from "../db/migrator.js";
 import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, llmSeed, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap, standardImportConfigs } from "./data.js";
 import { env } from "../config/env.js";
@@ -761,6 +762,7 @@ async function seedTenantData() {
 
 export async function seed() {
   await migrate();
+  await seedSystemDictionaries();
   await seedAdmin();
   await seedTenantData();
   try {

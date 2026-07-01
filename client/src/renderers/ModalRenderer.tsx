@@ -1,5 +1,6 @@
 import type { FieldDsl, PageDsl } from "../dsl/types";
 import { token } from "../styles/designTokens";
+import { enumDisplayFor } from "../dsl/enumLabels";
 import { BusinessRuleEditor } from "./BusinessRuleEditor";
 import { GenericFormRenderer } from "./GenericFormRenderer";
 
@@ -50,7 +51,7 @@ export function ModalRenderer({
       ? value[field.displayKey]
       : value[field.key];
     if (raw === null || raw === undefined || raw === "") return "-";
-    return presentation?.valueLabels?.[field.key]?.[String(raw)] ?? String(raw);
+    return enumDisplayFor(field.key, raw, presentation?.valueLabels);
   };
   const readonlyFieldClass = (field: FieldDsl) =>
     field.type === "textarea"

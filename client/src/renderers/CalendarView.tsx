@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ActionDsl, PageDsl } from "../dsl/types";
+import { enumDisplayFor } from "../dsl/enumLabels";
 import { ActionRenderer } from "./ActionRenderer";
 
 type CalendarRow = Record<string, unknown>;
@@ -37,7 +38,7 @@ function timeToMinutes(value: unknown) {
 
 function labelFor(value: unknown, labels?: Record<string, Record<string, string>>) {
   const text = String(value ?? "");
-  return labels?.course_status?.[text] ?? text;
+  return enumDisplayFor("course_status", text, labels);
 }
 
 export function CalendarView({

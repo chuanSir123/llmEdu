@@ -7,6 +7,7 @@ export type OpType =
   | "create_approval_flow"
   | "create_print_template"
   | "create_business_rule"
+  | "create_dictionary_item"
   | "create_business_event_listener"
   | "add_column"
   | "remove_column"
@@ -40,11 +41,12 @@ export type TargetType =
   | "approval_flow"
   | "print_template"
   | "business_rule"
+  | "dictionary"
   | "feature_registry";
 
 export const VALID_OPS: ReadonlySet<string> = new Set<OpType>([
   "create_table", "add_field", "create_import", "create_report", "create_feature",
-  "create_approval_flow", "create_print_template", "create_business_rule", "create_business_event_listener",
+  "create_approval_flow", "create_print_template", "create_business_rule", "create_dictionary_item", "create_business_event_listener",
   "add_column", "remove_column", "reorder_columns", "change_column",
   "add_filter", "remove_filter", "add_toolbar", "add_row_action", "add_modal_field", "remove_modal_field",
   "add_select_field", "remove_select_field", "add_allowed_field", "add_join", "add_where", "add_sort",
@@ -53,7 +55,7 @@ export const VALID_OPS: ReadonlySet<string> = new Set<OpType>([
 
 export const VALID_TARGET_TYPES: ReadonlySet<string> = new Set<TargetType>([
   "page_dsl", "api_dsl", "action_dsl", "skill_registry", "db_schema", "import_dsl", "report_dsl", "feature_registry",
-  "permission_policy", "approval_flow", "print_template", "business_rule",
+  "permission_policy", "approval_flow", "print_template", "business_rule", "dictionary",
 ]);
 
 export const OPS_REQUIRE_FIELD_DEF: ReadonlySet<string> = new Set([

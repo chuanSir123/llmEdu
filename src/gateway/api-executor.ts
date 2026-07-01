@@ -10,6 +10,7 @@ import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
+import { deleteTenantDictionaryItem, listDictionaryOptions, queryDictionaryItems, saveTenantDictionaryItem } from "../dictionary.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -376,6 +377,10 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     return executeCommandDsl(schemaName, { operation: "command", ...businessCommand } as never, { ...params, __userId: user?.userId });
   }
   if (apiCode === "permission_config.meta") return listPermissionConfig(schemaName, String(params.roleId ?? params.id ?? ""));
+  if (apiCode === "dictionary.options") return listDictionaryOptions(schemaName, params.dictCode ?? asObject(params.filters).dictCode ?? asObject(params.filters).dict_code);
+  if (apiCode === "dictionary_item.query") return queryDictionaryItems(schemaName, params);
+  if (apiCode === "dictionary_item.create" || apiCode === "dictionary_item.update") return saveTenantDictionaryItem(schemaName, params);
+  if (apiCode === "dictionary_item.delete") return deleteTenantDictionaryItem(schemaName, params.id);
   if (apiCode === "approval_flow_list.query") return queryApprovalFlows(schemaName, params);
   if (apiCode === "approval_flow_list.create" || apiCode === "approval_flow_list.update") return saveApprovalFlow(schemaName, params);
   if (apiCode === "approval_flow_list.delete") {

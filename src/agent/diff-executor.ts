@@ -695,6 +695,16 @@ function applyOp(dsl: unknown, diff: DslDiff): unknown {
       break;
     }
 
+
+    case "create_dictionary_item": {
+      result = {
+        resourceType: "dictionary",
+        dictCode: diff.targetCode,
+        ...(diff.resourceDef ?? {}),
+      };
+      break;
+    }
+
     case "create_print_template": {
       result = {
         resourceType: "print_template",
