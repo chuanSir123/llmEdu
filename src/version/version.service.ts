@@ -261,6 +261,27 @@ async function upsertFeatureResource(
   }
 }
 
+
+async function upsertDictionaryItem(client: import("pg").PoolClient, schemaName: string | undefined, resource: Record<string, unknown>) {
+  if (!schemaName) throw Object.assign(new Error("dictionary 变更必须有租户 schema"), { statusCode: 400 });
+  const dictCode = String(resource.dictCode ?? resource.dict_code ?? "").trim();
+  const itemValue = String(resource.itemValue ?? resource.item_value ?? "").trim();
+  const itemLabel = String(resource.itemLabel ?? resource.item_label ?? "").trim();
+  if (!/^[a-z][a-z0-9_]{1,80}$/.test(dictCode)) throw Object.assign(new Error(`数据字典编码不合法: ${dictCode}`), { statusCode: 400 });
+  if (!/^[A-Z][A-Z0-9_]{1,80}$/.test(itemValue)) throw Object.assign(new Error(`字典项值不合法: ${itemValue}`), { statusCode: 400 });
+  if (!itemLabel) throw Object.assign(new Error("字典项中文名不能为空"), { statusCode: 400 });
+  const { rows: systemRows } = await client.query(`select id from admin.dictionary_item where dict_code = $1 and item_value = $2 and is_system = true and deleted = false limit 1`, [dictCode, itemValue]);
+  if (systemRows[0]) throw Object.assign(new Error(`系统字典项不可覆盖: ${dictCode}.${itemValue}`), { statusCode: 409 });
+  await client.query(
+    `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
+     values($1,$2,$3,$4,'tenant',$5,false,false,$6,$7,$8,false)
+     on conflict (dict_code, schema_name, item_value) do update
+       set item_label = excluded.item_label, sort_no = excluded.sort_no, status = excluded.status, metadata_json = excluded.metadata_json, deleted = false, updated_at = now()
+       where admin.dictionary_item.locked = false`,
+    [randomUUID(), dictCode, itemValue, itemLabel, schemaName, Number(resource.sortNo ?? resource.sort_no ?? 100), String(resource.status ?? "ACTIVE"), JSON.stringify(resource.metadata ?? resource.metadata_json ?? {})]
+  );
+}
+
 async function upsertBusinessRule(
   client: import("pg").PoolClient,
   schemaScope: string,
@@ -409,6 +430,10 @@ async function applySnapshotItem(
   }
   if (item.targetType === "business_rule") {
     await upsertBusinessRule(client, schemaScope, schemaName, item.targetCode, item.snapshot?.resource_json as Record<string, unknown> ?? {});
+    return;
+  }
+  if (item.targetType === "dictionary") {
+    await upsertDictionaryItem(client, schemaName ?? undefined, item.snapshot?.resource_json as Record<string, unknown> ?? {});
     return;
   }
   if (item.targetType === "approval_flow") {

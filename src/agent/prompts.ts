@@ -58,12 +58,12 @@ export const PLAN_CHANGES_TOOL = {
           items: {
             type: "object",
             properties: {
-              targetType: { type: "string", enum: ["page_dsl", "api_dsl", "action_dsl", "skill_registry", "db_schema", "import_dsl", "report_dsl", "permission_policy", "approval_flow", "print_template", "business_rule", "feature_registry"] },
+              targetType: { type: "string", enum: ["page_dsl", "api_dsl", "action_dsl", "skill_registry", "db_schema", "import_dsl", "report_dsl", "permission_policy", "approval_flow", "print_template", "business_rule", "dictionary", "feature_registry"] },
               targetCode: { type: "string", description: "目标编码，如 student_list" },
               op: {
                 type: "string",
                 enum: [
-                  "create_table", "add_field", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule", "create_business_event_listener",
+                  "create_table", "add_field", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule", "create_dictionary_item", "create_business_event_listener",
                   "add_column", "remove_column", "reorder_columns", "change_column",
                   "add_filter", "remove_filter", "add_toolbar", "add_row_action", "add_modal_field", "remove_modal_field",
                   "add_select_field", "remove_select_field", "add_allowed_field", "add_join", "add_where", "add_sort",
@@ -110,6 +110,7 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
 | create_approval_flow | approval_flow | 新增审批流 | resourceDef: {flowCode,flowName,moduleCode,businessType,trigger?,steps:[{stepCode,stepName,assigneeRole}],status?} |
 | create_print_template | print_template | 新增打印模板 | resourceDef: {templateCode,templateName,pageCode,moduleCode,paperSize?,orientation?,fields?,layout?} |
 | create_business_rule | business_rule | 新增/调整教务业务规则 | resourceDef 必须使用下方“教务规则结构”，不要只写自然语言 |
+| create_dictionary_item | dictionary | 新增租户数据字典项 | resourceDef: {dictCode,itemValue,itemLabel,metadata?:{businessState?,transitionPolicy?,allowedFrom?}} |
 | create_business_event_listener | business_rule | 新增业务事件触发/监听规则 | resourceDef: {ruleCode,ruleName,category:"workflow",businessType,triggerEvent,trigger:{event},listeners:[{type,target?,payloadMapping?}],listenerMode?,failurePolicy?} |
 | modify_permission | permission_policy | 调整角色权限策略 | resourceDef: {roleCode,pageCode,pagePermission,buttonPermission?,dataPermission?,fieldPermission?} |
 | add_column | page_dsl | 在表格中添加列 | {key, label, type, width?, sortable?, badge?, align?} |
@@ -173,7 +174,7 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
    - 打印模板使用 print_template(create_print_template)，系统会自动或同时添加页面打印按钮；模板字段来自当前页面/业务对象，不要编造表字段。
    - 数据权限使用 permission_policy(modify_permission)，dataPermission 在 self_only/own_courses/own_students/own_organization/organization_or_sub/all 中选择，fieldPermission 形如 {"phone":"hidden"}。
    - 业务校验规则使用 business_rule(create_business_rule)，validations 只描述规则，不要直接修改资金/课时余额字段。
-   - 业务触发/监听使用 business_rule(create_business_event_listener)，必须配置 triggerEvent/trigger.event 和 listeners；监听器只编排通知、待办、写入自定义表或调用既有安全业务动作，不要直接改财务/课时派生余额。
+   - 业务触发/监听使用 business_rule(create_business_event_listener)，必须配置 triggerEvent/trigger.event 和 actions；监听器只编排通知、待办、写入自定义表或调用既有安全业务动作，不要直接改财务/课时派生余额。新增业务枚举用 dictionary(create_dictionary_item)，系统字典项不可覆盖，页面字段可通过 dictCode/optionSource.dictionary 作为筛选和回显来源。
    - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType。category 只能是 funds_allocation/promotion_allocation/performance_allocation/approval_trigger/validation/workflow/refund/charge/attendance。
    - businessType 只能是 contract/funds/course/course_cancel/attendance/charge/charge_reverse/refund/contract_refund/product_price/performance。
    - 排课冲突规则必须同时包含老师冲突和学员冲突：validations=[
@@ -201,7 +202,7 @@ export const REPAIR_PROMPT_TEMPLATE = `上一次输出校验失败：
 {errors}
 
 请重新生成变更计划，确保：
-1. 每个 diff 的 targetType 是 page_dsl/api_dsl/action_dsl/skill_registry/db_schema/import_dsl/report_dsl/permission_policy/approval_flow/print_template/business_rule/feature_registry 之一
+1. 每个 diff 的 targetType 是 page_dsl/api_dsl/action_dsl/skill_registry/db_schema/import_dsl/report_dsl/permission_policy/approval_flow/print_template/business_rule/dictionary/feature_registry 之一
 2. 每个 diff 的 op 是有效的操作类型
 3. add_column/add_filter/add_modal_field 等操作必须包含 fieldDef
 4. add_select_field 必须包含 fieldDef，例如：{"field": "address"}

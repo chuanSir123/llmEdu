@@ -4,6 +4,7 @@ import type { FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
 import { enumDisplayFor } from "../dsl/enumLabels";
+import { effectiveOptionSource } from "../dsl/dictionarySource";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
 import { BusinessRuleEditor } from "./BusinessRuleEditor";
 import { JsonTextarea } from "./JsonTextarea";
@@ -53,14 +54,14 @@ export function GenericFormRenderer({
 
   useEffect(() => {
     let cancelled = false;
-    const sourcedFields = fields.filter((field) => field.optionSource);
+    const sourcedFields = fields.filter((field) => effectiveOptionSource(field));
     if (!sourcedFields.length) {
       setRemoteOptions({});
       return;
     }
     Promise.all(
       sourcedFields.map(async (field) => {
-        const source = field.optionSource!;
+        const source = effectiveOptionSource(field)!;
         const result = await GatewayClient.executeApi({
           scope,
           schemaName,
@@ -90,7 +91,7 @@ export function GenericFormRenderer({
     return () => {
       cancelled = true;
     };
-  }, [scope, schemaName, JSON.stringify(fields.map((field) => field.optionSource ?? null))]);
+  }, [scope, schemaName, JSON.stringify(fields.map((field) => effectiveOptionSource(field) ?? null))]);
 
   const applySelectValue = (field: FieldDsl, selectedValue: string | string[]) => {
     const next: Record<string, unknown> = { ...value, [field.key]: selectedValue };
@@ -117,7 +118,7 @@ export function GenericFormRenderer({
   };
 
   const treeOptions = (field: FieldDsl, options?: Record<string, string>) => {
-    const list = field.optionSource ? remoteOptions[field.key] ?? [] : Object.entries(options ?? {}).map(([value, label]) => ({ value, label, row: {} }));
+    const list = effectiveOptionSource(field) ? remoteOptions[field.key] ?? [] : Object.entries(options ?? {}).map(([value, label]) => ({ value, label, row: {} }));
     if (!field.type?.startsWith("organizationTree")) return list.map((option) => ({ ...option, depth: 0 }));
     const byParent = new Map<string, typeof list>();
     for (const option of list) {
@@ -160,7 +161,7 @@ export function GenericFormRenderer({
   };
 
   function renderSearchableSelect(field: FieldDsl, options?: Record<string, string>) {
-    const isMulti = (field.type === "multiSelect" && field.optionSource) || field.type === "organizationTreeMultiSelect";
+    const isMulti = (field.type === "multiSelect" && effectiveOptionSource(field)) || field.type === "organizationTreeMultiSelect";
     const opts = fieldOptions(field, options);
     const selLabel = selectedLabel(field, options);
     const isOpen = openField === field.key;
@@ -319,7 +320,7 @@ export function GenericFormRenderer({
                 value={value[field.key]}
                 onChange={(items) => onChange({ ...value, [field.key]: items, items })}
               />
-            ) : field.optionSource || options ? (
+            ) : effectiveOptionSource(field) || options ? (
               renderSearchableSelect(field, options)
             ) : (
               <input

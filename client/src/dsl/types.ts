@@ -13,8 +13,11 @@ export type FieldDsl = {
   span?: 1 | 2 | 3 | "full";
   rows?: number;
   sortOrder?: number;
+  dictCode?: string;
   optionSource?: {
-    pageCode: string;
+    type?: "page" | "dictionary";
+    dictCode?: string;
+    pageCode?: string;
     apiCode: string;
     valueField?: string;
     labelField?: string;

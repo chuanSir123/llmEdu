@@ -1,5 +1,7 @@
 import { executeCommandDsl } from "./command-engine.js";
 import { pool } from "../db/pool.js";
+import { withRedisLock } from "../redis-lock.service.js";
+import { randomUUID } from "node:crypto";
 
 type Row = Record<string, unknown>;
 
@@ -27,6 +29,7 @@ export const KNOWN_BUSINESS_COMMANDS = new Set([
   ...Object.keys(BUSINESS_COMMAND_EVENT_MAP),
   "ledger.denyMutation",
   "contract.refund",
+  "contract.transition_status",
   "contract.delete",
   "course.delete",
   "leave.create",
@@ -119,6 +122,12 @@ function resolveTemplate(value: unknown, context: EventRuleContext): unknown {
   if (value.startsWith("payload.")) return readPath(source, value);
   if (value.startsWith("event.")) return readPath(source, value);
   return value;
+}
+
+
+function resolveTemplateString(value: unknown, context: EventRuleContext) {
+  const resolved = resolveTemplate(value, context);
+  return String(resolved ?? value ?? "").replace(/\{([^}]+)\}/g, (_, path) => String(readPath({ payload: context.payload, event: { type: context.event, businessId: context.businessId, ...context.payload } }, path) ?? ""));
 }
 
 function resolveParams(action: Row, context: EventRuleContext) {
@@ -216,9 +225,30 @@ export async function processBusinessEventRules(
         },
       };
       const ruleCodeForCommand = str(action.ruleCode ?? action.businessRuleCode, ruleCode);
-      await executeCommandDsl(schemaName, { operation: "command", command, ruleCode: ruleCodeForCommand } as never, params);
+      const options = asObject(action.options);
+      const idempotencyKey = options.idempotencyKey ? resolveTemplateString(options.idempotencyKey, context) : `${context.event}:${ruleCode}:${command}:${str(context.businessId, "global")}`;
+      const eventKey = idempotencyKey.slice(0, 240);
+      const runAction = async () => {
+        const inserted = await pool.query(
+          `insert into admin.business_event_execution(id, schema_name, event_key, listener_code, status, payload_json)
+           values($5,$1,$2,$3,'running',$4)
+           on conflict (schema_name, event_key, listener_code) do nothing returning id`,
+          [schemaName, eventKey, ruleCode, JSON.stringify(context.payload), randomUUID()]
+        );
+        if (!inserted.rows[0]) return "idempotent_skipped";
+        try {
+          await executeCommandDsl(schemaName, { operation: "command", command, ruleCode: ruleCodeForCommand } as never, params);
+          await pool.query(`update admin.business_event_execution set status = 'success', updated_at = now() where id = $1`, [inserted.rows[0].id]);
+          return "executed";
+        } catch (error) {
+          await pool.query(`update admin.business_event_execution set status = 'failed', error = $2, updated_at = now() where id = $1`, [inserted.rows[0].id, error instanceof Error ? error.message : String(error)]);
+          throw error;
+        }
+      };
+      const status = await withRedisLock(`event:${schemaName}:${eventKey}:${ruleCode}`, runAction, 20_000);
       const nextEvent = BUSINESS_COMMAND_EVENT_MAP[command];
-      executedActions.push({ ruleCode, command, status: "executed", nextEvent });
+      executedActions.push({ ruleCode, command, status, nextEvent });
+      if (status !== "executed") continue;
       if (nextEvent) {
         if (context.visitedEvents.has(nextEvent)) {
           executedActions.push({ ruleCode, command, status: "cycle_guard_skipped", nextEvent });
