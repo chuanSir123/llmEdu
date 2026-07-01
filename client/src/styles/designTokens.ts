@@ -5,8 +5,8 @@ export const token = {
   page: "h-full overflow-hidden bg-[#eef0f8]",
   filterBar: "mb-3 flex flex-wrap items-end gap-3 bg-white px-4 py-3 shadow-[0_1px_4px_rgba(24,36,56,0.04)]",
   tableWrap: "h-full overflow-auto bg-white shadow-[0_1px_4px_rgba(24,36,56,0.04)]",
-  th: "border-b border-[#edf0f5] bg-[#f7f8fa] px-3 py-3 text-left text-xs font-medium text-[#7a8494]",
-  td: "border-b border-[#edf0f5] px-3 py-3 text-sm text-[#3f4b5f]",
+  th: "border-b border-[#edf0f5] bg-[#f7f8fa] px-3 py-2 text-left text-xs font-medium text-[#7a8494]",
+  td: "border-b border-[#edf0f5] px-3 py-2 text-[13px] leading-5 text-[#3f4b5f]",
   input:
     "h-8 min-w-[150px] border border-[#dde3ee] bg-white px-2.5 text-sm outline-none transition placeholder:text-[#a7b0bf] focus:border-[#2f80ed]",
   button:
