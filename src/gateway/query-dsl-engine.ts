@@ -3,6 +3,7 @@ import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
 import { getOrganizationScope } from "../permission/permission.service.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
+import { normalizeDictionaryInputValues } from "../dictionary.service.js";
 
 const FIELD = /^[a-z][a-z0-9_]{0,62}$/;
 
@@ -527,7 +528,8 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
   }
 
   const allowed = new Set(dsl.allowedFields ?? []);
-  const input = (params.data ?? {}) as Record<string, unknown>;
+  const rawInput = (params.data ?? {}) as Record<string, unknown>;
+  const input = await normalizeDictionaryInputValues(effectiveSchema, rawInput, dsl.allowedFields ?? []);
   const hasExtJson = tableColumns.has("ext_json");
   const fields = Object.keys(input).filter((key) => allowed.has(key) && FIELD.test(key) && tableColumns.has(key));
   const extFields = hasExtJson

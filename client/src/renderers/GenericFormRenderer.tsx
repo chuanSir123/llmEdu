@@ -3,6 +3,8 @@ import { GatewayClient } from "../api/GatewayClient";
 import type { FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
+import { enumDisplayFor } from "../dsl/enumLabels";
+import { effectiveOptionSource } from "../dsl/dictionarySource";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
 import { BusinessRuleEditor } from "./BusinessRuleEditor";
 import { JsonTextarea } from "./JsonTextarea";
@@ -52,14 +54,14 @@ export function GenericFormRenderer({
 
   useEffect(() => {
     let cancelled = false;
-    const sourcedFields = fields.filter((field) => field.optionSource);
+    const sourcedFields = fields.filter((field) => effectiveOptionSource(field));
     if (!sourcedFields.length) {
       setRemoteOptions({});
       return;
     }
     Promise.all(
       sourcedFields.map(async (field) => {
-        const source = field.optionSource!;
+        const source = effectiveOptionSource(field)!;
         const result = await GatewayClient.executeApi({
           scope,
           schemaName,
@@ -89,7 +91,7 @@ export function GenericFormRenderer({
     return () => {
       cancelled = true;
     };
-  }, [scope, schemaName, JSON.stringify(fields.map((field) => field.optionSource ?? null))]);
+  }, [scope, schemaName, JSON.stringify(fields.map((field) => effectiveOptionSource(field) ?? null))]);
 
   const applySelectValue = (field: FieldDsl, selectedValue: string | string[]) => {
     const next: Record<string, unknown> = { ...value, [field.key]: selectedValue };
@@ -116,7 +118,7 @@ export function GenericFormRenderer({
   };
 
   const treeOptions = (field: FieldDsl, options?: Record<string, string>) => {
-    const list = field.optionSource ? remoteOptions[field.key] ?? [] : Object.entries(options ?? {}).map(([value, label]) => ({ value, label, row: {} }));
+    const list = effectiveOptionSource(field) ? remoteOptions[field.key] ?? [] : Object.entries(options ?? {}).map(([value, label]) => ({ value, label, row: {} }));
     if (!field.type?.startsWith("organizationTree")) return list.map((option) => ({ ...option, depth: 0 }));
     const byParent = new Map<string, typeof list>();
     for (const option of list) {
@@ -144,22 +146,27 @@ export function GenericFormRenderer({
     return query ? list.filter((option) => option.label.toLowerCase().includes(query) || option.value.toLowerCase().includes(query)) : list;
   };
 
+  const optionMatchesRaw = (option: { value: string; row: Record<string, unknown> }, raw: unknown) => {
+    const text = String(raw ?? "");
+    return option.value === text || String(option.row.itemValue ?? option.row.item_value ?? "") === text;
+  };
+
   const selectedLabel = (field: FieldDsl, options?: Record<string, string>) => {
     const raw = value[field.key];
     const selectedValues = normalizeSelectedValues(raw);
     if (field.type === "multiSelect" || field.type === "organizationTreeMultiSelect" || Array.isArray(raw)) {
       const allOptions = treeOptions(field, options);
       const labels = selectedValues
-        .map((item) => allOptions.find((option) => option.value === String(item))?.label ?? String(item))
+        .map((item) => allOptions.find((option) => optionMatchesRaw(option, item))?.label ?? String(item))
         .filter(Boolean);
       return labels.length ? labels.join("，") : "请选择";
     }
     if (!raw) return "请选择";
-    return fieldOptions(field, options).find((option) => option.value === String(raw))?.label ?? String(raw);
+    return fieldOptions(field, options).find((option) => optionMatchesRaw(option, raw))?.label ?? String(raw);
   };
 
   function renderSearchableSelect(field: FieldDsl, options?: Record<string, string>) {
-    const isMulti = (field.type === "multiSelect" && field.optionSource) || field.type === "organizationTreeMultiSelect";
+    const isMulti = (field.type === "multiSelect" && effectiveOptionSource(field)) || field.type === "organizationTreeMultiSelect";
     const opts = fieldOptions(field, options);
     const selLabel = selectedLabel(field, options);
     const isOpen = openField === field.key;
@@ -192,16 +199,16 @@ export function GenericFormRenderer({
                   请选择
                 </button>
               )}
-              {opts.map(({ value: optionValue, label: optionLabel, depth }) => {
+              {opts.map(({ value: optionValue, label: optionLabel, depth, row }) => {
                 if (isMulti) {
                   const selected = normalizeSelectedValues(value[field.key]);
                   return (
                     <label key={optionValue} className="flex cursor-pointer items-center gap-2 py-2 pr-3 text-sm hover:bg-[#f2f7ff]" style={{ paddingLeft: 12 + (depth ?? 0) * 16 }}>
                       <input
                         type="checkbox"
-                        checked={selected.includes(optionValue)}
+                        checked={selected.some((item) => optionMatchesRaw({ value: optionValue, row }, item))}
                         onChange={(event) => {
-                          const next = event.target.checked ? [...selected, optionValue] : selected.filter((item) => item !== optionValue);
+                          const next = event.target.checked ? [...selected.filter((item) => !optionMatchesRaw({ value: optionValue, row }, item)), optionValue] : selected.filter((item) => !optionMatchesRaw({ value: optionValue, row }, item));
                           applySelectValue(field, next);
                         }}
                       />
@@ -209,7 +216,7 @@ export function GenericFormRenderer({
                     </label>
                   );
                 }
-                const isSelected = String(value[field.key]) === optionValue;
+                const isSelected = optionMatchesRaw({ value: optionValue, row }, value[field.key]);
                 return (
                   <button
                     type="button"
@@ -250,7 +257,7 @@ export function GenericFormRenderer({
               <textarea
                 className={`${token.input} min-h-[96px] w-full min-w-0 resize-y py-2 leading-5`}
                 rows={field.rows ?? 4}
-                value={String(value[field.key] ?? "")}
+                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : String(value[field.key] ?? "")}
                 placeholder={field.placeholder}
                 onChange={(event) => onChange({ ...value, [field.key]: event.target.value })}
               />
@@ -318,13 +325,13 @@ export function GenericFormRenderer({
                 value={value[field.key]}
                 onChange={(items) => onChange({ ...value, [field.key]: items, items })}
               />
-            ) : field.optionSource || options ? (
+            ) : effectiveOptionSource(field) || options ? (
               renderSearchableSelect(field, options)
             ) : (
               <input
                 className={`${token.input} w-full min-w-0 ${isReadonly ? "bg-[#f5f7fa] text-[#8b95a7] cursor-default" : ""}`}
                 type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "number" ? "number" : "text"}
-                value={String(value[field.key] ?? "")}
+                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : String(value[field.key] ?? "")}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}
                 onChange={(event) => onChange({ ...value, [field.key]: event.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value })}

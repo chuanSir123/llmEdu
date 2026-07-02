@@ -14,7 +14,7 @@ type CommandDsl = {
     | "student.assignManager" | "product.grant.save" | "product.promotion.save"
     | "approval.submit" | "approval.approve" | "approval.reject" | "approval.cancel"
     | "role.permission.save" | "user.create" | "user.update" | "user.softDelete" | "user.resetPassword"
-    | "audit.list" | "report.student" | "report.finance" | "report.course";
+    | "contract.transition_status" | "audit.list" | "report.student" | "report.finance" | "report.course";
   ruleCode: string;
 };
 
@@ -88,7 +88,7 @@ function shouldRedisLockCommand(command: string) {
     "chargeRecord.create", "chargeRecord.reverse", "attendance.checkIn", "attendance.cancel",
     "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent",
     "classStudent.transfer", "class.changeStatus", "moneyArrange.save", "promotionArrange.save", "performanceArrange.save",
-    "product.grant.save", "product.promotion.save"
+    "product.grant.save", "product.promotion.save", "contract.transition_status"
   ].includes(command);
 }
 
@@ -193,6 +193,39 @@ async function submitApprovalTask(client: pg.PoolClient, schemaName: string, par
   );
   await insertApprovalLog(client, schemaName, taskId, "SUBMIT", userId, str(input.comment, "发起审批"), firstStep, { status: "PENDING" });
   return { approvalRequired: true, taskId, status: "PENDING", flowCode: flow.flow_code, currentApproverUserId: approverId };
+}
+
+
+async function transitionContractStatus(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const contractId = str(input.contract_id ?? input.contractId ?? input.id ?? params.id);
+  const targetStatus = str(input.target_status ?? input.targetStatus ?? input.status);
+  if (!contractId) throw new Error("缺少合同 ID");
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,80}$/.test(targetStatus)) throw Object.assign(new Error(`目标合同状态不合法: ${targetStatus}`), { statusCode: 400 });
+  const allowedFrom = Array.isArray(input.allowedFrom ?? input.allowed_from) ? (input.allowedFrom ?? input.allowed_from) as unknown[] : [];
+  const fromPolicy = str(input.fromPolicy ?? input.from_policy, allowedFrom.length ? "any_of" : "any");
+  const values: unknown[] = [targetStatus, JSON.stringify({
+    reason: str(input.reason, "业务事件状态流转"),
+    operatorId: params.__userId ?? null,
+    eventRule: params.__eventRule ?? null,
+    changedAt: new Date().toISOString()
+  }), contractId];
+  let guard = "";
+  if (fromPolicy === "any_of" && allowedFrom.length) {
+    values.push(allowedFrom.map(String));
+    guard = ` and contract_status = any($${values.length}::text[])`;
+  }
+  const { rows } = await client.query(
+    `update ${table(schemaName, "contract")}
+       set contract_status = $1,
+           ext_json = coalesce(ext_json, '{}'::jsonb) || jsonb_build_object('lastStatusTransition', $2::jsonb),
+           updated_at = now()
+     where id = $3 and deleted = false${guard}
+     returning id, contract_status`,
+    values
+  );
+  if (!rows[0]) throw Object.assign(new Error("合同状态已变化或合同不存在，请刷新后重试"), { statusCode: 409 });
+  return { id: rows[0].id, contractStatus: rows[0].contract_status };
 }
 
 async function runCommandInTransaction(client: pg.PoolClient, schemaName: string, dsl: CommandDsl, params: Record<string, unknown>, simpleFn?: (c: pg.PoolClient, s: string, p: Record<string, unknown>) => Promise<unknown>) {
@@ -2072,6 +2105,7 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
     "user.update": updateUser,
     "user.softDelete": softDeleteUser,
     "user.resetPassword": resetPassword,
+    "contract.transition_status": transitionContractStatus,
     "audit.list": listAudit,
     "report.student": reportStudent,
     "report.finance": reportFinance,
@@ -2080,7 +2114,7 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
 
   const simpleFn = simpleCommands[dsl.command];
   if (simpleFn) {
-    if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "holiday.apply", "funds.delete", "contract.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
+    if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "holiday.apply", "funds.delete", "contract.delete", "refund.delete", "course.delete", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "contract.transition_status", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword", "contract.transition_status"].includes(dsl.command)) {
       return withCommandRedisLock(schemaName, dsl.command, params, () => withClient(async (client) => {
         await client.query("begin");
         try {
