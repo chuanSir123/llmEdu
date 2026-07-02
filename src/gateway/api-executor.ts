@@ -10,7 +10,7 @@ import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
-import { deleteTenantDictionaryItem, listDictionaryOptions, queryDictionaryItems, saveTenantDictionaryItem, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -327,6 +327,10 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
 }
 
 async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>, user?: SessionUser) {
+  params = await normalizeDictionaryInputValues(schemaName, params, Object.keys(params));
+  if (params.data && typeof params.data === "object" && !Array.isArray(params.data)) {
+    params = { ...params, data: await normalizeDictionaryInputValues(schemaName, asObject(params.data), Object.keys(asObject(params.data))) };
+  }
   if (scope === "admin") {
     if (apiCode === "wechat_third_platform_app.query") return queryWechatThirdPlatformApps(params);
     if (apiCode === "wechat_third_platform_app.create" || apiCode === "wechat_third_platform_app.update") return saveWechatThirdPlatformApp(params);

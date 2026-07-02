@@ -117,8 +117,8 @@ export function GenericPageRenderer({
         apiCode: "dictionary.options",
         params: { dictCode, page: 1, pageSize: 500 }
       });
-      const data = result.data as { rows: Array<{ value?: string; item_value?: string; label?: string; item_label?: string }> };
-      return [dictCode, Object.fromEntries((data.rows ?? []).map((row) => [String(row.value ?? row.item_value ?? ""), String(row.label ?? row.item_label ?? row.value ?? row.item_value ?? "")]))] as const;
+      const data = result.data as { rows: Array<{ value?: string; itemValue?: string; item_value?: string; label?: string; item_label?: string }> };
+      return [dictCode, Object.fromEntries((data.rows ?? []).map((row) => [String(row.itemValue ?? row.item_value ?? row.value ?? ""), String(row.label ?? row.item_label ?? row.itemValue ?? row.item_value ?? row.value ?? "")]))] as const;
     }))
       .then((entries) => { if (!cancelled) setDictionaryLabels(Object.fromEntries(entries)); })
       .catch(() => { if (!cancelled) setDictionaryLabels({}); });

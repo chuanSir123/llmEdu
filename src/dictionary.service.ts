@@ -78,6 +78,40 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   fulfillment_status: { PENDING: { label: "待履约" }, PROCESSING: { label: "处理中" }, SUCCESS: { label: "已完成" }, FAILED: { label: "履约失败" } }
 };
 
+const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
+  category: "business_rule_category",
+  businessType: "business_type",
+  business_type: "business_type"
+};
+
+export function dictionaryCodeForFieldName(fieldName: string) {
+  return DICTIONARY_FIELD_ALIASES[fieldName] ?? (SYSTEM_DICTIONARIES[fieldName] ? fieldName : undefined);
+}
+
+export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[]) {
+  const normalized = { ...input };
+  const candidates = fields
+    .map((field) => ({ field, dictCode: dictionaryCodeForFieldName(field), value: input[field] }))
+    .filter((item): item is { field: string; dictCode: string; value: unknown } => Boolean(item.dictCode) && typeof item.value === "string" && item.value.trim() !== "");
+  if (!candidates.length) return normalized;
+
+  const ids = [...new Set(candidates.map((item) => String(item.value)))];
+  const dictCodes = [...new Set(candidates.map((item) => item.dictCode))];
+  const { rows } = await pool.query(
+    `select id, dict_code, item_value
+       from admin.dictionary_item
+      where id = any($1::text[]) and dict_code = any($2::text[]) and deleted = false
+        and ((schema_scope = 'admin' and schema_name = '') or (schema_scope = 'tenant' and schema_name = $3))`,
+    [ids, dictCodes, schemaName]
+  );
+  const byIdAndCode = new Map(rows.map((row) => [`${row.dict_code}:${row.id}`, row.item_value]));
+  for (const item of candidates) {
+    const itemValue = byIdAndCode.get(`${item.dictCode}:${String(item.value)}`);
+    if (itemValue !== undefined) normalized[item.field] = itemValue;
+  }
+  return normalized;
+}
+
 function safeDictCode(value: unknown) {
   const text = String(value ?? "").trim();
   if (!/^[a-z][a-z0-9_]{1,80}$/.test(text)) throw Object.assign(new Error(`数据字典编码不合法: ${text}`), { statusCode: 400 });
@@ -126,7 +160,8 @@ export async function listDictionaryOptions(schemaName: string | undefined, dict
   );
   return { rows: rows.sort((a, b) => Number(a.sort_no ?? 0) - Number(b.sort_no ?? 0)).map((row) => ({
     ...row,
-    value: row.item_value,
+    value: row.id,
+    itemValue: row.item_value,
     label: row.item_label,
     metadata: row.metadata_json ?? {}
   })) };
