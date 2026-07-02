@@ -1083,7 +1083,7 @@ export function GenericPageRenderer({
             <button className="text-xs text-[#607083] hover:text-[#2f80ed]" onClick={() => setImportConfig(null)}>关闭</button>
           </div>
           <ImportHandler
-            dsl={dsl}
+            dsl={{ ...dsl, presentation: presentationWithDictionaries }}
             scope={scope}
             schemaName={schemaName}
             importConfig={importConfig}

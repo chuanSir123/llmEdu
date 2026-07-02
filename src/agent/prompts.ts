@@ -175,8 +175,7 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
    - 数据权限使用 permission_policy(modify_permission)，dataPermission 在 self_only/own_courses/own_students/own_organization/organization_or_sub/all 中选择，fieldPermission 形如 {"phone":"hidden"}。
    - 业务校验规则使用 business_rule(create_business_rule)，validations 只描述规则，不要直接修改资金/课时余额字段。
    - 业务触发/监听使用 business_rule(create_business_event_listener)，必须配置 triggerEvent/trigger.event 和 actions；监听器只编排通知、待办、写入自定义表或调用既有安全业务动作，不要直接改财务/课时派生余额。新增业务枚举用 dictionary(create_dictionary_item)，系统字典项不可覆盖，页面字段可通过 dictCode/optionSource.dictionary 作为筛选和回显来源。
-   - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType。category 只能是 funds_allocation/promotion_allocation/performance_allocation/approval_trigger/validation/workflow/refund/charge/attendance。
-   - businessType 只能是 contract/funds/course/course_cancel/attendance/charge/charge_reverse/refund/contract_refund/product_price/performance。
+   - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType。category 使用 business_rule_category 系统数据字典，businessType 使用 business_type 系统数据字典；如需新增分类/业务类型，先通过 dictionary(create_dictionary_item) 新增租户字典项，再在规则中引用。
    - 排课冲突规则必须同时包含老师冲突和学员冲突：validations=[
      {field:"end_time",operator:">",valueField:"start_time",message:"结束时间必须晚于开始时间"},
      {field:"teacher_id",operator:"no_time_overlap",valueField:"teacher_course_date,start_time,end_time",message:"同一老师同一天同一时间段不能重复排课"},

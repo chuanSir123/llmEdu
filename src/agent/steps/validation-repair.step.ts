@@ -11,6 +11,7 @@ import { validateEduDomainGuardrails } from "../validators/edu-domain.validator.
 import { executeDiffs } from "../diff-executor.js";
 import { validateApiDslAgainstSchema } from "../../db/dsl-validator.js";
 import { BUSINESS_COMMAND_EVENT_MAP, KNOWN_BUSINESS_COMMANDS } from "../../gateway/business-event.service.js";
+import { SYSTEM_DICTIONARIES } from "../../dictionary.service.js";
 
 const FIELD_RE = /^[a-z][a-z0-9_]{0,62}$/;
 const MAX_RETRIES = 3;
@@ -1070,8 +1071,8 @@ function buildRepairContext(
 }
 
 function validateBusinessRuleResource(errors: string[], targetCode: string, resource: Record<string, unknown>) {
-  const categories = new Set(["funds_allocation", "promotion_allocation", "performance_allocation", "approval_trigger", "validation", "workflow", "refund", "charge", "attendance"]);
-  const businessTypes = new Set(["contract", "funds", "course", "course_cancel", "attendance", "charge", "charge_reverse", "refund", "contract_refund", "product_price", "performance"]);
+  const categories = new Set(Object.keys(SYSTEM_DICTIONARIES.business_rule_category ?? {}));
+  const businessTypes = new Set(Object.keys(SYSTEM_DICTIONARIES.business_type ?? {}));
   const category = String(resource.category ?? "");
   const businessType = String(resource.businessType ?? resource.business_type ?? "");
   if (resource.ruleCode && String(resource.ruleCode) !== targetCode) errors.push(`business_rule ${targetCode} targetCode 必须与 ruleCode 一致`);

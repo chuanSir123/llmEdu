@@ -121,11 +121,17 @@ const extraDictionaryFieldKeys = [
   "organization_type", "channel_type", "trial_status", "conversion_status", "task_type", "task_status", "follow_result",
   "account_type", "leave_type", "holiday_type", "performance_type", "goods_status", "activity_type", "group_status",
   "member_status", "order_status", "payment_status", "fulfillment_status", "service_type", "binding_type", "authorized_status",
-  "publish_status", "subscribe_status", "send_status", "reward_status"
+  "publish_status", "subscribe_status", "send_status", "reward_status", "action_type", "api_type", "cost_type",
+  "pay_type", "receiver_scope", "resource_type", "organization_scope", "target_status", "business_rule_category", "business_type"
 ];
 const dictionaryFieldKeys = new Set([...Object.keys(valueLabels), ...extraDictionaryFieldKeys]);
+const dictionaryFieldAliases: Record<string, string> = {
+  category: "business_rule_category",
+  businessType: "business_type",
+  business_type: "business_type"
+};
 function dictCodeForField(field: { key: string }) {
-  return dictionaryFieldKeys.has(field.key) ? field.key : undefined;
+  return dictionaryFieldAliases[field.key] ?? (dictionaryFieldKeys.has(field.key) ? field.key : undefined);
 }
 
 

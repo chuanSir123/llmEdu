@@ -24,6 +24,16 @@ export const enumValueLabels: Record<string, Record<string, string>> = {
   task_type: { FOLLOWUP: "跟进", TRIAL_FOLLOWUP: "试听跟进" },
   task_status: { PENDING: "待处理", COMPLETED: "已完成", CANCELED: "已取消" },
   follow_result: { CONTACTED: "已联系", NO_ANSWER: "未接通", INTERESTED: "有意向", NOT_INTERESTED: "无意向" },
+  business_rule_category: { funds_allocation: "资金分配", promotion_allocation: "优惠分配", performance_allocation: "业绩分配", approval_trigger: "审批触发", validation: "校验规则", workflow: "业务流转", refund: "退费规则", charge: "扣费规则", attendance: "考勤规则" },
+  business_type: { contract: "合同签约", funds: "收款", course: "排课", course_cancel: "课程取消", attendance: "考勤", charge: "扣费", charge_reverse: "撤销扣费", refund: "退费", contract_refund: "合同退费", product_price: "产品价格", performance: "业绩" },
+  action_type: { open_page: "打开页面", execute_api: "执行接口", open_modal: "打开弹窗", open_ai_customization: "AI 定制", dropdown: "下拉菜单", input: "输入", display: "展示", tab: "页签", export: "导出", import: "导入" },
+  api_type: { query: "查询", detail: "详情", create: "新增", update: "更新", delete: "删除", command: "命令" },
+  resource_type: { page: "页面", action: "动作", field: "字段" },
+  organization_scope: { role_organization: "角色组织", all: "全部" },
+  receiver_scope: { student: "学员", staff: "员工", all: "全部" },
+  pay_type: { PREPAID: "预付", POSTPAID: "后付", TRIAL: "试用" },
+  cost_type: { ONLINE_ADS: "线上投放", OFFLINE: "线下成本", OTHER: "其他" },
+  target_status: { FULL: "已满", CLOSED: "已关闭", ACTIVE: "启用" },
   refund_type: { CONTRACT_PRODUCT: "合同产品退费", CONTRACT: "合同退费" },
   target_type: { bundle: "整包配置", page: "页面", action: "按钮动作", api: "接口", modal: "弹窗", skill: "技能", import: "导入", report: "报表", business_rule: "业务规则", print_template: "打印模板", page_dsl: "页面", api_dsl: "接口", action_dsl: "按钮动作", skill_registry: "技能", import_dsl: "导入", report_dsl: "报表", db_schema: "数据表", permission_policy: "权限策略", approval_flow: "审批流", feature_registry: "功能" },
   schema_scope: { tenant: "机构模板/租户自定义", admin: "平台管理" },
@@ -49,11 +59,18 @@ export const enumValueLabels: Record<string, Record<string, string>> = {
   fulfillment_status: { PENDING: "待履约", PROCESSING: "处理中", SUCCESS: "已完成", FAILED: "履约失败" }
 };
 
+const enumFieldAliases: Record<string, string> = {
+  category: "business_rule_category",
+  businessType: "business_type",
+  business_type: "business_type"
+};
+
 export function enumLabelFor(fieldKey: string | undefined, value: unknown, pageLabels?: Record<string, Record<string, string>>) {
   if (value === null || value === undefined || value === "") return undefined;
   const text = String(value);
   if (!fieldKey) return undefined;
-  return pageLabels?.[fieldKey]?.[text] ?? enumValueLabels[fieldKey]?.[text];
+  const normalizedKey = enumFieldAliases[fieldKey] ?? fieldKey;
+  return pageLabels?.[fieldKey]?.[text] ?? pageLabels?.[normalizedKey]?.[text] ?? enumValueLabels[normalizedKey]?.[text];
 }
 
 export function enumDisplayFor(fieldKey: string | undefined, value: unknown, pageLabels?: Record<string, Record<string, string>>) {

@@ -1,7 +1,13 @@
 import type { FieldDsl } from "./types";
 
+const fieldDictAliases: Record<string, string> = {
+  category: "business_rule_category",
+  businessType: "business_type",
+  business_type: "business_type"
+};
+
 export function fieldDictCode(field: FieldDsl) {
-  return field.dictCode ?? field.optionSource?.dictCode ?? (field.optionSource?.type === "dictionary" ? field.optionSource?.filters?.dictCode as string | undefined : undefined);
+  return field.dictCode ?? field.optionSource?.dictCode ?? (field.optionSource?.type === "dictionary" ? field.optionSource?.filters?.dictCode as string | undefined : undefined) ?? fieldDictAliases[field.key];
 }
 
 export function dictionaryOptionSource(field: FieldDsl) {
