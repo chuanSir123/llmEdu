@@ -319,7 +319,8 @@ export async function buildServer() {
     }).parse(request.body);
     try {
       const schema = body.scope === "admin" ? "admin" : await resolveAuthorizedTenantSchema(user, body.schemaName);
-      if (body.scope === "tenant" && body.pageCode && !(await canAccessPage(user, schema, body.pageCode))) {
+      const isDictionaryOptionLookup = body.apiCode === "dictionary.options" && body.pageCode === "__dictionary__";
+      if (body.scope === "tenant" && body.pageCode && !isDictionaryOptionLookup && !(await canAccessPage(user, schema, body.pageCode))) {
         throw httpError(403, "无接口权限");
       }
       const data = await executeGatewayApi(body.scope, schema, body.apiCode, body.params, user);

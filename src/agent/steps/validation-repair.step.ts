@@ -11,6 +11,7 @@ import { validateEduDomainGuardrails } from "../validators/edu-domain.validator.
 import { executeDiffs } from "../diff-executor.js";
 import { validateApiDslAgainstSchema } from "../../db/dsl-validator.js";
 import { BUSINESS_COMMAND_EVENT_MAP, KNOWN_BUSINESS_COMMANDS } from "../../gateway/business-event.service.js";
+import { SYSTEM_DICTIONARIES } from "../../dictionary.service.js";
 
 const FIELD_RE = /^[a-z][a-z0-9_]{0,62}$/;
 const MAX_RETRIES = 3;
@@ -171,7 +172,7 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
   for (const diff of normalizedDiffs) {
     if (!VALID_TARGET_TYPES.has(diff.targetType)) errors.push(`invalid targetType: ${diff.targetType}`);
     if (!VALID_OPS.has(diff.op)) errors.push(`invalid op: ${diff.op}`);
-    if (["modify", "create_table", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule", "create_business_event_listener"].includes(diff.op)) {
+    if (["modify", "create_table", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule", "create_dictionary_item", "create_business_event_listener"].includes(diff.op)) {
       const resourceKey = `${diff.targetType}:${diff.targetCode}:${diff.op}`;
       if (seenResourceWrites.has(resourceKey)) {
         errors.push(`重复资源变更: ${diff.targetType}/${diff.targetCode} ${diff.op}，请合并为一条变更`);
@@ -179,7 +180,7 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
       seenResourceWrites.add(resourceKey);
     }
     if (OPS_REQUIRE_FIELD_DEF.has(diff.op) && !diff.fieldDef) errors.push(`${diff.op} requires fieldDef for ${diff.targetCode}`);
-    if ((diff.op === "create_table" || diff.op === "add_field" || diff.op === "create_import" || diff.op === "create_report" || diff.op === "create_feature" || diff.op === "create_approval_flow" || diff.op === "create_print_template" || diff.op === "create_business_rule" || diff.op === "create_business_event_listener" || diff.op === "modify_permission") && !diff.resourceDef) {
+    if ((diff.op === "create_table" || diff.op === "add_field" || diff.op === "create_import" || diff.op === "create_report" || diff.op === "create_feature" || diff.op === "create_approval_flow" || diff.op === "create_print_template" || diff.op === "create_business_rule" || diff.op === "create_dictionary_item" || diff.op === "create_business_event_listener" || diff.op === "modify_permission") && !diff.resourceDef) {
       errors.push(`${diff.op} requires resourceDef for ${diff.targetCode}`);
     }
     if (diff.targetType === "db_schema" && diff.resourceDef) {
@@ -241,6 +242,13 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
       if (!FIELD_RE.test(String(diff.resourceDef.templateCode ?? diff.targetCode))) errors.push(`print_template ${diff.targetCode} templateCode 不合法`);
       if (!diff.resourceDef.templateName) errors.push(`print_template ${diff.targetCode} missing templateName`);
       if (!diff.resourceDef.pageCode) errors.push(`print_template ${diff.targetCode} missing pageCode`);
+    }
+    if (diff.targetType === "dictionary" && diff.resourceDef) {
+      const dictCode = String(diff.resourceDef.dictCode ?? diff.targetCode ?? "");
+      const itemValue = String(diff.resourceDef.itemValue ?? diff.resourceDef.item_value ?? "");
+      if (!/^[a-z][a-z0-9_]{1,80}$/.test(dictCode)) errors.push(`dictionary ${diff.targetCode} dictCode 不合法`);
+      if (!/^[A-Z][A-Z0-9_]{1,80}$/.test(itemValue)) errors.push(`dictionary ${diff.targetCode} itemValue 必须是大写英文枚举值`);
+      if (!String(diff.resourceDef.itemLabel ?? diff.resourceDef.item_label ?? "").trim()) errors.push(`dictionary ${diff.targetCode} missing itemLabel`);
     }
     if (diff.targetType === "business_rule" && diff.resourceDef) {
       if (!FIELD_RE.test(String(diff.resourceDef.ruleCode ?? diff.targetCode))) errors.push(`business_rule ${diff.targetCode} ruleCode 不合法`);
@@ -1063,8 +1071,8 @@ function buildRepairContext(
 }
 
 function validateBusinessRuleResource(errors: string[], targetCode: string, resource: Record<string, unknown>) {
-  const categories = new Set(["funds_allocation", "promotion_allocation", "performance_allocation", "approval_trigger", "validation", "workflow", "refund", "charge", "attendance"]);
-  const businessTypes = new Set(["contract", "funds", "course", "course_cancel", "attendance", "charge", "charge_reverse", "refund", "contract_refund", "product_price", "performance"]);
+  const categories = new Set(Object.keys(SYSTEM_DICTIONARIES.business_rule_category ?? {}));
+  const businessTypes = new Set(Object.keys(SYSTEM_DICTIONARIES.business_type ?? {}));
   const category = String(resource.category ?? "");
   const businessType = String(resource.businessType ?? resource.business_type ?? "");
   if (resource.ruleCode && String(resource.ruleCode) !== targetCode) errors.push(`business_rule ${targetCode} targetCode 必须与 ruleCode 一致`);
@@ -1126,6 +1134,8 @@ function validateBusinessEventRuleShape(errors: string[], targetCode: string, re
       errors.push(`business_rule ${targetCode} actions[${index}].command 必须是既有业务命令`);
     }
     const paramsMapping = action.paramsMapping ?? action.map ?? action.mapping;
+    const options = action.options;
+    if (options && (typeof options !== "object" || Array.isArray(options))) errors.push(`business_rule ${targetCode} actions[${index}].options 必须是对象`);
     if (paramsMapping && (typeof paramsMapping !== "object" || Array.isArray(paramsMapping))) {
       errors.push(`business_rule ${targetCode} actions[${index}].paramsMapping 必须是对象`);
     }

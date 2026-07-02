@@ -1,3 +1,4 @@
+import { enumValueLabels } from "../dsl/enumLabels";
 import { token } from "../styles/designTokens";
 
 type RuleValue = Record<string, unknown>;
@@ -38,31 +39,8 @@ const operatorOptions = {
   unique_combo: "组合不可重复"
 };
 
-const categoryOptions = {
-  funds_allocation: "资金分配",
-  promotion_allocation: "优惠分配",
-  performance_allocation: "业绩分配",
-  approval_trigger: "审批触发",
-  validation: "校验规则",
-  workflow: "业务流转",
-  refund: "退费规则",
-  charge: "扣费规则",
-  attendance: "考勤规则"
-};
-
-const businessTypeOptions = {
-  contract: "合同签约",
-  funds: "收款",
-  course: "排课",
-  course_cancel: "课程取消",
-  attendance: "考勤",
-  charge: "扣费",
-  charge_reverse: "撤销扣费",
-  refund: "退费",
-  contract_refund: "合同退费",
-  product_price: "产品价格",
-  performance: "业绩"
-};
+const categoryOptions = enumValueLabels.business_rule_category;
+const businessTypeOptions = enumValueLabels.business_type;
 
 const ruleSections: Record<string, {
   selects?: Array<{ key: string; label: string; options: Record<string, string> }>;

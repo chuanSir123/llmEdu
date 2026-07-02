@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
+import { enumDisplayFor } from "../dsl/enumLabels";
 
 type PortalData = {
   fan?: Record<string, unknown> | null;
@@ -85,7 +86,7 @@ export function WechatPortalPage() {
   async function refreshOrderStatus(orderId = lastOrderId) {
     if (!orderId) return;
     const status = await request<OrderStatus>(`/api/wechat/mall/order/status?schemaName=${encodeURIComponent(schemaName)}&orderId=${encodeURIComponent(orderId)}`);
-    setMessage(`订单状态：${String(status.order?.payment_status ?? "-")} / 履约：${String(status.order?.fulfillment_status ?? "-")}${status.order?.fulfillment_error ? `，错误：${String(status.order.fulfillment_error)}` : ""}`);
+    setMessage(`订单状态：${enumDisplayFor("payment_status", status.order?.payment_status) || "-"} / 履约：${enumDisplayFor("fulfillment_status", status.order?.fulfillment_status) || "-"}${status.order?.fulfillment_error ? `，错误：${String(status.order.fulfillment_error)}` : ""}`);
   }
 
   async function reconcileOrder(orderId = lastOrderId) {
