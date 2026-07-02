@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ActionDsl, FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
+import { enumLabelFor } from "../dsl/enumLabels";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type BadgeTone = "green" | "blue" | "amber" | "red" | "gray";
@@ -54,13 +55,19 @@ function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation
     ? row[column.displayKey]
     : row[column.key];
   const text = formatValue(rawValue, column.type);
-  const displayText = text === "-" ? text : (presentation?.valueLabels?.[column.key]?.[text] ?? text);
+  const displayText = text === "-" ? text : (enumLabelFor(column.key, text, presentation?.valueLabels) ?? text);
   if (isImageField(column) && text !== "-") {
     return <img src={text} alt={column.title ?? column.label ?? column.key} className="h-12 w-16 rounded border border-[#dde3ee] object-cover" />;
   }
   if (!column.badge || text === "-") return displayText;
   const tone = (presentation?.statusMap?.[column.key]?.[text] ?? "gray") as BadgeTone;
   return <span className={`inline-flex h-6 items-center border px-2 text-xs font-medium ${badgeTone[tone]}`}>{displayText}</span>;
+}
+
+function renderPlainCellTitle(column: FieldDsl, row: Record<string, unknown>, presentation?: Presentation) {
+  const raw = column.displayKey ? row[column.displayKey] ?? row[column.key] : row[column.key];
+  const text = formatValue(raw, column.type);
+  return text === "-" ? text : enumLabelFor(column.key, text, presentation?.valueLabels) ?? text;
 }
 
 export function GenericTableRenderer({
@@ -112,7 +119,7 @@ export function GenericTableRenderer({
                 <td
                   key={column.key}
                   className={`${token.td} ${tdDensity} ${alignClass(column.align)} max-w-[300px] truncate`}
-                  title={formatValue(column.displayKey ? row[column.displayKey] ?? row[column.key] : row[column.key], column.type)}
+                  title={String(renderPlainCellTitle(column, row, presentation))}
                 >
                   {renderCell(column, row, presentation)}
                 </td>
