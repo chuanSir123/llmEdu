@@ -87,7 +87,7 @@ export type ActionDsl = {
   mapRowToValue?: Record<string, string>;
   modalSize?: "default" | "large" | "fullscreen";
   afterSuccess?: Array<{ type: "toast" | "redirect" | "refreshPage"; message?: string; to?: string }>;
-  visibleWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | undefined>;
+  visibleWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | Record<string, unknown> | Array<Record<string, unknown>> | undefined>;
   enabledWhen?: { always?: boolean; permission?: string };
   renderAs?: string;
   styleToken?: string;
@@ -179,6 +179,7 @@ export type PageDsl = {
     };
     statusMap?: Record<string, Record<string, "green" | "blue" | "amber" | "red" | "gray">>;
     valueLabels?: Record<string, Record<string, string>>;
+    dictionaryMeta?: Record<string, Record<string, Record<string, unknown>>>;
     dashboard?: {
       quickActions?: Array<{ label: string; pageCode: string; moduleCode?: string; filters?: Record<string, unknown> }>;
       rightRail?: {

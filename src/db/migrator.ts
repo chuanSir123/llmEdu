@@ -308,8 +308,9 @@ export async function migrate() {
     );
     create unique index if not exists business_rule_active_key on admin.business_rule(schema_scope, coalesce(schema_name,''), rule_code) where status = 'active' and deleted = false;
 
+    create sequence if not exists admin.dictionary_item_id_seq;
     create table if not exists admin.dictionary_item (
-      id text primary key,
+      id text primary key default nextval('admin.dictionary_item_id_seq')::text,
       dict_code text not null,
       item_value text not null,
       item_label text not null,
@@ -324,6 +325,7 @@ export async function migrate() {
       updated_at timestamptz not null default now(),
       deleted boolean not null default false
     );
+    alter table admin.dictionary_item alter column id set default nextval('admin.dictionary_item_id_seq')::text;
     create unique index if not exists dictionary_item_value_key on admin.dictionary_item(dict_code, schema_name, item_value);
     create index if not exists dictionary_item_lookup_idx on admin.dictionary_item(dict_code, schema_scope, schema_name, status) where deleted = false;
 

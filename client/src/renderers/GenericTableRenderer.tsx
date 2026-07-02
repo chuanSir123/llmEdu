@@ -29,6 +29,11 @@ function formatValue(value: unknown, type?: string): string {
   return String(value);
 }
 
+function visibleWhenValue(value: unknown) {
+  if (value && typeof value === "object" && !Array.isArray(value) && "itemValue" in value) return String((value as Record<string, unknown>).itemValue ?? "");
+  return String(value ?? "");
+}
+
 function isVisibleAction(action: ActionDsl, row: Record<string, unknown>): boolean {
   if (!action.visibleWhen) return true;
   if (action.visibleWhen.always === false) return false;
@@ -36,10 +41,10 @@ function isVisibleAction(action: ActionDsl, row: Record<string, unknown>): boole
     if (key === "always" || key === "permission") continue;
     const rowValue = String(row[key] ?? "");
     if (Array.isArray(val)) {
-      if (!val.map(String).includes(rowValue)) return false;
+      if (!val.map(visibleWhenValue).includes(rowValue)) return false;
       continue;
     }
-    if (String(row[key] ?? "") !== String(val)) return false;
+    if (rowValue !== visibleWhenValue(val)) return false;
   }
   return true;
 }

@@ -93,12 +93,22 @@ export function CalendarView({
     return { total: visibleRows.length, charged, finished, notStarted, totalHour, totalAmount };
   }, [visibleRows]);
 
+  const toneClass: Record<string, string> = {
+    green: "bg-[#50c79b] shadow-[#50c79b]/20",
+    gray: "bg-[#98a2b3] shadow-[#98a2b3]/20",
+    amber: "bg-[#f0b84f] shadow-[#f0b84f]/20",
+    blue: "bg-[#68b4eb] shadow-[#68b4eb]/25"
+  };
+
+  function dictionaryTone(dictCode: string, value: unknown) {
+    return String(dsl.presentation?.dictionaryMeta?.[dictCode]?.[String(value ?? "")]?.tone ?? "");
+  }
+
   function courseTone(row: CalendarRow) {
-    const status = String(row.course_status ?? "");
-    if (status === "FINISHED") return "bg-[#50c79b] shadow-[#50c79b]/20";
-    if (String(row.charge_status ?? "") === "CONFIRMED") return "bg-[#50c79b] shadow-[#50c79b]/20";
-    if (status === "CANCELLED") return "bg-[#98a2b3] shadow-[#98a2b3]/20";
-    return "bg-[#68b4eb] shadow-[#68b4eb]/25";
+    const chargeTone = dictionaryTone("charge_status", row.charge_status);
+    if (chargeTone === "green") return toneClass.green;
+    const courseTone = dictionaryTone("course_status", row.course_status);
+    return toneClass[courseTone] ?? toneClass.blue;
   }
 
   function shift(days: number) {

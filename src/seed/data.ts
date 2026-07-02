@@ -139,7 +139,22 @@ function dictionaryOption(dictCode: string) {
   return { type: "dictionary" as const, apiCode: "dictionary.options", dictCode, valueField: "value", labelField: "label" };
 }
 
-function enhanceDictionaryFields(value: unknown): unknown {
+function dictionaryDefault(dictCode: string, itemValue: unknown) {
+  return { dictCode, itemValue };
+}
+
+function normalizeDictionaryDefault(fieldKey: string, rawValue: unknown) {
+  const dictCode = dictCodeForField({ key: fieldKey });
+  if (!dictCode || rawValue === undefined || rawValue === null || typeof rawValue === "object") return rawValue;
+  return dictionaryDefault(dictCode, rawValue);
+}
+
+function normalizeDictionaryMap(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>).map(([fieldKey, fieldValue]) => [fieldKey, normalizeDictionaryDefault(fieldKey, fieldValue)]));
+}
+
+export function enhanceDictionaryFields(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => enhanceDictionaryFields(item));
   if (!value || typeof value !== "object") return value;
   const obj = { ...(value as Record<string, unknown>) };
@@ -149,9 +164,12 @@ function enhanceDictionaryFields(value: unknown): unknown {
     obj.dictCode = obj.dictCode ?? dictCode;
     obj.optionSource = obj.optionSource ?? dictionaryOption(dictCode);
     obj.type = obj.type ?? "select";
+    if ("defaultValue" in obj) obj.defaultValue = normalizeDictionaryDefault(key, obj.defaultValue);
   }
+  if ("defaultValues" in obj) obj.defaultValues = normalizeDictionaryMap(obj.defaultValues);
+  if ("visibleWhen" in obj) obj.visibleWhen = normalizeDictionaryMap(obj.visibleWhen);
   for (const [childKey, childValue] of Object.entries(obj)) {
-    if (childKey === "optionSource") continue;
+    if (childKey === "optionSource" || childKey === "defaultValue" || childKey === "defaultValues" || childKey === "visibleWhen") continue;
     obj[childKey] = enhanceDictionaryFields(childValue);
   }
   return obj;

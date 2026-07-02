@@ -273,12 +273,12 @@ async function upsertDictionaryItem(client: import("pg").PoolClient, schemaName:
   const { rows: systemRows } = await client.query(`select id from admin.dictionary_item where dict_code = $1 and item_value = $2 and is_system = true and deleted = false limit 1`, [dictCode, itemValue]);
   if (systemRows[0]) throw Object.assign(new Error(`系统字典项不可覆盖: ${dictCode}.${itemValue}`), { statusCode: 409 });
   await client.query(
-    `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
-     values($1,$2,$3,$4,'tenant',$5,false,false,$6,$7,$8,false)
+    `insert into admin.dictionary_item(dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
+     values($1,$2,$3,'tenant',$4,false,false,$5,$6,$7,false)
      on conflict (dict_code, schema_name, item_value) do update
        set item_label = excluded.item_label, sort_no = excluded.sort_no, status = excluded.status, metadata_json = excluded.metadata_json, deleted = false, updated_at = now()
        where admin.dictionary_item.locked = false`,
-    [randomUUID(), dictCode, itemValue, itemLabel, schemaName, Number(resource.sortNo ?? resource.sort_no ?? 100), String(resource.status ?? "ACTIVE"), JSON.stringify(resource.metadata ?? resource.metadata_json ?? {})]
+    [dictCode, itemValue, itemLabel, schemaName, Number(resource.sortNo ?? resource.sort_no ?? 100), String(resource.status ?? "ACTIVE"), JSON.stringify(resource.metadata ?? resource.metadata_json ?? {})]
   );
 }
 

@@ -50,9 +50,9 @@ const ruleSections: Record<string, {
 }> = {
   funds_allocation: {
     selects: [
-      { key: "fundsAllocation", label: "资金分配方式", options: { byCpPaidRatio: "按合同产品应收比例", byCpRemainingAmount: "按合同产品剩余金额比例", oldestContractFirst: "优先最早合同", manual: "手工分配" } },
-      { key: "splitBy", label: "拆分维度", options: { contract_product: "合同产品", contract: "合同", organization: "校区" } },
-      { key: "generateLogTable", label: "生成明细", options: { money_arrange_log: "资金分配记录" } }
+      { key: "fundsAllocation", label: "资金分配方式", options: enumValueLabels.funds_allocation_method },
+      { key: "splitBy", label: "拆分维度", options: enumValueLabels.allocation_split_by },
+      { key: "generateLogTable", label: "生成明细", options: enumValueLabels.generated_log_table }
     ],
     switches: [
       { key: "updateContractPaidStatus", label: "自动更新合同收款状态" },
@@ -63,9 +63,9 @@ const ruleSections: Record<string, {
   },
   promotion_allocation: {
     selects: [
-      { key: "promotionAllocation", label: "优惠分配方式", options: { byCpAmountRatio: "按合同产品金额比例", byCpHourRatio: "按合同产品课时比例", oneToOneFirst: "优先一对一产品", classCourseFirst: "优先班课产品", manual: "手工分配" } },
-      { key: "splitBy", label: "拆分维度", options: { contract_product: "合同产品", product_type: "产品类型" } },
-      { key: "generateLogTable", label: "生成明细", options: { promotion_arrange_log: "优惠分配记录" } }
+      { key: "promotionAllocation", label: "优惠分配方式", options: enumValueLabels.promotion_allocation_method },
+      { key: "splitBy", label: "拆分维度", options: enumValueLabels.allocation_split_by },
+      { key: "generateLogTable", label: "生成明细", options: enumValueLabels.generated_log_table }
     ],
     switches: [
       { key: "requireAtLeastOneProduct", label: "合同至少包含一个产品" },
@@ -75,11 +75,11 @@ const ruleSections: Record<string, {
   },
   performance_allocation: {
     selects: [
-      { key: "performanceAllocation", label: "业绩分配方式", options: { byCpPaidRatio: "按合同产品实收比例", byCpReceivableRatio: "按合同产品应收比例", oneToOneFirst: "优先一对一", classCourseFirst: "优先班课", salesOwnerOnly: "归属签约顾问" } },
+      { key: "performanceAllocation", label: "业绩分配方式", options: enumValueLabels.performance_allocation_method },
       { key: "organizationPerformanceOwner", label: "校区业绩归属", options: { contractOrganization: "合同所属校区", courseOrganization: "上课校区", receiptOrganization: "收款校区" } },
       { key: "personalPerformanceOwner", label: "个人业绩归属", options: { signStaff: "签约顾问", ownerStaff: "学员归属顾问", classTeacher: "任课老师", splitByProductOwner: "按产品归属人拆分" } },
-      { key: "productPriority", label: "产品优先级", options: { none: "不区分", oneToOneFirst: "一对一优先", classCourseFirst: "班课优先", oneOnNFirst: "一对N优先" } },
-      { key: "generateLogTable", label: "生成明细", options: { performance_arrange_log: "业绩分配记录" } }
+      { key: "productPriority", label: "产品优先级", options: enumValueLabels.product_priority },
+      { key: "generateLogTable", label: "生成明细", options: enumValueLabels.generated_log_table }
     ],
     switches: [
       { key: "includePromotionAmount", label: "优惠金额计入业绩" },
@@ -119,7 +119,7 @@ const ruleSections: Record<string, {
   },
   refund: {
     selects: [
-      { key: "refundAllocation", label: "退费冲减方式", options: { byCpRemainingAmount: "按产品剩余金额比例", originalPaymentReverse: "按原收款反向冲减", manual: "手工指定" } }
+      { key: "refundAllocation", label: "退费冲减方式", options: enumValueLabels.refund_allocation_method }
     ],
     switches: [
       { key: "allowRefundOverBalance", label: "允许超过余额退费" },

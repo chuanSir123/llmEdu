@@ -15,6 +15,7 @@ import { SYSTEM_DICTIONARIES } from "../../dictionary.service.js";
 
 const FIELD_RE = /^[a-z][a-z0-9_]{0,62}$/;
 const MAX_RETRIES = 3;
+const CORE_BUSINESS_RULE_CODES = new Set(["funds_create_rule", "charge_create_rule", "refund_create_rule", "contract_refund_rule", "course_create_rule", "course_time_validation_rule"]);
 const REPAIR_TIMEOUT_MS = 30000;
 
 export type ExistingPageActions = {
@@ -1071,6 +1072,7 @@ function buildRepairContext(
 }
 
 function validateBusinessRuleResource(errors: string[], targetCode: string, resource: Record<string, unknown>) {
+  if (CORE_BUSINESS_RULE_CODES.has(targetCode)) errors.push(`business_rule ${targetCode} 是核心业务规则，AI 定制不可修改或覆盖`);
   const categories = new Set(Object.keys(SYSTEM_DICTIONARIES.business_rule_category ?? {}));
   const businessTypes = new Set(Object.keys(SYSTEM_DICTIONARIES.business_type ?? {}));
   const category = String(resource.category ?? "");

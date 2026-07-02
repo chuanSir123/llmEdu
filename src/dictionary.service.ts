@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { pool } from "./db/pool.js";
 
 type DictionaryItemInput = {
@@ -20,8 +19,8 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
     CANCELLED: { label: "已取消", metadata: { businessState: true, transitionPolicy: "command_controlled", terminal: true } },
     REFUNDED: { label: "已退费", metadata: { businessState: true, transitionPolicy: "command_controlled", terminal: true } }
   },
-  course_status: { SCHEDULED: { label: "待上课" }, FINISHED: { label: "已完成" }, CANCELLED: { label: "已取消" } },
-  charge_status: { CONFIRMED: { label: "已确认" }, PENDING: { label: "待确认" }, REVERSED: { label: "已撤销" } },
+  course_status: { SCHEDULED: { label: "待上课", metadata: { tone: "blue" } }, FINISHED: { label: "已完成", metadata: { tone: "green", businessSemantic: "finished" } }, CANCELLED: { label: "已取消", metadata: { tone: "gray", businessSemantic: "cancelled" } } },
+  charge_status: { CONFIRMED: { label: "已确认", metadata: { tone: "green", businessSemantic: "charged" } }, PENDING: { label: "待确认", metadata: { tone: "amber" } }, REVERSED: { label: "已撤销", metadata: { tone: "gray" } } },
   attendance_status: { PENDING: { label: "待签到" }, PRESENT: { label: "已签到" }, ABSENT: { label: "缺勤" }, LEAVE: { label: "请假" } },
   status: { ACTIVE: { label: "启用" }, INACTIVE: { label: "停用" }, ENABLED: { label: "启用" }, DISABLED: { label: "停用" }, PUBLISHED: { label: "已发布" }, DRAFT: { label: "草稿" }, draft: { label: "草稿" }, active: { label: "生效" }, archived: { label: "归档" }, rejected: { label: "已驳回" } },
   mode: { draft: { label: "草稿" }, publish_after_confirm: { label: "确认后发布" } },
@@ -52,6 +51,13 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   pay_type: { PREPAID: { label: "预付" }, POSTPAID: { label: "后付" }, TRIAL: { label: "试用" } },
   cost_type: { ONLINE_ADS: { label: "线上投放" }, OFFLINE: { label: "线下成本" }, OTHER: { label: "其他" } },
   target_status: { FULL: { label: "已满" }, CLOSED: { label: "已关闭" }, ACTIVE: { label: "启用" } },
+  funds_allocation_method: { byCpPaidRatio: { label: "按合同产品应收比例" }, byCpRemainingAmount: { label: "按合同产品剩余金额比例" }, oldestContractFirst: { label: "优先最早合同" }, manual: { label: "手工分配" } },
+  allocation_split_by: { contract_product: { label: "合同产品" }, contract: { label: "合同" }, organization: { label: "校区" }, product_type: { label: "产品类型" } },
+  generated_log_table: { money_arrange_log: { label: "资金分配记录" }, promotion_arrange_log: { label: "优惠分配记录" }, performance_arrange_log: { label: "业绩分配记录" } },
+  performance_allocation_method: { byCpPaidRatio: { label: "按合同产品实收比例" }, byCpReceivableRatio: { label: "按合同产品应收比例" }, oneToOneFirst: { label: "优先一对一" }, classCourseFirst: { label: "优先班课" }, salesOwnerOnly: { label: "归属签约顾问" } },
+  product_priority: { none: { label: "不区分" }, oneToOneFirst: { label: "一对一优先" }, classCourseFirst: { label: "班课优先" }, oneOnNFirst: { label: "一对N优先" } },
+  promotion_allocation_method: { byCpAmountRatio: { label: "按合同产品金额比例" }, byCpHourRatio: { label: "按合同产品课时比例" }, oneToOneFirst: { label: "优先一对一产品" }, classCourseFirst: { label: "优先班课产品" }, manual: { label: "手工分配" } },
+  refund_allocation_method: { byCpRemainingAmount: { label: "按产品剩余金额比例" }, originalPaymentReverse: { label: "按原收款反向冲减" }, manual: { label: "手工指定" } },
   record_type: { customization: { label: "AI 定制" }, assistant: { label: "AI 助手" } },
   change_type: { PRESTORE_IN: { label: "预存入账" }, CONTRACT_PAY_OUT: { label: "合同扣款" }, REFUND_IN: { label: "退费入账" }, PRESTORE_DELETE: { label: "删除预存" }, CONTRACT_PAY_DELETE: { label: "删除合同扣款" }, REFUND_DELETE: { label: "删除退费" }, update: { label: "更新" }, rollback: { label: "回滚" }, init: { label: "初始化" } },
   refund_type: { CONTRACT_PRODUCT: { label: "合同产品退费" }, CONTRACT: { label: "合同退费" } },
@@ -130,8 +136,8 @@ export async function seedSystemDictionaries() {
     sort = 10;
     for (const [itemValue, item] of Object.entries(items)) {
       await pool.query(
-        `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
-         values($1,$2,$3,$4,'admin','',true,true,$5,'ACTIVE',$6,false)
+        `insert into admin.dictionary_item(dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
+         values($1,$2,$3,'admin','',true,true,$4,'ACTIVE',$5,false)
          on conflict (dict_code, schema_name, item_value) do update
            set item_label = excluded.item_label,
                is_system = true,
@@ -140,7 +146,7 @@ export async function seedSystemDictionaries() {
                metadata_json = admin.dictionary_item.metadata_json || excluded.metadata_json,
                deleted = false,
                updated_at = now()`,
-        [randomUUID(), dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
+        [dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
       );
       sort += 10;
     }
@@ -193,11 +199,11 @@ export async function saveTenantDictionaryItem(schemaName: string, params: Recor
   if (!itemLabel) throw Object.assign(new Error("字典项中文名不能为空"), { statusCode: 400 });
   const system = await pool.query(`select id from admin.dictionary_item where dict_code = $1 and item_value = $2 and is_system = true and deleted = false limit 1`, [dictCode, itemValue]);
   if (system.rows[0]) throw Object.assign(new Error(`系统字典项不可覆盖: ${dictCode}.${itemValue}`), { statusCode: 409 });
-  const id = String(data.id ?? randomUUID());
+  const id = data.id ? String(data.id) : null;
   const metadata = data.metadata ?? ((data as Record<string, unknown>).metadata_json as Record<string, unknown> | undefined) ?? {};
   const { rows } = await pool.query(
     `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
-     values($1,$2,$3,$4,'tenant',$5,false,false,$6,$7,$8,false)
+     values(coalesce($1, nextval('admin.dictionary_item_id_seq')::text),$2,$3,$4,'tenant',$5,false,false,$6,$7,$8,false)
      on conflict (dict_code, schema_name, item_value) do update
        set item_label = excluded.item_label,
            sort_no = excluded.sort_no,

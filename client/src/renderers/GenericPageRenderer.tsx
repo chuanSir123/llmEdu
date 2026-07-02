@@ -38,6 +38,14 @@ type ModalState =
   | { type: "detail"; value: Record<string, unknown> }
   | null;
 
+function collectDictionaryRefs(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => collectDictionaryRefs(item));
+  if (!value || typeof value !== "object") return [];
+  const obj = value as Record<string, unknown>;
+  const self = typeof obj.dictCode === "string" ? [obj.dictCode] : [];
+  return [...self, ...Object.values(obj).flatMap((child) => collectDictionaryRefs(child))];
+}
+
 export function GenericPageRenderer({
   scope,
   schemaName,
@@ -75,13 +83,15 @@ export function GenericPageRenderer({
   const [importConfig, setImportConfig] = useState<Record<string, unknown> | null>(null);
   const [rightRailItems, setRightRailItems] = useState<Record<string, RightRailItem[]>>({});
   const [dictionaryLabels, setDictionaryLabels] = useState<Record<string, Record<string, string>>>({});
+  const [dictionaryOptionIds, setDictionaryOptionIds] = useState<Record<string, Record<string, string>>>({});
+  const [dictionaryMeta, setDictionaryMeta] = useState<Record<string, Record<string, Record<string, unknown>>>>({});
   const [enrollmentValue, setEnrollmentValue] = useState<Record<string, unknown>>({});
   const remoteProductOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
   const remotePromotionOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
 
   const createAction = toolbarDsl.find((action) => action.actionCode.endsWith(".create") || action.actionCode.endsWith(".enroll"));
   const enrollmentFields = dsl.layout === "enrollment" ? (createAction?.fields ?? modalDsl.fields) : [];
-  const enrollmentValueWithDefaults = dsl.layout === "enrollment" ? { ...(createAction?.defaultValues ?? {}), ...enrollmentValue } : {};
+  const enrollmentValueWithDefaults = dsl.layout === "enrollment" ? { ...(resolveDictionaryDefaults(createAction?.defaultValues) ?? {}), ...enrollmentValue } : {};
 
   const selectedProductIds = useMemo(() => {
     if (dsl.layout !== "enrollment") return [] as string[];
@@ -98,9 +108,15 @@ export function GenericPageRenderer({
 
 
   const dictionaryCodes = useMemo(() => {
-    const actionFields = [...toolbarDsl, ...(tableDsl.rowActions ?? [])].flatMap((action) => action.fields ?? []);
+    const actions = [...toolbarDsl, ...(tableDsl.rowActions ?? [])];
+    const actionFields = actions.flatMap((action) => action.fields ?? []);
     const fields = [...filtersDsl, ...(tableDsl.columns ?? []), ...(modalDsl.fields ?? []), ...actionFields];
-    return [...new Set(fields.map((field) => fieldDictCode(field)).filter(Boolean) as string[])];
+    const fieldCodes = fields.map((field) => fieldDictCode(field)).filter(Boolean) as string[];
+    const refCodes = actions.flatMap((action) => [
+      ...collectDictionaryRefs(action.defaultValues),
+      ...collectDictionaryRefs(action.visibleWhen)
+    ]);
+    return [...new Set([...fieldCodes, ...refCodes])];
   }, [dsl.pageCode, JSON.stringify(filtersDsl), JSON.stringify(tableDsl.columns ?? []), JSON.stringify(tableDsl.rowActions ?? []), JSON.stringify(modalDsl.fields ?? []), JSON.stringify(toolbarDsl)]);
 
   useEffect(() => {
@@ -117,18 +133,49 @@ export function GenericPageRenderer({
         apiCode: "dictionary.options",
         params: { dictCode, page: 1, pageSize: 500 }
       });
-      const data = result.data as { rows: Array<{ value?: string; itemValue?: string; item_value?: string; label?: string; item_label?: string }> };
-      return [dictCode, Object.fromEntries((data.rows ?? []).map((row) => [String(row.itemValue ?? row.item_value ?? row.value ?? ""), String(row.label ?? row.item_label ?? row.itemValue ?? row.item_value ?? row.value ?? "")]))] as const;
+      const data = result.data as { rows: Array<{ value?: string; itemValue?: string; item_value?: string; label?: string; item_label?: string; metadata?: Record<string, unknown>; metadata_json?: Record<string, unknown> }> };
+      const labels: Record<string, string> = {};
+      const ids: Record<string, string> = {};
+      const meta: Record<string, Record<string, unknown>> = {};
+      for (const row of data.rows ?? []) {
+        const itemValue = String(row.itemValue ?? row.item_value ?? row.value ?? "");
+        labels[itemValue] = String(row.label ?? row.item_label ?? itemValue);
+        ids[itemValue] = String(row.value ?? "");
+        meta[itemValue] = row.metadata ?? row.metadata_json ?? {};
+      }
+      return [dictCode, { labels, ids, meta }] as const;
     }))
-      .then((entries) => { if (!cancelled) setDictionaryLabels(Object.fromEntries(entries)); })
-      .catch(() => { if (!cancelled) setDictionaryLabels({}); });
+      .then((entries) => {
+        if (cancelled) return;
+        setDictionaryLabels(Object.fromEntries(entries.map(([dictCode, data]) => [dictCode, data.labels])));
+        setDictionaryOptionIds(Object.fromEntries(entries.map(([dictCode, data]) => [dictCode, data.ids])));
+        setDictionaryMeta(Object.fromEntries(entries.map(([dictCode, data]) => [dictCode, data.meta])));
+      })
+      .catch(() => { if (!cancelled) { setDictionaryLabels({}); setDictionaryOptionIds({}); setDictionaryMeta({}); } });
     return () => { cancelled = true; };
   }, [scope, schemaName, dictionaryCodes.join("|")]);
 
   const presentationWithDictionaries = useMemo(() => ({
     ...(dsl.presentation ?? {}),
-    valueLabels: { ...dictionaryLabels, ...(dsl.presentation?.valueLabels ?? {}) }
-  }), [dsl.presentation, dictionaryLabels]);
+    valueLabels: { ...dictionaryLabels, ...(dsl.presentation?.valueLabels ?? {}) },
+    dictionaryMeta: { ...dictionaryMeta, ...(dsl.presentation?.dictionaryMeta ?? {}) }
+  }), [dsl.presentation, dictionaryLabels, dictionaryMeta]);
+
+  function resolveDictionaryValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((item) => resolveDictionaryValue(item));
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      if (typeof obj.dictCode === "string" && obj.itemValue !== undefined) {
+        return dictionaryOptionIds[obj.dictCode]?.[String(obj.itemValue)] ?? obj.itemValue;
+      }
+      return Object.fromEntries(Object.entries(obj).map(([key, child]) => [key, resolveDictionaryValue(child)]));
+    }
+    return value;
+  }
+
+  function resolveDictionaryDefaults<T extends Record<string, unknown> | undefined>(defaults: T): T {
+    return (defaults ? resolveDictionaryValue(defaults) : defaults) as T;
+  }
 
   function mappedRowValues(action: ActionDsl, row: Record<string, unknown>) {
     return Object.fromEntries(
@@ -306,7 +353,7 @@ export function GenericPageRenderer({
   async function submitEnrollment() {
     if (!createAction) return;
     const apiCode = createAction.apiCode ?? dsl.createApi;
-    const submitData: Record<string, unknown> = { ...(createAction.defaultValues ?? {}), ...enrollmentValue };
+    const submitData: Record<string, unknown> = { ...(resolveDictionaryDefaults(createAction.defaultValues) ?? {}), ...enrollmentValue };
     const productIds = (Array.isArray(submitData.product_ids) ? submitData.product_ids : []) as string[];
     if (productIds.length) {
       const contractProducts = productIds.map((pid) => {
@@ -366,7 +413,7 @@ export function GenericPageRenderer({
       return;
     }
     if (action.actionCode.endsWith(".create")) {
-      setModal({ type: "create", value: action.defaultValues ?? {}, action });
+      setModal({ type: "create", value: resolveDictionaryDefaults(action.defaultValues) ?? {}, action });
       return;
     }
     if (isImportToolbarAction(action)) {
@@ -401,15 +448,15 @@ export function GenericPageRenderer({
     }
     if (action.type === "open_modal" && action.fields?.length) {
       const mapped = mappedRowValues(action, row);
-      setModal({ type: "create", value: { ...(action.defaultValues ?? {}), ...mapped }, action });
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped }, action });
       return;
     }
     if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
       const mapped = mappedRowValues(action, row);
-      const data = { ...row, ...(action.defaultValues ?? {}), ...mapped };
+      const data = { ...row, ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped };
       const params = (action.apiCode ?? action.actionCode).endsWith(".update")
         ? { id: row.id, data }
-        : { ...(action.defaultValues ?? {}), ...row, ...mapped, id: row.id, versionId: row.id };
+        : { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...row, ...mapped, id: row.id, versionId: row.id };
       try {
         await GatewayClient.executeApi({
           scope,

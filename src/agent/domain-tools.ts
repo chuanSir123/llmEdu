@@ -16,6 +16,7 @@ type FieldDef = {
 };
 
 const SYSTEM_FIELD_KEYS = new Set(["id", "created_at", "updated_at", "deleted", "deleted_at"]);
+const dictDefault = (dictCode: string, itemValue: unknown) => ({ dictCode, itemValue });
 
 const SELECT_DOMAIN_TOOLS_TOOL = {
   type: "function" as const,
@@ -491,8 +492,8 @@ function addCourseSchedulingWorkflow(args: Record<string, unknown>, intent: Inte
       variant: "primary",
       modalTitle: "新增排课",
       defaultValues: {
-        course_type: args.defaultCourseType ?? "ONE_ON_ONE_COURSE",
-        course_status: "SCHEDULED",
+        course_type: dictDefault("course_type", args.defaultCourseType ?? "ONE_ON_ONE_COURSE"),
+        course_status: dictDefault("course_status", "SCHEDULED"),
         course_hour: args.defaultCourseHour ?? 1,
       },
       fields: [
@@ -525,7 +526,7 @@ function addChargeWorkflow(args: Record<string, unknown>, intent: IntentResult):
       label,
       type: "open_modal",
       apiCode: "charge_record.create",
-      visibleWhen: { course_status: "FINISHED" },
+      visibleWhen: { course_status: dictDefault("course_status", "FINISHED") },
       mapRowToValue: {
         course_id: "id",
         organization_id: "organization_id",
@@ -533,7 +534,7 @@ function addChargeWorkflow(args: Record<string, unknown>, intent: IntentResult):
         contract_product_id: "contract_product_id",
       },
       defaultValues: {
-        charge_type: args.defaultChargeType ?? "NORMAL",
+        charge_type: dictDefault("charge_type", args.defaultChargeType ?? "NORMAL"),
         charge_hour: args.defaultChargeHour ?? 1,
       },
       fields: [
@@ -546,11 +547,8 @@ function addChargeWorkflow(args: Record<string, unknown>, intent: IntentResult):
           label: "扣费类型",
           type: "select",
           required: true,
-          options: [
-            { label: "实收扣费", value: "NORMAL" },
-            { label: "优惠扣费", value: "PROMOTION" },
-            { label: "赠课扣费", value: "PROMOTION_HOUR" },
-          ],
+          dictCode: "charge_type",
+          optionSource: { type: "dictionary", apiCode: "dictionary.options", dictCode: "charge_type", valueField: "value", labelField: "label" },
         },
         { key: "charge_hour", label: "扣课时", type: "number", required: true },
         { key: "charge_amount", label: "扣费金额", type: "number", required: true },
@@ -572,14 +570,14 @@ function addContractPaymentWorkflow(args: Record<string, unknown>, intent: Inten
       label,
       type: "open_modal",
       apiCode: "funds_history.create",
-      visibleWhen: { contract_status: "ACTIVE" },
+      visibleWhen: { contract_status: dictDefault("contract_status", "ACTIVE") },
       mapRowToValue: {
         contract_id: "id",
         student_id: "student_id",
         organization_id: "organization_id",
       },
       defaultValues: {
-        funds_type: args.defaultFundsType ?? "CONTRACT_PAY",
+        funds_type: dictDefault("funds_type", args.defaultFundsType ?? "CONTRACT_PAY"),
       },
       fields: [
         pageFieldDef({ key: "contract_id", label: "合同", type: "select", required: true }),
@@ -588,7 +586,7 @@ function addContractPaymentWorkflow(args: Record<string, unknown>, intent: Inten
         { key: "transaction_amount", label: "收款金额", type: "number", required: true },
         pageFieldDef({ key: "pay_way_config_id", label: "支付方式", type: "select", required: true }),
         { key: "transaction_time", label: "收款时间", type: "datetime", required: true },
-        { key: "funds_type", label: "收款类型", type: "select", required: true, options: [{ label: "合同收款", value: "CONTRACT_PAY" }] },
+        { key: "funds_type", label: "收款类型", type: "select", required: true, dictCode: "funds_type", optionSource: { type: "dictionary", apiCode: "dictionary.options", dictCode: "funds_type", valueField: "value", labelField: "label" } },
       ],
     },
   }];

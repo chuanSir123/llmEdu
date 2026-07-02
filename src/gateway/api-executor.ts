@@ -67,6 +67,15 @@ function safeCode(value: unknown, label: string) {
   return text;
 }
 
+const CORE_BUSINESS_RULE_CODES = new Set([
+  "funds_create_rule",
+  "charge_create_rule",
+  "refund_create_rule",
+  "contract_refund_rule",
+  "course_create_rule",
+  "course_time_validation_rule"
+]);
+
 function businessRuleCategoryLabel(category: string) {
   return SYSTEM_DICTIONARIES.business_rule_category?.[category]?.label ?? category;
 }
@@ -307,6 +316,7 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
 async function saveBusinessRule(schemaName: string, params: Record<string, unknown>) {
   const input = asObject(params.data ?? params);
   const ruleCode = input.rule_code || input.ruleCode ? safeCode(input.rule_code ?? input.ruleCode, "规则编码") : `custom_rule_${Date.now()}`;
+  if (CORE_BUSINESS_RULE_CODES.has(ruleCode)) throw Object.assign(new Error(`核心业务规则不可修改: ${ruleCode}`), { statusCode: 403 });
   const ruleName = String(input.rule_name ?? input.ruleName ?? ruleCode);
   const ruleJson = { ...parseJsonObject(input.rule_json), ruleCode, ruleName };
   const { rows } = await pool.query(
@@ -374,6 +384,9 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
   if (apiCode === "business_rule_list.query") return queryBusinessRules(schemaName, params);
   if (apiCode === "business_rule_list.create" || apiCode === "business_rule_list.update") return saveBusinessRule(schemaName, params);
   if (apiCode === "business_rule_list.delete") {
+    const { rows } = await pool.query(`select rule_code, rule_json from admin.business_rule where id = $1 and schema_scope = 'tenant' and schema_name = $2 and deleted = false limit 1`, [params.id, schemaName]);
+    const row = rows[0];
+    if (row && (CORE_BUSINESS_RULE_CODES.has(String(row.rule_code)) || asObject(row.rule_json).coreRule === true)) throw Object.assign(new Error(`核心业务规则不可删除: ${row.rule_code}`), { statusCode: 403 });
     await pool.query(`update admin.business_rule set deleted = true, updated_at = now() where id = $1 and schema_scope = 'tenant' and schema_name = $2`, [params.id, schemaName]);
     return { deleted: true, id: params.id };
   }
