@@ -1,6 +1,7 @@
 import { callWithToolCalling } from "./llm.service.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
 import type { ContextResult, DslDiff, HarnessStepResult, IntentResult, TenantAgentPolicy } from "./types.js";
+import { SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 export type ToolInvocation = {
   toolName: string;
@@ -15,6 +16,7 @@ type FieldDef = {
 };
 
 const SYSTEM_FIELD_KEYS = new Set(["id", "created_at", "updated_at", "deleted", "deleted_at"]);
+const dictDefault = (dictCode: string, itemValue: unknown) => ({ dictCode, itemValue });
 
 const SELECT_DOMAIN_TOOLS_TOOL = {
   type: "function" as const,
@@ -115,7 +117,7 @@ async function selectLlmTools(input: {
     "只有在需求能明确映射到某个标准工具时才选择工具；不明确、需要自由组合 DSL、或工具参数不够时返回空 invocations。",
     "区分统计/报表与业务动作：统计资金、课时、学员等数据时选择报表类工具；只有用户明确要按钮、入口、流程或执行动作时才选择工作流工具。",
     "工具说明：add_ext_field_to_page=给现有页面增加普通展示/编辑扩展字段；add_physical_filter_field=增加需要查询、筛选、统计或唯一约束的物理字段；create_import_flow=新增导入模板/导入能力；create_report_page=新增报表，必须根据已加载的 skill.md 和表结构填写 sourceTable、dimensions、metrics、filters、rank、sort；add_followup_workflow=新增招生/学员跟进动作；add_charge_workflow=新增课消或扣费确认动作；add_contract_payment_workflow=新增合同收款/补缴/付款确认动作；add_refund_workflow=新增退费动作；add_course_scheduling_workflow=新增排课/约课动作；create_custom_feature=新增完整业务功能和数据表；modify_permission_policy=调整角色、按钮、字段或数据权限；create_approval_flow=新增审批流定义；add_export_action=给页面新增导出按钮；create_print_template=新增打印模板；create_business_rule=新增或调整教务业务规则；create_business_event_listener=新增业务事件触发/监听规则，用于在标准事件后执行通知、建待办、更新自定义表或调用已存在业务动作。",
-    "业务规则枚举：category 必须是 funds_allocation/promotion_allocation/performance_allocation/approval_trigger/validation/workflow/refund/charge/attendance；businessType 必须是 contract/funds/course/course_cancel/attendance/charge/charge_reverse/refund/contract_refund/product_price/performance。业务事件监听用 category=workflow，并写明 triggerEvent/listeners。",
+    "业务规则 category 使用 business_rule_category 系统数据字典，businessType 使用 business_type 系统数据字典；需要新增业务枚举时使用 dictionary(create_dictionary_item)，系统项不可覆盖。业务事件监听用 category=workflow，并写明 triggerEvent/listeners。",
     "常规教务规则：排课冲突必须包含老师冲突和学员冲突；业绩规则使用 performanceAllocation=byCpPaidRatio/oneToOneFirst/classCourseFirst，productPriority=none/oneToOneFirst/classCourseFirst/oneOnNFirst；资金分配使用 fundsAllocation=byCpRemainingAmount/byCpPaidRatio/oldestContractFirst/manual；优惠分配使用 promotionAllocation=byCpAmountRatio/byCpHourRatio/oneToOneFirst/classCourseFirst/manual。",
     "工具边界：用户要新增按钮、行操作、弹窗流程、调用业务命令时，不要选择 add_ext_field_to_page；必须选择对应 workflow 工具。排课/约课/课程时间老师校区课时 => add_course_scheduling_workflow；课消/扣费/确认扣费 => add_charge_workflow；合同收款/补缴/付款确认 => add_contract_payment_workflow；退费/申请退费 => add_refund_workflow；跟进/新增跟进 => add_followup_workflow。",
     "新增完整业务功能、独立页面、完整 CRUD 或新数据表时，优先选择 create_custom_feature；即使 tableName/pageCode 不能完全确定，也要给出 featureCode、featureName、moduleName 和 fields，后续工程会推断缺省编码。",
@@ -490,8 +492,8 @@ function addCourseSchedulingWorkflow(args: Record<string, unknown>, intent: Inte
       variant: "primary",
       modalTitle: "新增排课",
       defaultValues: {
-        course_type: args.defaultCourseType ?? "ONE_ON_ONE_COURSE",
-        course_status: "SCHEDULED",
+        course_type: dictDefault("course_type", args.defaultCourseType ?? "ONE_ON_ONE_COURSE"),
+        course_status: dictDefault("course_status", "SCHEDULED"),
         course_hour: args.defaultCourseHour ?? 1,
       },
       fields: [
@@ -524,7 +526,7 @@ function addChargeWorkflow(args: Record<string, unknown>, intent: IntentResult):
       label,
       type: "open_modal",
       apiCode: "charge_record.create",
-      visibleWhen: { course_status: "FINISHED" },
+      visibleWhen: { course_status: dictDefault("course_status", "FINISHED") },
       mapRowToValue: {
         course_id: "id",
         organization_id: "organization_id",
@@ -532,7 +534,7 @@ function addChargeWorkflow(args: Record<string, unknown>, intent: IntentResult):
         contract_product_id: "contract_product_id",
       },
       defaultValues: {
-        charge_type: args.defaultChargeType ?? "NORMAL",
+        charge_type: dictDefault("charge_type", args.defaultChargeType ?? "NORMAL"),
         charge_hour: args.defaultChargeHour ?? 1,
       },
       fields: [
@@ -545,11 +547,8 @@ function addChargeWorkflow(args: Record<string, unknown>, intent: IntentResult):
           label: "扣费类型",
           type: "select",
           required: true,
-          options: [
-            { label: "实收扣费", value: "NORMAL" },
-            { label: "优惠扣费", value: "PROMOTION" },
-            { label: "赠课扣费", value: "PROMOTION_HOUR" },
-          ],
+          dictCode: "charge_type",
+          optionSource: { type: "dictionary", apiCode: "dictionary.options", dictCode: "charge_type", valueField: "value", labelField: "label" },
         },
         { key: "charge_hour", label: "扣课时", type: "number", required: true },
         { key: "charge_amount", label: "扣费金额", type: "number", required: true },
@@ -571,14 +570,14 @@ function addContractPaymentWorkflow(args: Record<string, unknown>, intent: Inten
       label,
       type: "open_modal",
       apiCode: "funds_history.create",
-      visibleWhen: { contract_status: "ACTIVE" },
+      visibleWhen: { contract_status: dictDefault("contract_status", "ACTIVE") },
       mapRowToValue: {
         contract_id: "id",
         student_id: "student_id",
         organization_id: "organization_id",
       },
       defaultValues: {
-        funds_type: args.defaultFundsType ?? "CONTRACT_PAY",
+        funds_type: dictDefault("funds_type", args.defaultFundsType ?? "CONTRACT_PAY"),
       },
       fields: [
         pageFieldDef({ key: "contract_id", label: "合同", type: "select", required: true }),
@@ -587,7 +586,7 @@ function addContractPaymentWorkflow(args: Record<string, unknown>, intent: Inten
         { key: "transaction_amount", label: "收款金额", type: "number", required: true },
         pageFieldDef({ key: "pay_way_config_id", label: "支付方式", type: "select", required: true }),
         { key: "transaction_time", label: "收款时间", type: "datetime", required: true },
-        { key: "funds_type", label: "收款类型", type: "select", required: true, options: [{ label: "合同收款", value: "CONTRACT_PAY" }] },
+        { key: "funds_type", label: "收款类型", type: "select", required: true, dictCode: "funds_type", optionSource: { type: "dictionary", apiCode: "dictionary.options", dictCode: "funds_type", valueField: "value", labelField: "label" } },
       ],
     },
   }];
@@ -940,18 +939,8 @@ function inferBusinessType(category: string, featureCode: string, text: string) 
 }
 
 function defaultRuleName(category: string) {
-  const names: Record<string, string> = {
-    funds_allocation: "资金分配规则",
-    promotion_allocation: "优惠分配规则",
-    performance_allocation: "业绩分配规则",
-    approval_trigger: "审批触发规则",
-    validation: "业务校验规则",
-    workflow: "业务流转规则",
-    refund: "退费规则",
-    charge: "扣费规则",
-    attendance: "考勤规则",
-  };
-  return names[category] ?? "业务规则";
+  const label = SYSTEM_DICTIONARIES.business_rule_category?.[category]?.label;
+  return label ? `${label}规则` : "业务规则";
 }
 
 function moduleCodeForBusinessType(businessType: string) {

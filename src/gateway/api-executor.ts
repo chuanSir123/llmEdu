@@ -10,6 +10,7 @@ import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
+import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -66,36 +67,21 @@ function safeCode(value: unknown, label: string) {
   return text;
 }
 
+const CORE_BUSINESS_RULE_CODES = new Set([
+  "funds_create_rule",
+  "charge_create_rule",
+  "refund_create_rule",
+  "contract_refund_rule",
+  "course_create_rule",
+  "course_time_validation_rule"
+]);
+
 function businessRuleCategoryLabel(category: string) {
-  const labels: Record<string, string> = {
-    funds_allocation: "资金分配",
-    promotion_allocation: "优惠分配",
-    performance_allocation: "业绩分配",
-    approval_trigger: "审批触发",
-    validation: "校验规则",
-    workflow: "业务流转",
-    refund: "退费规则",
-    charge: "扣费规则",
-    attendance: "考勤规则",
-  };
-  return labels[category] ?? category;
+  return SYSTEM_DICTIONARIES.business_rule_category?.[category]?.label ?? category;
 }
 
 function businessRuleTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    contract: "合同签约",
-    funds: "收款",
-    course: "排课",
-    course_cancel: "课程取消",
-    attendance: "考勤",
-    charge: "扣费",
-    charge_reverse: "撤销扣费",
-    refund: "退费",
-    contract_refund: "合同退费",
-    product_price: "产品价格",
-    performance: "业绩",
-  };
-  return labels[type] ?? type;
+  return SYSTEM_DICTIONARIES.business_type?.[type]?.label ?? type;
 }
 
 function moduleLabel(moduleCode: string) {
@@ -330,6 +316,7 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
 async function saveBusinessRule(schemaName: string, params: Record<string, unknown>) {
   const input = asObject(params.data ?? params);
   const ruleCode = input.rule_code || input.ruleCode ? safeCode(input.rule_code ?? input.ruleCode, "规则编码") : `custom_rule_${Date.now()}`;
+  if (CORE_BUSINESS_RULE_CODES.has(ruleCode)) throw Object.assign(new Error(`核心业务规则不可修改: ${ruleCode}`), { statusCode: 403 });
   const ruleName = String(input.rule_name ?? input.ruleName ?? ruleCode);
   const ruleJson = { ...parseJsonObject(input.rule_json), ruleCode, ruleName };
   const { rows } = await pool.query(
@@ -350,6 +337,10 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
 }
 
 async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>, user?: SessionUser) {
+  params = await normalizeDictionaryInputValues(schemaName, params, Object.keys(params));
+  if (params.data && typeof params.data === "object" && !Array.isArray(params.data)) {
+    params = { ...params, data: await normalizeDictionaryInputValues(schemaName, asObject(params.data), Object.keys(asObject(params.data))) };
+  }
   if (scope === "admin") {
     if (apiCode === "wechat_third_platform_app.query") return queryWechatThirdPlatformApps(params);
     if (apiCode === "wechat_third_platform_app.create" || apiCode === "wechat_third_platform_app.update") return saveWechatThirdPlatformApp(params);
@@ -376,6 +367,10 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     return executeCommandDsl(schemaName, { operation: "command", ...businessCommand } as never, { ...params, __userId: user?.userId });
   }
   if (apiCode === "permission_config.meta") return listPermissionConfig(schemaName, String(params.roleId ?? params.id ?? ""));
+  if (apiCode === "dictionary.options") return listDictionaryOptions(schemaName, params.dictCode ?? asObject(params.filters).dictCode ?? asObject(params.filters).dict_code);
+  if (apiCode === "dictionary_item.query") return queryDictionaryItems(schemaName, params);
+  if (apiCode === "dictionary_item.create" || apiCode === "dictionary_item.update") return saveTenantDictionaryItem(schemaName, params);
+  if (apiCode === "dictionary_item.delete") return deleteTenantDictionaryItem(schemaName, params.id);
   if (apiCode === "approval_flow_list.query") return queryApprovalFlows(schemaName, params);
   if (apiCode === "approval_flow_list.create" || apiCode === "approval_flow_list.update") return saveApprovalFlow(schemaName, params);
   if (apiCode === "approval_flow_list.delete") {
@@ -389,6 +384,9 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
   if (apiCode === "business_rule_list.query") return queryBusinessRules(schemaName, params);
   if (apiCode === "business_rule_list.create" || apiCode === "business_rule_list.update") return saveBusinessRule(schemaName, params);
   if (apiCode === "business_rule_list.delete") {
+    const { rows } = await pool.query(`select rule_code, rule_json from admin.business_rule where id = $1 and schema_scope = 'tenant' and schema_name = $2 and deleted = false limit 1`, [params.id, schemaName]);
+    const row = rows[0];
+    if (row && (CORE_BUSINESS_RULE_CODES.has(String(row.rule_code)) || asObject(row.rule_json).coreRule === true)) throw Object.assign(new Error(`核心业务规则不可删除: ${row.rule_code}`), { statusCode: 403 });
     await pool.query(`update admin.business_rule set deleted = true, updated_at = now() where id = $1 and schema_scope = 'tenant' and schema_name = $2`, [params.id, schemaName]);
     return { deleted: true, id: params.id };
   }

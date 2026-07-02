@@ -308,6 +308,40 @@ export async function migrate() {
     );
     create unique index if not exists business_rule_active_key on admin.business_rule(schema_scope, coalesce(schema_name,''), rule_code) where status = 'active' and deleted = false;
 
+    create sequence if not exists admin.dictionary_item_id_seq;
+    create table if not exists admin.dictionary_item (
+      id text primary key default nextval('admin.dictionary_item_id_seq')::text,
+      dict_code text not null,
+      item_value text not null,
+      item_label text not null,
+      schema_scope text not null default 'admin',
+      schema_name text not null default '',
+      is_system boolean not null default false,
+      locked boolean not null default false,
+      sort_no int not null default 100,
+      status text not null default 'ACTIVE',
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      deleted boolean not null default false
+    );
+    alter table admin.dictionary_item alter column id set default nextval('admin.dictionary_item_id_seq')::text;
+    create unique index if not exists dictionary_item_value_key on admin.dictionary_item(dict_code, schema_name, item_value);
+    create index if not exists dictionary_item_lookup_idx on admin.dictionary_item(dict_code, schema_scope, schema_name, status) where deleted = false;
+
+    create table if not exists admin.business_event_execution (
+      id text primary key,
+      schema_name text not null,
+      event_key text not null,
+      listener_code text not null,
+      status text not null,
+      payload_json jsonb not null default '{}',
+      error text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique(schema_name, event_key, listener_code)
+    );
+
     create table if not exists admin.wechat_third_platform_app (
       id text primary key, app_name text not null, component_appid text not null unique, component_appsecret text, token text, encoding_aes_key text,
       auth_redirect_domain text, callback_domain text, status text not null default 'ACTIVE', ext_json jsonb not null default '{}',

@@ -1,6 +1,7 @@
 import { pool, withClient } from "../db/pool.js";
+import { seedSystemDictionaries } from "../dictionary.service.js";
 import { migrate } from "../db/migrator.js";
-import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, llmSeed, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap, standardImportConfigs } from "./data.js";
+import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, enhanceDictionaryFields, llmSeed, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap, standardImportConfigs } from "./data.js";
 import { env } from "../config/env.js";
 import { fillEmptySkillMd } from "../agent/skill-md.service.js";
 import path from "node:path";
@@ -259,14 +260,18 @@ async function seedAdmin() {
     max_chat_rounds: 20
   });
 
+  const coreBusinessRuleCodes = new Set(["funds_create_rule", "charge_create_rule", "refund_create_rule", "contract_refund_rule", "course_create_rule", "course_time_validation_rule"]);
   for (const rule of businessRules) {
+    const ruleJson = coreBusinessRuleCodes.has(rule.rule_code)
+      ? { ...rule.rule_json, coreRule: true, locked: true, aiCustomizable: false }
+      : rule.rule_json;
     await upsert("admin.business_rule", "id", {
       id: id("rule_demo", rule.rule_code),
       schema_scope: "tenant",
       schema_name: "demo_school",
       rule_code: rule.rule_code,
       rule_name: rule.rule_name,
-      rule_json: JSON.stringify(rule.rule_json),
+      rule_json: JSON.stringify(ruleJson),
       version_no: 1,
       status: "active"
     });
@@ -338,7 +343,7 @@ async function seedAdmin() {
       page_name: extra.name,
       page_kind: extra.pageKind,
       route_path: `/${extra.pageCode}`,
-      dsl_json: JSON.stringify(extra.dsl),
+      dsl_json: JSON.stringify(enhanceDictionaryFields(extra.dsl)),
       version_no: 1,
       status: "active"
     });
@@ -355,7 +360,7 @@ async function seedAdmin() {
       action_code: action.actionCode,
       action_name: action.actionName,
       action_type: action.actionType,
-      dsl_json: JSON.stringify(action.dsl),
+      dsl_json: JSON.stringify(enhanceDictionaryFields(action.dsl)),
       version_no: 1,
       status: "active"
     });
@@ -372,7 +377,7 @@ async function seedAdmin() {
       action_code: modal.actionCode,
       action_name: modal.actionName,
       action_type: "modal",
-      dsl_json: JSON.stringify(modal.dsl),
+      dsl_json: JSON.stringify(enhanceDictionaryFields(modal.dsl)),
       version_no: 1,
       status: "active"
     });
@@ -761,6 +766,7 @@ async function seedTenantData() {
 
 export async function seed() {
   await migrate();
+  await seedSystemDictionaries();
   await seedAdmin();
   await seedTenantData();
   try {

@@ -116,6 +116,65 @@ const valueLabels = {
   source_label: { "租户自定义": "租户自定义", "模板机构": "模板机构" }
 };
 
+
+const extraDictionaryFieldKeys = [
+  "organization_type", "channel_type", "trial_status", "conversion_status", "task_type", "task_status", "follow_result",
+  "account_type", "leave_type", "holiday_type", "performance_type", "goods_status", "activity_type", "group_status",
+  "member_status", "order_status", "payment_status", "fulfillment_status", "service_type", "binding_type", "authorized_status",
+  "publish_status", "subscribe_status", "send_status", "reward_status", "action_type", "api_type", "cost_type",
+  "pay_type", "receiver_scope", "resource_type", "organization_scope", "target_status", "business_rule_category", "business_type"
+];
+const dictionaryFieldKeys = new Set([...Object.keys(valueLabels), ...extraDictionaryFieldKeys]);
+const dictionaryFieldAliases: Record<string, string> = {
+  category: "business_rule_category",
+  businessType: "business_type",
+  business_type: "business_type"
+};
+function dictCodeForField(field: { key: string }) {
+  return dictionaryFieldAliases[field.key] ?? (dictionaryFieldKeys.has(field.key) ? field.key : undefined);
+}
+
+
+function dictionaryOption(dictCode: string) {
+  return { type: "dictionary" as const, apiCode: "dictionary.options", dictCode, valueField: "value", labelField: "label" };
+}
+
+function dictionaryDefault(dictCode: string, itemValue: unknown) {
+  return { dictCode, itemValue };
+}
+
+function normalizeDictionaryDefault(fieldKey: string, rawValue: unknown) {
+  const dictCode = dictCodeForField({ key: fieldKey });
+  if (!dictCode || rawValue === undefined || rawValue === null || typeof rawValue === "object") return rawValue;
+  return dictionaryDefault(dictCode, rawValue);
+}
+
+function normalizeDictionaryMap(raw: unknown) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  return Object.fromEntries(Object.entries(raw as Record<string, unknown>).map(([fieldKey, fieldValue]) => [fieldKey, normalizeDictionaryDefault(fieldKey, fieldValue)]));
+}
+
+export function enhanceDictionaryFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => enhanceDictionaryFields(item));
+  if (!value || typeof value !== "object") return value;
+  const obj = { ...(value as Record<string, unknown>) };
+  const key = typeof obj.key === "string" ? obj.key : "";
+  const dictCode = key ? dictCodeForField({ key }) : undefined;
+  if (dictCode) {
+    obj.dictCode = obj.dictCode ?? dictCode;
+    obj.optionSource = obj.optionSource ?? dictionaryOption(dictCode);
+    obj.type = obj.type ?? "select";
+    if ("defaultValue" in obj) obj.defaultValue = normalizeDictionaryDefault(key, obj.defaultValue);
+  }
+  if ("defaultValues" in obj) obj.defaultValues = normalizeDictionaryMap(obj.defaultValues);
+  if ("visibleWhen" in obj) obj.visibleWhen = normalizeDictionaryMap(obj.visibleWhen);
+  for (const [childKey, childValue] of Object.entries(obj)) {
+    if (childKey === "optionSource" || childKey === "defaultValue" || childKey === "defaultValues" || childKey === "visibleWhen") continue;
+    obj[childKey] = enhanceDictionaryFields(childValue);
+  }
+  return obj;
+}
+
 const studentSelect = { pageCode: "student_list", apiCode: "student_list.query", labelField: "name" };
 const allStudentSelect = { pageCode: "frontdesk_home", apiCode: "frontdesk_home.query", labelField: "name" };
 const orgSelect = { pageCode: "organization_list", apiCode: "organization_list.query", labelField: "name" };
@@ -158,15 +217,17 @@ function businessTimeField(page: Pick<PageSeed, "fields" | "table">) {
 
 function apiFiltersFor(page: PageSeed) {
   const timeField = businessTimeField(page);
-  const filters: Array<string | { key: string; field: string; type?: string; op?: "eq" | "ilike" | "between" | "in" | "gt" | "gte" | "lt" | "lte" }> = [
+  const filters: Array<string | { key: string; field: string; type?: string; op?: "eq" | "ilike" | "between" | "in" | "gt" | "gte" | "lt" | "lte"; dictCode?: string; optionSource?: Record<string, unknown> }> = [
     { key: timeField, field: timeField, type: "date_range", op: "between" }
   ];
   for (const field of page.fields.filter((item) => item.filter && item.key !== timeField)) {
+    const dictCode = dictCodeForField(field);
     filters.push({
       key: field.key,
       field: field.field ?? field.key,
-      type: field.type ?? "text",
-      op: field.type === "date" ? "eq" : "ilike"
+      type: dictCode ? "select" : field.type ?? "text",
+      op: dictCode ? "eq" : field.type === "date" ? "eq" : "ilike",
+      ...(dictCode ? { dictCode, optionSource: dictionaryOption(dictCode) } : {})
     });
   }
   for (const key of page.apiFilters ?? []) {
@@ -197,7 +258,9 @@ function fieldComponent(field: Field) {
                   : field.key === "one_on_n_group_id"
                     ? oneOnNGroupSelect
                     : undefined;
-  return optionSource ? { ...base, optionSource } : base;
+  const dictCode = dictCodeForField(field);
+  const dictionary = dictCode ? { dictCode, optionSource: dictionaryOption(dictCode) } : {};
+  return optionSource ? { ...base, ...dictionary, optionSource } : { ...base, ...dictionary };
 }
 
 const contractCreateFields = [
@@ -2371,12 +2434,16 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   );
   const timeField = businessTimeField(page);
   const timeFieldSeed = page.fields.find((field) => field.key === timeField);
-  const fieldFilters = page.fields.filter((field) => field.filter && field.key !== timeField).map((field) => ({
-    key: field.key,
-    label: field.label,
-    type: page.page === "course_week_schedule" && field.key === "course_date" ? "date_range" : field.type ?? "text",
-    placeholder: `请输入${field.label}`
-  }));
+  const fieldFilters = page.fields.filter((field) => field.filter && field.key !== timeField).map((field) => {
+    const dictCode = dictCodeForField(field);
+    return {
+      key: field.key,
+      label: field.label,
+      type: page.page === "course_week_schedule" && field.key === "course_date" ? "date_range" : dictCode ? "select" : field.type ?? "text",
+      placeholder: `请输入${field.label}`,
+      ...(dictCode ? { dictCode, optionSource: dictionaryOption(dictCode) } : {})
+    };
+  });
   const filters = [
     {
       key: timeField,
@@ -2454,7 +2521,8 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         sortable: Boolean(field.sortable),
         width: columnWidth(field),
         align: columnAlign(field),
-        badge: field.badge ?? statusFields.has(field.key)
+        badge: field.badge ?? statusFields.has(field.key),
+        ...(dictCodeForField(field) ? { dictCode: dictCodeForField(field) } : {})
       })).filter((field) => !field.hidden),
       rowActions: [
         { actionCode: `${page.page}.detail`, label: "详情", type: "open_modal" },
@@ -3345,7 +3413,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     };
   }
 
-  return baseDsl;
+  return enhanceDictionaryFields(baseDsl);
 }
 
 export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number], apiType: "query" | "detail" | "create" | "update" | "delete") {

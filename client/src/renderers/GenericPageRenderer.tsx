@@ -12,6 +12,7 @@ import { ImportHandler } from "./ImportHandler";
 import { exportToExcel } from "./ExportHandler";
 import { CustomizationRecordDetail } from "./CustomizationRecordDetail";
 import { CalendarView } from "./CalendarView";
+import { fieldDictCode } from "../dsl/dictionarySource";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type MetricDsl = {
@@ -36,6 +37,14 @@ type ModalState =
   | { type: "edit"; value: Record<string, unknown>; action?: ActionDsl }
   | { type: "detail"; value: Record<string, unknown> }
   | null;
+
+function collectDictionaryRefs(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => collectDictionaryRefs(item));
+  if (!value || typeof value !== "object") return [];
+  const obj = value as Record<string, unknown>;
+  const self = typeof obj.dictCode === "string" ? [obj.dictCode] : [];
+  return [...self, ...Object.values(obj).flatMap((child) => collectDictionaryRefs(child))];
+}
 
 export function GenericPageRenderer({
   scope,
@@ -73,13 +82,16 @@ export function GenericPageRenderer({
   const [customizationRecordId, setCustomizationRecordId] = useState("");
   const [importConfig, setImportConfig] = useState<Record<string, unknown> | null>(null);
   const [rightRailItems, setRightRailItems] = useState<Record<string, RightRailItem[]>>({});
+  const [dictionaryLabels, setDictionaryLabels] = useState<Record<string, Record<string, string>>>({});
+  const [dictionaryOptionIds, setDictionaryOptionIds] = useState<Record<string, Record<string, string>>>({});
+  const [dictionaryMeta, setDictionaryMeta] = useState<Record<string, Record<string, Record<string, unknown>>>>({});
   const [enrollmentValue, setEnrollmentValue] = useState<Record<string, unknown>>({});
   const remoteProductOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
   const remotePromotionOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
 
   const createAction = toolbarDsl.find((action) => action.actionCode.endsWith(".create") || action.actionCode.endsWith(".enroll"));
   const enrollmentFields = dsl.layout === "enrollment" ? (createAction?.fields ?? modalDsl.fields) : [];
-  const enrollmentValueWithDefaults = dsl.layout === "enrollment" ? { ...(createAction?.defaultValues ?? {}), ...enrollmentValue } : {};
+  const enrollmentValueWithDefaults = dsl.layout === "enrollment" ? { ...(resolveDictionaryDefaults(createAction?.defaultValues) ?? {}), ...enrollmentValue } : {};
 
   const selectedProductIds = useMemo(() => {
     if (dsl.layout !== "enrollment") return [] as string[];
@@ -93,6 +105,77 @@ export function GenericPageRenderer({
       return opt?.row ?? {};
     });
   }, [dsl.layout, selectedProductIds]);
+
+
+  const dictionaryCodes = useMemo(() => {
+    const actions = [...toolbarDsl, ...(tableDsl.rowActions ?? [])];
+    const actionFields = actions.flatMap((action) => action.fields ?? []);
+    const fields = [...filtersDsl, ...(tableDsl.columns ?? []), ...(modalDsl.fields ?? []), ...actionFields];
+    const fieldCodes = fields.map((field) => fieldDictCode(field)).filter(Boolean) as string[];
+    const refCodes = actions.flatMap((action) => [
+      ...collectDictionaryRefs(action.defaultValues),
+      ...collectDictionaryRefs(action.visibleWhen)
+    ]);
+    return [...new Set([...fieldCodes, ...refCodes])];
+  }, [dsl.pageCode, JSON.stringify(filtersDsl), JSON.stringify(tableDsl.columns ?? []), JSON.stringify(tableDsl.rowActions ?? []), JSON.stringify(modalDsl.fields ?? []), JSON.stringify(toolbarDsl)]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!dictionaryCodes.length) {
+      setDictionaryLabels({});
+      return;
+    }
+    Promise.all(dictionaryCodes.map(async (dictCode) => {
+      const result = await GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: "__dictionary__",
+        apiCode: "dictionary.options",
+        params: { dictCode, page: 1, pageSize: 500 }
+      });
+      const data = result.data as { rows: Array<{ value?: string; itemValue?: string; item_value?: string; label?: string; item_label?: string; metadata?: Record<string, unknown>; metadata_json?: Record<string, unknown> }> };
+      const labels: Record<string, string> = {};
+      const ids: Record<string, string> = {};
+      const meta: Record<string, Record<string, unknown>> = {};
+      for (const row of data.rows ?? []) {
+        const itemValue = String(row.itemValue ?? row.item_value ?? row.value ?? "");
+        labels[itemValue] = String(row.label ?? row.item_label ?? itemValue);
+        ids[itemValue] = String(row.value ?? "");
+        meta[itemValue] = row.metadata ?? row.metadata_json ?? {};
+      }
+      return [dictCode, { labels, ids, meta }] as const;
+    }))
+      .then((entries) => {
+        if (cancelled) return;
+        setDictionaryLabels(Object.fromEntries(entries.map(([dictCode, data]) => [dictCode, data.labels])));
+        setDictionaryOptionIds(Object.fromEntries(entries.map(([dictCode, data]) => [dictCode, data.ids])));
+        setDictionaryMeta(Object.fromEntries(entries.map(([dictCode, data]) => [dictCode, data.meta])));
+      })
+      .catch(() => { if (!cancelled) { setDictionaryLabels({}); setDictionaryOptionIds({}); setDictionaryMeta({}); } });
+    return () => { cancelled = true; };
+  }, [scope, schemaName, dictionaryCodes.join("|")]);
+
+  const presentationWithDictionaries = useMemo(() => ({
+    ...(dsl.presentation ?? {}),
+    valueLabels: { ...dictionaryLabels, ...(dsl.presentation?.valueLabels ?? {}) },
+    dictionaryMeta: { ...dictionaryMeta, ...(dsl.presentation?.dictionaryMeta ?? {}) }
+  }), [dsl.presentation, dictionaryLabels, dictionaryMeta]);
+
+  function resolveDictionaryValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map((item) => resolveDictionaryValue(item));
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      if (typeof obj.dictCode === "string" && obj.itemValue !== undefined) {
+        return dictionaryOptionIds[obj.dictCode]?.[String(obj.itemValue)] ?? obj.itemValue;
+      }
+      return Object.fromEntries(Object.entries(obj).map(([key, child]) => [key, resolveDictionaryValue(child)]));
+    }
+    return value;
+  }
+
+  function resolveDictionaryDefaults<T extends Record<string, unknown> | undefined>(defaults: T): T {
+    return (defaults ? resolveDictionaryValue(defaults) : defaults) as T;
+  }
 
   function mappedRowValues(action: ActionDsl, row: Record<string, unknown>) {
     return Object.fromEntries(
@@ -270,7 +353,7 @@ export function GenericPageRenderer({
   async function submitEnrollment() {
     if (!createAction) return;
     const apiCode = createAction.apiCode ?? dsl.createApi;
-    const submitData: Record<string, unknown> = { ...(createAction.defaultValues ?? {}), ...enrollmentValue };
+    const submitData: Record<string, unknown> = { ...(resolveDictionaryDefaults(createAction.defaultValues) ?? {}), ...enrollmentValue };
     const productIds = (Array.isArray(submitData.product_ids) ? submitData.product_ids : []) as string[];
     if (productIds.length) {
       const contractProducts = productIds.map((pid) => {
@@ -330,7 +413,7 @@ export function GenericPageRenderer({
       return;
     }
     if (action.actionCode.endsWith(".create")) {
-      setModal({ type: "create", value: action.defaultValues ?? {}, action });
+      setModal({ type: "create", value: resolveDictionaryDefaults(action.defaultValues) ?? {}, action });
       return;
     }
     if (isImportToolbarAction(action)) {
@@ -365,15 +448,15 @@ export function GenericPageRenderer({
     }
     if (action.type === "open_modal" && action.fields?.length) {
       const mapped = mappedRowValues(action, row);
-      setModal({ type: "create", value: { ...(action.defaultValues ?? {}), ...mapped }, action });
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped }, action });
       return;
     }
     if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
       const mapped = mappedRowValues(action, row);
-      const data = { ...row, ...(action.defaultValues ?? {}), ...mapped };
+      const data = { ...row, ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped };
       const params = (action.apiCode ?? action.actionCode).endsWith(".update")
         ? { id: row.id, data }
-        : { ...(action.defaultValues ?? {}), ...row, ...mapped, id: row.id, versionId: row.id };
+        : { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...row, ...mapped, id: row.id, versionId: row.id };
       try {
         await GatewayClient.executeApi({
           scope,
@@ -472,6 +555,19 @@ export function GenericPageRenderer({
             }}
           />
         </div>
+      );
+    }
+    const dictOptions = presentationWithDictionaries.valueLabels?.[field.key];
+    if (field.type === "select" || fieldDictCode(field) || dictOptions) {
+      return (
+        <select
+          className={filterControlClass()}
+          value={String(filters[field.key] ?? "")}
+          onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
+        >
+          <option value="">全部</option>
+          {Object.entries(dictOptions ?? {}).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
       );
     }
     const inputType = field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text";
@@ -673,7 +769,7 @@ export function GenericPageRenderer({
                   rows={dashboardRows}
                   rowActions={[]}
                   onAction={() => undefined}
-                  presentation={dsl.presentation}
+                  presentation={presentationWithDictionaries}
                 />
               </div>
             ))}
@@ -761,7 +857,7 @@ export function GenericPageRenderer({
               fields={byKeys(["student_id"])}
               value={enrollmentValueWithDefaults}
               onChange={(next) => setEnrollmentValue(next)}
-              presentation={dsl.presentation}
+              presentation={presentationWithDictionaries}
               columns={3}
               labelAlign="left"
             />
@@ -794,7 +890,7 @@ export function GenericPageRenderer({
                   }
                   setEnrollmentValue(merged);
                 }}
-                presentation={dsl.presentation}
+                presentation={presentationWithDictionaries}
                 columns={3}
                 labelAlign="left"
               />
@@ -816,7 +912,7 @@ export function GenericPageRenderer({
                           <td className="px-3 py-2">
                             <div className="font-medium text-[#263445]">{cp.productName}</div>
                             <div className="text-xs text-[#8b95a7]">
-                              {dsl.presentation?.valueLabels?.product_type?.[cp.productType] ?? cp.productType}
+                              {presentationWithDictionaries.valueLabels?.product_type?.[cp.productType] ?? cp.productType}
                             </div>
                           </td>
                           <td className="px-3 py-2">
@@ -891,7 +987,7 @@ export function GenericPageRenderer({
                   }
                   setEnrollmentValue(next);
                 }}
-                presentation={dsl.presentation}
+                presentation={presentationWithDictionaries}
                 columns={2}
                 labelAlign="left"
               />
@@ -923,7 +1019,7 @@ export function GenericPageRenderer({
             onChange={(value) => setModal({ ...modal, value })}
             onClose={() => setModal(null)}
             onSubmit={submitModal}
-            presentation={dsl.presentation}
+            presentation={presentationWithDictionaries}
             size={"action" in modal ? modal.action?.modalSize : undefined}
           />
         )}
@@ -946,7 +1042,7 @@ export function GenericPageRenderer({
     : "mx-3 flex shrink-0 items-center justify-center border-t border-[#d9e3ed] bg-white px-4 py-2 text-sm text-[#607083]";
   const toolbarAlign = dsl.presentation?.toolbar?.align ?? "left";
 
-  if (dsl.layout === "calendar" || dsl.presentation?.type === "calendar") {
+  if (dsl.layout === "calendar" || presentationWithDictionaries?.type === "calendar") {
     return (
       <div className={`flex h-full flex-col overflow-hidden bg-[#eef0f8] ${pageFontClass}`}>
         <div className={filterBarClass}>
@@ -960,7 +1056,7 @@ export function GenericPageRenderer({
         </div>
         {error && <div className="mx-3 mt-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         <div className="mx-3 mt-3 min-h-0 flex-1 overflow-hidden bg-white">
-          <CalendarView dsl={dsl} rows={rows} toolbar={toolbarDsl} onToolbar={onToolbar} onAction={onRowAction} />
+          <CalendarView dsl={{ ...dsl, presentation: presentationWithDictionaries }} rows={rows} toolbar={toolbarDsl} onToolbar={onToolbar} onAction={onRowAction} />
         </div>
         {modal && (
           <ModalRenderer
@@ -973,7 +1069,7 @@ export function GenericPageRenderer({
             onChange={(value) => setModal({ ...modal, value })}
             onClose={() => setModal(null)}
             onSubmit={submitModal}
-            presentation={dsl.presentation}
+            presentation={presentationWithDictionaries}
             size={"action" in modal ? modal.action?.modalSize : undefined}
           />
         )}
@@ -1034,7 +1130,7 @@ export function GenericPageRenderer({
             <button className="text-xs text-[#607083] hover:text-[#2f80ed]" onClick={() => setImportConfig(null)}>关闭</button>
           </div>
           <ImportHandler
-            dsl={dsl}
+            dsl={{ ...dsl, presentation: presentationWithDictionaries }}
             scope={scope}
             schemaName={schemaName}
             importConfig={importConfig}
@@ -1050,7 +1146,7 @@ export function GenericPageRenderer({
           rows={rows}
           rowActions={tableDsl.rowActions}
           onAction={onRowAction}
-          presentation={dsl.presentation}
+          presentation={presentationWithDictionaries}
         />
       </div>
 
@@ -1087,7 +1183,7 @@ export function GenericPageRenderer({
           onChange={(value) => setModal({ ...modal, value })}
           onClose={() => setModal(null)}
           onSubmit={submitModal}
-          presentation={dsl.presentation}
+          presentation={presentationWithDictionaries}
           size={"action" in modal ? modal.action?.modalSize : undefined}
         />
       )}
