@@ -10,7 +10,7 @@ import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
-import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, systemDictionaryLabel, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -97,14 +97,7 @@ function moduleLabel(moduleCode: string) {
 }
 
 function approvalRoleLabel(role: string) {
-  const labels: Record<string, string> = {
-    PRINCIPAL: "校长",
-    MANAGER: "校长",
-    SALES: "顾问",
-    TEACHER: "老师",
-    STUDY_MANAGER: "学管师",
-  };
-  return labels[role] ?? role;
+  return systemDictionaryLabel("approval_role", role) ?? systemDictionaryLabel("staff_type", role) ?? role;
 }
 
 function pageFields(dsl: Record<string, unknown>) {

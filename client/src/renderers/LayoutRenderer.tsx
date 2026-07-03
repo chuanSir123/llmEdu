@@ -28,7 +28,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [managementOpen, setManagementOpen] = useState(false);
   const [managementSearch, setManagementSearch] = useState("");
-  const [managementOrganizations, setManagementOrganizations] = useState<Array<{ id: string; name: string; parent_id?: string | null; organization_type?: string }>>([]);
+  const [managementOrganizations, setManagementOrganizations] = useState<Array<{ id: string; name: string; parent_id?: string | null; organization_type?: string; organization_type_label?: string }>>([]);
   const [managementOrganizationId, setManagementOrganizationId] = useState<string>(() => getStoredManagementOrganizationId() ?? "");
   const isTestSchema = Boolean(schemaName?.endsWith("_test"));
 
@@ -147,7 +147,6 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
   }, [managementOrganizations, managementSearch]);
 
   const currentManagementOrganization = managementOrganizations.find((item) => item.id === managementOrganizationId);
-  const orgTypeLabel: Record<string, string> = { HEAD: "总部", COMPANY: "分公司", BRANCH: "校区", CUSTOM: "自定义" };
   const userInitial = (user?.name ?? "U").slice(0, 1);
 
   async function switchManagementOrganization(id: string) {
@@ -211,7 +210,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
                             {org.id === managementOrganizationId ? <Check className="h-3.5 w-3.5 text-[#2f80ed]" /> : <Building2 className="h-3.5 w-3.5" />}
                           </span>
                           <span className="min-w-0 flex-1 truncate">{org.name}</span>
-                          {org.organization_type && <span className="shrink-0 border border-[#e1e7f0] bg-[#f8fafc] px-1.5 py-0.5 text-[11px] text-[#7a8494]">{orgTypeLabel[org.organization_type] ?? org.organization_type}</span>}
+                          {org.organization_type && <span className="shrink-0 border border-[#e1e7f0] bg-[#f8fafc] px-1.5 py-0.5 text-[11px] text-[#7a8494]">{org.organization_type_label ?? org.organization_type}</span>}
                         </button>
                       ))}
                       {!managementTree.length && <div className="px-3 py-3 text-sm text-[#8b95a7]">无匹配架构</div>}

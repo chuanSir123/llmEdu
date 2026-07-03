@@ -1,5 +1,5 @@
 import { pool, withClient } from "../db/pool.js";
-import { seedSystemDictionaries } from "../dictionary.service.js";
+import { seedSystemDictionaries, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 import { migrate } from "../db/migrator.js";
 import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, enhanceDictionaryFields, llmSeed, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap, standardImportConfigs } from "./data.js";
 import { env } from "../config/env.js";
@@ -9,6 +9,42 @@ import { fileURLToPath } from "node:url";
 
 function id(prefix: string, code: string) {
   return `${prefix}_${code}`.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+
+function collectSkillDictionaries(dsl: {
+  filters?: Array<{ key?: string; label?: string; dictCode?: string; optionSource?: { dictCode?: string; filters?: { dictCode?: string } } }>;
+  table?: { columns?: Array<{ key?: string; label?: string; dictCode?: string; optionSource?: { dictCode?: string; filters?: { dictCode?: string } } }> };
+  modal?: { fields?: Array<{ key?: string; label?: string; dictCode?: string; optionSource?: { dictCode?: string; filters?: { dictCode?: string } } }> };
+}) {
+  const fields = [...(dsl.filters ?? []), ...(dsl.table?.columns ?? []), ...(dsl.modal?.fields ?? [])];
+  const byDict = new Map<string, Array<{ key?: string; label?: string }>>();
+  for (const field of fields) {
+    const dictCode = field.dictCode ?? field.optionSource?.dictCode ?? field.optionSource?.filters?.dictCode;
+    if (!dictCode) continue;
+    byDict.set(dictCode, [...(byDict.get(dictCode) ?? []), { key: field.key, label: field.label }]);
+  }
+  return [...byDict.entries()].map(([dictCode, fieldRefs]) => ({ dictCode, fieldRefs }));
+}
+
+function buildSkillDictionarySection(dsl: ReturnType<typeof pageDsl>) {
+  const dictionaries = collectSkillDictionaries(dsl as never);
+  if (!dictionaries.length) return "## 数据字典\n（本功能未识别到字典字段）";
+  const lines = [
+    "## 数据字典",
+    "AI 定制遇到下列字段时必须使用字典项的英文值（itemValue）作为入库/条件值；中文名仅用于展示。字典项 ID 使用 dictCode.itemValue 稳定标识。",
+    "",
+    "| 字段 | 字段名 | 字典编码 | 字典项ID | 英文值(itemValue) | 中文名 |",
+    "|------|--------|----------|----------|-------------------|--------|"
+  ];
+  for (const { dictCode, fieldRefs } of dictionaries) {
+    const fieldText = fieldRefs.map((field) => field.key ?? "").filter(Boolean).join(", ");
+    const labelText = fieldRefs.map((field) => field.label ?? field.key ?? "").filter(Boolean).join(", ");
+    const items = SYSTEM_DICTIONARIES[dictCode] ?? {};
+    if (!Object.keys(items).length) lines.push(`| ${fieldText} | ${labelText} | ${dictCode} |  |  | （租户自定义字典，运行时从 dictionary.options 获取） |`);
+    for (const [itemValue, item] of Object.entries(items)) lines.push(`| ${fieldText} | ${labelText} | ${dictCode} | ${dictCode}.${itemValue} | ${itemValue} | ${item.label} |`);
+  }
+  return lines.join("\n");
 }
 
 function collectPageActionCodes(page: (typeof pages)[number]) {
@@ -62,6 +98,8 @@ function buildSkillMd(page: (typeof pages)[number] | (typeof adminPages)[number]
 - 字段：${fields}
 - 筛选：${filters}
 - 标准接口：${apiCodes}
+
+${buildSkillDictionarySection(dsl)}
 
 ## 页面动作
 ${actions}

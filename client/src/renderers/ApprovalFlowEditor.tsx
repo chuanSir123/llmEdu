@@ -6,47 +6,14 @@ type Step = {
   assigneeRole?: string;
 };
 
-const triggerEvents = {
-  contract_discount_submit: "合同优惠提交",
-  lead_enroll_submit: "新生报名提交",
-  contract_create_submit: "合同创建提交",
-  funds_create_submit: "收款提交",
-  refund_create_submit: "退费提交",
-  course_create_submit: "排课提交",
-  course_cancel_submit: "课程取消提交",
-  charge_reverse_submit: "撤销扣费提交",
-  product_price_change_submit: "产品改价提交"
-};
+function optionsFor(valueLabels: Record<string, Record<string, string>>, dictCode: string) {
+  return valueLabels[dictCode] ?? {};
+}
 
-const pageOptions = {
-  contract_list: "合同列表",
-  lead_list: "新生报名",
-  funds_history: "收款记录",
-  refund_record: "退费记录",
-  course_list: "排课列表",
-  charge_record: "扣费记录",
-  product_list: "产品列表"
-};
+function firstOptionValue(options: Record<string, string>, fallback = "") {
+  return Object.keys(options)[0] ?? fallback;
+}
 
-const actionOptions = {
-  "contract_list.funds": "允许合同收款",
-  "contract_list.create": "允许新增合同",
-  "lead_list.enroll": "允许报名转化",
-  "funds_history.create": "允许新增收款",
-  "refund_record.create": "允许新增退费",
-  "course_list.create": "允许新增排课",
-  "course_list.cancel": "允许取消课程",
-  "charge_record.reverse": "允许撤销扣费",
-  "product_list.edit": "允许编辑产品"
-};
-
-const roleOptions = {
-  PRINCIPAL: "校长",
-  MANAGER: "校长",
-  SALES: "顾问",
-  TEACHER: "老师",
-  STUDY_MANAGER: "学管师"
-};
 
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -58,13 +25,19 @@ function stepsOf(config: Record<string, unknown>): Step[] {
 
 export function ApprovalFlowEditor({
   value,
-  onChange
+  onChange,
+  valueLabels = {}
 }: {
   value: unknown;
   onChange: (next: Record<string, unknown>) => void;
+  valueLabels?: Record<string, Record<string, string>>;
 }) {
   const config = asObject(value);
   const steps = stepsOf(config);
+  const triggerEvents = optionsFor(valueLabels, "approval_trigger_event");
+  const pageOptions = optionsFor(valueLabels, "approval_trigger_page");
+  const actionOptions = optionsFor(valueLabels, "approval_action_code");
+  const roleOptions = optionsFor(valueLabels, "approval_role");
 
   const updateConfig = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   const updateStep = (index: number, patch: Step) => {
@@ -137,7 +110,7 @@ export function ApprovalFlowEditor({
       <button
         type="button"
         className={`${token.button} ${token.defaultButton}`}
-        onClick={() => updateConfig({ steps: [...steps, { stepCode: `step_${steps.length + 1}`, stepName: "审批", assigneeRole: "PRINCIPAL" }] })}
+        onClick={() => updateConfig({ steps: [...steps, { stepCode: `step_${steps.length + 1}`, stepName: "审批", assigneeRole: firstOptionValue(roleOptions) }] })}
       >
         新增步骤
       </button>

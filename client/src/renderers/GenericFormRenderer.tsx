@@ -310,11 +310,13 @@ export function GenericFormRenderer({
             ) : field.type === "approval_flow_editor" ? (
               <ApprovalFlowEditor
                 value={value[field.key]}
+                valueLabels={presentation?.valueLabels}
                 onChange={(next) => onChange({ ...value, [field.key]: next, business_type: next.businessType ?? value.business_type })}
               />
             ) : field.type === "business_rule_editor" ? (
               <BusinessRuleEditor
                 value={value[field.key]}
+                valueLabels={presentation?.valueLabels}
                 onChange={(next) => onChange({ ...value, [field.key]: next })}
               />
             ) : field.type === "permission_editor" ? (

@@ -1,4 +1,5 @@
 import { pool } from "../db/pool.js";
+import { systemDictionaryLabel } from "../dictionary.service.js";
 import type { SessionUser } from "../types.js";
 
 export async function canAccessPage(user: SessionUser | undefined, schemaName: string | undefined, pageCode: string) {
@@ -127,6 +128,13 @@ async function resolveManagementContext(user: SessionUser, schemaName: string) {
   return { organizationId, subOrganizationIds, allowedOrganizationIds };
 }
 
+function withOrganizationTypeLabels(rows: Array<Record<string, unknown>>) {
+  return rows.map((row) => ({
+    ...row,
+    organization_type_label: systemDictionaryLabel("organization_type", row.organization_type) ?? row.organization_type
+  }));
+}
+
 export async function listManagementOrganizations(user: SessionUser | undefined, schemaName: string) {
   if (!user) return { currentOrganizationId: null, organizations: [] };
   if (user.kind === "admin") {
@@ -136,7 +144,7 @@ export async function listManagementOrganizations(user: SessionUser | undefined,
        where deleted = false
        order by parent_id nulls first, name`
     );
-    return { currentOrganizationId: rows[0]?.id ?? null, organizations: rows };
+    return { currentOrganizationId: rows[0]?.id ?? null, organizations: withOrganizationTypeLabels(rows) };
   }
   const context = await resolveManagementContext(user, schemaName);
   if (!context.allowedOrganizationIds.length) return { currentOrganizationId: null, organizations: [] };
@@ -147,7 +155,7 @@ export async function listManagementOrganizations(user: SessionUser | undefined,
      order by parent_id nulls first, name`,
     [context.allowedOrganizationIds]
   );
-  return { currentOrganizationId: context.organizationId, organizations: rows };
+  return { currentOrganizationId: context.organizationId, organizations: withOrganizationTypeLabels(rows) };
 }
 
 export async function getDataPermissionScope(user: SessionUser | undefined, schemaName: string) {

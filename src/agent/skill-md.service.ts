@@ -1,15 +1,16 @@
 import { pool } from "../db/pool.js";
 import { BUSINESS_API_EVENT_MAP, BUSINESS_COMMAND_EVENT_MAP } from "../gateway/business-event.service.js";
+import { SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 type PageDslJson = {
   title?: string;
-  filters?: Array<{ key?: string; label?: string; type?: string; placeholder?: string }>;
+  filters?: Array<{ key?: string; label?: string; type?: string; placeholder?: string; dictCode?: string; optionSource?: { dictCode?: string; filters?: { dictCode?: string } } }>;
   table?: {
-    columns?: Array<{ key?: string; label?: string; type?: string; width?: number; sortable?: boolean; badge?: boolean; align?: string }>;
+    columns?: Array<{ key?: string; label?: string; type?: string; width?: number; sortable?: boolean; badge?: boolean; align?: string; dictCode?: string; optionSource?: { dictCode?: string; filters?: { dictCode?: string } } }>;
   };
   toolbar?: Array<{ actionCode?: string; label?: string; variant?: string; type?: string }>;
   modal?: {
-    fields?: Array<{ key?: string; label?: string; type?: string; required?: boolean; span?: string | number }>;
+    fields?: Array<{ key?: string; label?: string; type?: string; required?: boolean; span?: string | number; dictCode?: string; optionSource?: { dictCode?: string; filters?: { dictCode?: string } } }>;
   };
 };
 
@@ -117,6 +118,50 @@ function extractSectionText(content: string, sectionTitle: string): string {
     if (result.join("").length > 240) break;
   }
   return result.join(" ").slice(0, 240);
+}
+
+
+function dslFieldDictCode(field: { dictCode?: string; optionSource?: { dictCode?: string; filters?: { dictCode?: string } } }) {
+  return field.dictCode ?? field.optionSource?.dictCode ?? field.optionSource?.filters?.dictCode;
+}
+
+function collectPageDictionaries(pageDsl: PageDslJson | null) {
+  const fields = [
+    ...(pageDsl?.filters ?? []),
+    ...(pageDsl?.table?.columns ?? []),
+    ...(pageDsl?.modal?.fields ?? [])
+  ];
+  const byDict = new Map<string, Array<{ key?: string; label?: string }>>();
+  for (const field of fields) {
+    const dictCode = dslFieldDictCode(field);
+    if (!dictCode) continue;
+    byDict.set(dictCode, [...(byDict.get(dictCode) ?? []), { key: field.key, label: field.label }]);
+  }
+  return [...byDict.entries()].map(([dictCode, fieldRefs]) => ({ dictCode, fieldRefs }));
+}
+
+function formatSkillDictionarySection(pageDsl: PageDslJson | null): string[] {
+  const dictionaries = collectPageDictionaries(pageDsl);
+  const lines: string[] = [];
+  lines.push("## 数据字典");
+  lines.push("AI 定制遇到下列字段时必须使用字典项的英文值（itemValue）作为入库/条件值；中文名仅用于展示。字典项 ID 使用 dictCode.itemValue 稳定标识；租户自定义字典项以运行时 dictionary.options 为准。");
+  lines.push("");
+  if (!dictionaries.length) {
+    lines.push("（本功能未识别到字典字段）");
+    lines.push("");
+    return lines;
+  }
+  lines.push("| 字段 | 字段名 | 字典编码 | 字典项ID | 英文值(itemValue) | 中文名 |");
+  lines.push("|------|--------|----------|----------|-------------------|--------|");
+  for (const { dictCode, fieldRefs } of dictionaries) {
+    const fieldText = fieldRefs.map((field) => field.key ?? "").filter(Boolean).join(", ");
+    const labelText = fieldRefs.map((field) => field.label ?? field.key ?? "").filter(Boolean).join(", ");
+    const items = SYSTEM_DICTIONARIES[dictCode] ?? {};
+    if (!Object.keys(items).length) lines.push(`| ${fieldText} | ${labelText} | ${dictCode} |  |  | （租户自定义字典） |`);
+    for (const [itemValue, item] of Object.entries(items)) lines.push(`| ${fieldText} | ${labelText} | ${dictCode} | ${dictCode}.${itemValue} | ${itemValue} | ${item.label} |`);
+  }
+  lines.push("");
+  return lines;
 }
 
 export function collectPrimaryTables(apiDsls: Array<{ dsl_json: ApiDslJson | null }>): string[] {
@@ -257,6 +302,8 @@ export function generateSkillMd(input: {
     lines.push("（无弹窗字段）");
   }
   lines.push("");
+
+  lines.push(...formatSkillDictionarySection(input.pageDsl));
 
   lines.push("## API 定义 (api_dsl)");
   lines.push("");

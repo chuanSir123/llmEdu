@@ -149,7 +149,7 @@ export const GatewayClient = {
   logout: () => request<{ success: boolean }>("/api/auth/logout", { method: "POST" }),
   getPermissions: () => request<LoginResult["permissions"]>("/api/auth/permissions"),
   managementOrganizations: (schemaName?: string) =>
-    request<{ currentOrganizationId: string | null; organizations: Array<{ id: string; name: string; parent_id?: string | null; organization_type?: string; status?: string }> }>(
+    request<{ currentOrganizationId: string | null; organizations: Array<{ id: string; name: string; parent_id?: string | null; organization_type?: string; organization_type_label?: string; status?: string }> }>(
       `/api/auth/management-organizations${schemaName ? `?schemaName=${encodeURIComponent(schemaName)}` : ""}`
     ),
   menu: (scope: "admin" | "tenant", schemaName?: string) =>

@@ -66,13 +66,6 @@ type AttachmentItem = {
   storageUrl: string;
 };
 
-const versionStatusLabels: Record<string, string> = {
-  draft: "草稿",
-  active: "生效中",
-  archived: "已归档",
-  rejected: "已驳回"
-};
-
 export function AiCustomizationPanel({ schemaName, initialSessionId, onClose }: { schemaName: string; initialSessionId?: string; onClose: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -91,6 +84,30 @@ export function AiCustomizationPanel({ schemaName, initialSessionId, onClose }: 
   const [rollbackPreviewing, setRollbackPreviewing] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
+  const [versionStatusLabels, setVersionStatusLabels] = useState<Record<string, string>>({});
+
+
+  useEffect(() => {
+    let cancelled = false;
+    GatewayClient.executeApi({
+      scope: "tenant",
+      schemaName,
+      pageCode: "__dictionary__",
+      apiCode: "dictionary.options",
+      params: { dictCode: "status" }
+    })
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray((res.data as { rows?: unknown[] })?.rows) ? (res.data as { rows: Array<Record<string, unknown>> }).rows : [];
+        setVersionStatusLabels(Object.fromEntries(rows.map((row) => [String(row.itemValue ?? row.item_value ?? row.value ?? ""), String(row.label ?? row.item_label ?? "")]).filter(([value, label]) => value && label)));
+      })
+      .catch(() => {
+        if (!cancelled) setVersionStatusLabels({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [schemaName]);
 
   useEffect(() => {
     let cancelled = false;
