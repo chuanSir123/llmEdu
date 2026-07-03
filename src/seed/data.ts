@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { env } from "../config/env.js";
+import { SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
@@ -79,42 +80,26 @@ const pageSubtitles: Record<string, string> = {
   tenant_manage: "管理机构租户、到期状态和负责人信息"
 };
 
-const statusMap = {
-  student_status: { FORMAL: "green", LEAD: "blue", LOST: "gray" },
-  paid_status: { PAID: "green", PART_PAID: "amber", UNPAID: "red", REFUNDED: "gray" },
-  contract_status: { ACTIVE: "green", CLOSED: "gray", CANCELLED: "red", REFUNDED: "amber" },
-  course_status: { SCHEDULED: "blue", FINISHED: "green", CANCELLED: "red" },
-  charge_status: { CONFIRMED: "green", PENDING: "amber", REVERSED: "gray" },
-  attendance_status: { PENDING: "amber", PRESENT: "green", ABSENT: "red", LEAVE: "gray" },
-  status: { ACTIVE: "green", PUBLISHED: "blue", draft: "amber", active: "green", archived: "gray" },
-  mode: { draft: "amber", publish_after_confirm: "blue" }
-};
+function dictionaryToneMap(dictCode: string) {
+  return Object.fromEntries(
+    Object.entries(SYSTEM_DICTIONARIES[dictCode] ?? {})
+      .map(([itemValue, item]) => [itemValue, String(item.metadata?.tone ?? "")])
+      .filter(([, tone]) => Boolean(tone))
+  );
+}
 
-const valueLabels = {
-  student_status: { FORMAL: "正式", LEAD: "意向", LOST: "流失" },
-  paid_status: { PAID: "已付清", PART_PAID: "部分付款", UNPAID: "未付款", REFUNDED: "已退费" },
-  contract_status: { ACTIVE: "生效中", CLOSED: "已结清", CANCELLED: "已取消", REFUNDED: "已退费" },
-  course_status: { SCHEDULED: "待上课", FINISHED: "已完成", CANCELLED: "已取消" },
-  charge_status: { CONFIRMED: "已确认", PENDING: "待确认", REVERSED: "已撤销" },
-  status: { ACTIVE: "启用", PUBLISHED: "已发布", draft: "草稿", active: "生效", archived: "归档" },
-  mode: { draft: "草稿", publish_after_confirm: "确认后发布" },
-  staff_type: { MANAGER: "校长", TEACHER: "老师", STUDY_MANAGER: "学管师", SALES: "顾问" },
-  funds_type: { CONTRACT_PAY: "合同收款", PRE_STORE: "预存" },
-  source_type: { REFERRAL: "转介绍", WALK_IN: "到访", ONLINE: "线上" },
-  course_type: { ONE_ON_ONE_COURSE: "一对一", SMALL_CLASS: "小班", ONE_ON_N_GROUP: "一对N" },
-  product_type: { ONE_ON_ONE_COURSE: "一对一", SMALL_CLASS: "小班", ONE_ON_N_GROUP: "一对N" },
-  contract_type: { NEW_SIGN: "新签", RENEWAL: "续费", REFERRAL: "引流" },
-  follow_type: { PHONE: "电话", VISIT: "到访", WECHAT: "微信" },
-  charge_type: { NORMAL: "实收扣费", PROMOTION: "优惠扣费", PROMOTION_HOUR: "赠课扣费" },
-  pay_way_type: { CASH: "现金", WECHAT: "微信", ALIPAY: "支付宝", ELE_ACCOUNT: "电子账户" },
-  promotion_type: { REDUCE: "立减", DISCOUNT: "折扣" },
-  change_type: { PRESTORE_IN: "预存入账", CONTRACT_PAY_OUT: "合同扣款", REFUND_IN: "退费入账", PRESTORE_DELETE: "删除预存", CONTRACT_PAY_DELETE: "删除合同扣款", REFUND_DELETE: "删除退费" },
-  attendance_status: { PENDING: "待签到", PRESENT: "已签到", ABSENT: "缺勤", LEAVE: "请假" },
-  refund_type: { CONTRACT_PRODUCT: "合同产品退费", CONTRACT: "合同退费" },
-  target_type: { bundle: "整包配置", page: "页面", action: "按钮动作", api: "接口", modal: "弹窗", business_rule: "业务规则", print_template: "打印模板" },
-  schema_scope: { tenant: "机构模板/租户自定义", admin: "平台管理" },
-  source_label: { "租户自定义": "租户自定义", "模板机构": "模板机构" }
-};
+const statusMap = Object.fromEntries(
+  ["student_status", "paid_status", "contract_status", "course_status", "charge_status", "attendance_status", "status", "mode"]
+    .map((dictCode) => [dictCode, dictionaryToneMap(dictCode)])
+    .filter(([, tones]) => Object.keys(tones).length > 0)
+);
+
+const valueLabels = Object.fromEntries(
+  Object.entries(SYSTEM_DICTIONARIES).map(([dictCode, items]) => [
+    dictCode,
+    Object.fromEntries(Object.entries(items).map(([itemValue, item]) => [itemValue, item.label]))
+  ])
+) as Record<string, Record<string, string>>;
 
 
 const extraDictionaryFieldKeys = [
@@ -2624,10 +2609,6 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { key: "organization_type", label: "架构类型", type: "text" },
       { key: "status", label: "状态", type: "text" }
     ];
-    baseDsl.presentation.valueLabels = {
-      ...(baseDsl.presentation.valueLabels ?? {}),
-      organization_type: { COMPANY: "分公司", BRANCH: "校区", CUSTOM: "自定义架构", HEAD: "总部" }
-    };
   }
 
   if (page.page === "user_list") {

@@ -1,58 +1,22 @@
-import { enumValueLabels } from "../dsl/enumLabels";
 import { token } from "../styles/designTokens";
 
 type RuleValue = Record<string, unknown>;
 type ConditionRow = { field?: string; operator?: string; value?: unknown; valueField?: string; message?: string };
 
-const conditionFieldOptions = {
-  transaction_amount: "收款金额",
-  refund_real_amount: "退费金额",
-  charge_amount: "扣费金额",
-  promotion_amount: "优惠金额",
-  unit_price: "产品单价",
-  old_unit_price: "原产品单价",
-  start_time: "开始时间",
-  end_time: "结束时间",
-  teacher_id: "授课老师",
-  student_id: "上课学员",
-  course_date: "上课日期"
-};
 
-const systemValueOptions = {
-  start_time: "开始时间",
-  end_time: "结束时间",
-  old_unit_price: "原产品单价",
-  "course_date,start_time,end_time": "同一天同时间段",
-  "teacher_course_date,start_time,end_time": "老师同一天同时间段",
-  "student_course_date,start_time,end_time": "学员同一天同时间段"
-};
 
-const operatorOptions = {
-  ">": "大于",
-  ">=": "大于等于",
-  "<": "小于",
-  "<=": "小于等于",
-  "=": "等于",
-  "!=": "不等于",
-  no_time_overlap: "不可时间冲突",
-  lt: "小于",
-  unique_combo: "组合不可重复"
-};
-
-const categoryOptions = enumValueLabels.business_rule_category;
-const businessTypeOptions = enumValueLabels.business_type;
-
-const ruleSections: Record<string, {
+function buildRuleSections(valueLabels: Record<string, Record<string, string>>): Record<string, {
   selects?: Array<{ key: string; label: string; options: Record<string, string> }>;
   switches?: Array<{ key: string; label: string }>;
   numbers?: Array<{ key: string; label: string; suffix?: string }>;
   rows?: Array<"conditions" | "validations">;
-}> = {
+}> {
+  return {
   funds_allocation: {
     selects: [
-      { key: "fundsAllocation", label: "资金分配方式", options: enumValueLabels.funds_allocation_method },
-      { key: "splitBy", label: "拆分维度", options: enumValueLabels.allocation_split_by },
-      { key: "generateLogTable", label: "生成明细", options: enumValueLabels.generated_log_table }
+      { key: "fundsAllocation", label: "资金分配方式", options: valueLabels.funds_allocation_method ?? {} },
+      { key: "splitBy", label: "拆分维度", options: valueLabels.allocation_split_by ?? {} },
+      { key: "generateLogTable", label: "生成明细", options: valueLabels.generated_log_table ?? {} }
     ],
     switches: [
       { key: "updateContractPaidStatus", label: "自动更新合同收款状态" },
@@ -63,9 +27,9 @@ const ruleSections: Record<string, {
   },
   promotion_allocation: {
     selects: [
-      { key: "promotionAllocation", label: "优惠分配方式", options: enumValueLabels.promotion_allocation_method },
-      { key: "splitBy", label: "拆分维度", options: enumValueLabels.allocation_split_by },
-      { key: "generateLogTable", label: "生成明细", options: enumValueLabels.generated_log_table }
+      { key: "promotionAllocation", label: "优惠分配方式", options: valueLabels.promotion_allocation_method ?? {} },
+      { key: "splitBy", label: "拆分维度", options: valueLabels.allocation_split_by ?? {} },
+      { key: "generateLogTable", label: "生成明细", options: valueLabels.generated_log_table ?? {} }
     ],
     switches: [
       { key: "requireAtLeastOneProduct", label: "合同至少包含一个产品" },
@@ -75,11 +39,11 @@ const ruleSections: Record<string, {
   },
   performance_allocation: {
     selects: [
-      { key: "performanceAllocation", label: "业绩分配方式", options: enumValueLabels.performance_allocation_method },
-      { key: "organizationPerformanceOwner", label: "校区业绩归属", options: { contractOrganization: "合同所属校区", courseOrganization: "上课校区", receiptOrganization: "收款校区" } },
-      { key: "personalPerformanceOwner", label: "个人业绩归属", options: { signStaff: "签约顾问", ownerStaff: "学员归属顾问", classTeacher: "任课老师", splitByProductOwner: "按产品归属人拆分" } },
-      { key: "productPriority", label: "产品优先级", options: enumValueLabels.product_priority },
-      { key: "generateLogTable", label: "生成明细", options: enumValueLabels.generated_log_table }
+      { key: "performanceAllocation", label: "业绩分配方式", options: valueLabels.performance_allocation_method ?? {} },
+      { key: "organizationPerformanceOwner", label: "校区业绩归属", options: valueLabels.organization_performance_owner ?? {} },
+      { key: "personalPerformanceOwner", label: "个人业绩归属", options: valueLabels.personal_performance_owner ?? {} },
+      { key: "productPriority", label: "产品优先级", options: valueLabels.product_priority ?? {} },
+      { key: "generateLogTable", label: "生成明细", options: valueLabels.generated_log_table ?? {} }
     ],
     switches: [
       { key: "includePromotionAmount", label: "优惠金额计入业绩" },
@@ -93,15 +57,15 @@ const ruleSections: Record<string, {
   },
   approval_trigger: {
     selects: [
-      { key: "targetAction", label: "触发动作", options: { "contract_list.create": "新增合同", "refund_record.create": "新增退费", "course_list.cancel": "取消课程", "charge_record.reverse": "撤销扣费", "product_list.edit": "编辑产品" } },
-      { key: "triggerApprovalFlow", label: "审批流", options: { contract_discount_approval: "合同优惠审批", refund_create_approval: "退费审批", course_cancel_approval: "课程取消审批", charge_reverse_approval: "撤销扣费审批", product_price_approval: "产品价格审批" } }
+      { key: "targetAction", label: "触发动作", options: valueLabels.business_action_code ?? {} },
+      { key: "triggerApprovalFlow", label: "审批流", options: valueLabels.approval_flow_code ?? {} }
     ],
     numbers: [{ key: "thresholdAmount", label: "触发金额阈值", suffix: "元" }],
     rows: ["conditions"]
   },
   validation: {
     selects: [
-      { key: "targetApi", label: "校验接口", options: { "course_list.create": "新增排课", "contract_list.create": "新增合同", "funds_history.create": "新增收款" } }
+      { key: "targetApi", label: "校验接口", options: valueLabels.business_action_code ?? {} }
     ],
     switches: [
       { key: "preventTeacherTimeConflict", label: "防止老师时间冲突" },
@@ -112,14 +76,14 @@ const ruleSections: Record<string, {
   },
   workflow: {
     selects: [
-      { key: "targetAction", label: "业务动作", options: { "course_list.cancel": "取消课程", "charge_record.reverse": "撤销扣费", "contract_list.delete": "作废合同" } },
-      { key: "requireApprovalFlow", label: "必须审批流", options: { course_cancel_approval: "课程取消审批", charge_reverse_approval: "扣费冲销审批", contract_discount_approval: "合同优惠审批" } }
+      { key: "targetAction", label: "业务动作", options: valueLabels.business_action_code ?? {} },
+      { key: "requireApprovalFlow", label: "必须审批流", options: valueLabels.approval_flow_code ?? {} }
     ],
     switches: [{ key: "allowAfterFinished", label: "允许完成后操作" }]
   },
   refund: {
     selects: [
-      { key: "refundAllocation", label: "退费冲减方式", options: enumValueLabels.refund_allocation_method }
+      { key: "refundAllocation", label: "退费冲减方式", options: valueLabels.refund_allocation_method ?? {} }
     ],
     switches: [
       { key: "allowRefundOverBalance", label: "允许超过余额退费" },
@@ -131,7 +95,7 @@ const ruleSections: Record<string, {
   },
   charge: {
     selects: [
-      { key: "defaultChargeType", label: "默认扣费类型", options: { NORMAL: "正常扣费", MAKE_UP: "补课扣费", REFUND_REVERSE: "退费冲销" } }
+      { key: "defaultChargeType", label: "默认扣费类型", options: valueLabels.charge_type ?? {} }
     ],
     switches: [
       { key: "allowNegativeBalance", label: "允许负余额扣费" },
@@ -148,7 +112,12 @@ const ruleSections: Record<string, {
     ],
     rows: ["validations"]
   }
-};
+  };
+}
+
+function firstOptionValue(options: Record<string, string>, fallback = "") {
+  return Object.keys(options)[0] ?? fallback;
+}
 
 function toObject(value: unknown): RuleValue {
   return value && typeof value === "object" && !Array.isArray(value) ? value as RuleValue : {};
@@ -162,16 +131,22 @@ function cleanEmpty(next: RuleValue) {
   return Object.fromEntries(Object.entries(next).filter(([, value]) => value !== "" && value !== undefined)) as RuleValue;
 }
 
-function displayValue(key: string, value: unknown) {
+function displayValue(key: string, value: unknown, ruleSections: ReturnType<typeof buildRuleSections>) {
   if (value === undefined || value === null || value === "") return "未设置";
   const section = Object.values(ruleSections).find((item) => item.selects?.some((select) => select.key === key));
   const select = section?.selects?.find((item) => item.key === key);
   return select?.options[String(value)] ?? String(value);
 }
 
-export function BusinessRuleEditor({ value, onChange, readonly = false }: { value: unknown; onChange: (next: RuleValue) => void; readonly?: boolean }) {
+export function BusinessRuleEditor({ value, onChange, readonly = false, valueLabels = {} }: { value: unknown; onChange: (next: RuleValue) => void; readonly?: boolean; valueLabels?: Record<string, Record<string, string>> }) {
   const rule = toObject(value);
   const category = String(rule.category ?? "");
+  const ruleSections = buildRuleSections(valueLabels);
+  const conditionFieldOptions = valueLabels.rule_condition_field ?? {};
+  const systemValueOptions = valueLabels.rule_system_value ?? {};
+  const operatorOptions = valueLabels.rule_operator ?? {};
+  const categoryOptions = valueLabels.business_rule_category ?? {};
+  const businessTypeOptions = valueLabels.business_type ?? {};
   const section = ruleSections[category] ?? {};
 
   const patch = (key: string, nextValue: unknown) => onChange(cleanEmpty({ ...rule, [key]: nextValue }));
@@ -180,7 +155,7 @@ export function BusinessRuleEditor({ value, onChange, readonly = false }: { valu
     <label key={field.key} className="flex flex-col gap-1 text-sm">
       <span className="text-[#5f6b7a]">{field.label}</span>
       {readonly ? (
-        <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{displayValue(field.key, rule[field.key])}</div>
+        <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{displayValue(field.key, rule[field.key], ruleSections)}</div>
       ) : (
         <select className={token.input} value={String(rule[field.key] ?? "")} onChange={(event) => patch(field.key, event.target.value)}>
           <option value="">不设置</option>
@@ -216,7 +191,7 @@ export function BusinessRuleEditor({ value, onChange, readonly = false }: { valu
       <section className="border border-[#e8edf5]">
         <div className="flex items-center justify-between border-b border-[#e8edf5] bg-[#f8fafc] px-3 py-2">
           <div className="text-sm font-medium text-[#263445]">{label}</div>
-          {!readonly && <button type="button" className="text-xs text-[#2f80ed]" onClick={() => patch(key, [...rows, { field: "", operator: ">", value: "" }])}>新增</button>}
+          {!readonly && <button type="button" className="text-xs text-[#2f80ed]" onClick={() => patch(key, [...rows, { field: "", operator: firstOptionValue(operatorOptions), value: "" }])}>新增</button>}
         </div>
         <div className="divide-y divide-[#eef2f7]">
           {rows.map((row, idx) => (
@@ -233,7 +208,7 @@ export function BusinessRuleEditor({ value, onChange, readonly = false }: { valu
                 className={token.input}
                 disabled={readonly}
                 value={row.valueField ? "system" : "fixed"}
-                onChange={(event) => updateRow(idx, event.target.value === "system" ? { value: "", valueField: "start_time" } : { valueField: "", value: "" })}
+                onChange={(event) => updateRow(idx, event.target.value === "system" ? { value: "", valueField: firstOptionValue(systemValueOptions) } : { valueField: "", value: "" })}
               >
                 <option value="fixed">固定值</option>
                 <option value="system">系统值</option>

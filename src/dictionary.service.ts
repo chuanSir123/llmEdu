@@ -11,33 +11,33 @@ type DictionaryItemInput = {
 };
 
 export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string; metadata?: Record<string, unknown> }>> = {
-  student_status: { FORMAL: { label: "正式" }, LEAD: { label: "意向" }, LOST: { label: "流失" } },
-  paid_status: { PAID: { label: "已付清" }, PART_PAID: { label: "部分付款" }, UNPAID: { label: "未付款" }, REFUNDED: { label: "已退费" } },
+  student_status: { FORMAL: { label: "正式", metadata: { tone: "green" } }, LEAD: { label: "意向", metadata: { tone: "blue" } }, LOST: { label: "流失", metadata: { tone: "gray" } } },
+  paid_status: { PAID: { label: "已付清", metadata: { tone: "green" } }, PART_PAID: { label: "部分付款", metadata: { tone: "amber" } }, UNPAID: { label: "未付款", metadata: { tone: "red" } }, REFUNDED: { label: "已退费", metadata: { tone: "gray" } } },
   contract_status: {
-    ACTIVE: { label: "生效中", metadata: { businessState: true, transitionPolicy: "command_controlled", systemSemantic: "effective" } },
-    CLOSED: { label: "已结清", metadata: { businessState: true, transitionPolicy: "command_controlled", terminal: true } },
-    CANCELLED: { label: "已取消", metadata: { businessState: true, transitionPolicy: "command_controlled", terminal: true } },
-    REFUNDED: { label: "已退费", metadata: { businessState: true, transitionPolicy: "command_controlled", terminal: true } }
+    ACTIVE: { label: "生效中", metadata: { tone: "green", businessState: true, transitionPolicy: "command_controlled", systemSemantic: "effective" } },
+    CLOSED: { label: "已结清", metadata: { tone: "gray", businessState: true, transitionPolicy: "command_controlled", terminal: true } },
+    CANCELLED: { label: "已取消", metadata: { tone: "red", businessState: true, transitionPolicy: "command_controlled", terminal: true } },
+    REFUNDED: { label: "已退费", metadata: { tone: "amber", businessState: true, transitionPolicy: "command_controlled", terminal: true } }
   },
   course_status: { SCHEDULED: { label: "待上课", metadata: { tone: "blue" } }, FINISHED: { label: "已完成", metadata: { tone: "green", businessSemantic: "finished" } }, CANCELLED: { label: "已取消", metadata: { tone: "gray", businessSemantic: "cancelled" } } },
   charge_status: { CONFIRMED: { label: "已确认", metadata: { tone: "green", businessSemantic: "charged" } }, PENDING: { label: "待确认", metadata: { tone: "amber" } }, REVERSED: { label: "已撤销", metadata: { tone: "gray" } } },
-  attendance_status: { PENDING: { label: "待签到" }, PRESENT: { label: "已签到" }, ABSENT: { label: "缺勤" }, LEAVE: { label: "请假" } },
-  status: { ACTIVE: { label: "启用" }, INACTIVE: { label: "停用" }, ENABLED: { label: "启用" }, DISABLED: { label: "停用" }, PUBLISHED: { label: "已发布" }, DRAFT: { label: "草稿" }, draft: { label: "草稿" }, active: { label: "生效" }, archived: { label: "归档" }, rejected: { label: "已驳回" } },
-  mode: { draft: { label: "草稿" }, publish_after_confirm: { label: "确认后发布" } },
+  attendance_status: { PENDING: { label: "待签到", metadata: { tone: "amber" } }, PRESENT: { label: "已签到", metadata: { tone: "green" } }, ABSENT: { label: "缺勤", metadata: { tone: "red" } }, LEAVE: { label: "请假", metadata: { tone: "gray" } } },
+  status: { ACTIVE: { label: "启用", metadata: { tone: "green" } }, INACTIVE: { label: "停用" }, ENABLED: { label: "启用" }, DISABLED: { label: "停用" }, PUBLISHED: { label: "已发布", metadata: { tone: "blue" } }, DRAFT: { label: "草稿" }, draft: { label: "草稿", metadata: { tone: "amber" } }, active: { label: "生效", metadata: { tone: "green" } }, archived: { label: "归档", metadata: { tone: "gray" } }, rejected: { label: "已驳回" }, pending: { label: "待处理" }, success: { label: "成功" }, failed: { label: "失败" }, running: { label: "执行中" }, skipped: { label: "已跳过" }, APPROVED: { label: "已通过" }, REJECTED: { label: "已拒绝" }, CANCELED: { label: "已取消" } },
+  mode: { draft: { label: "草稿" }, publish_after_confirm: { label: "确认后发布", metadata: { tone: "blue" } }, import: { label: "导入" }, validate: { label: "校验" } },
   staff_type: { MANAGER: { label: "校长" }, TEACHER: { label: "老师" }, STUDY_MANAGER: { label: "学管师" }, SALES: { label: "顾问" } },
-  organization_type: { HEAD: { label: "总部" }, BRANCH: { label: "校区" }, DEPARTMENT: { label: "部门" }, TENANT: { label: "机构" }, CAMPUS: { label: "校区" } },
+  organization_type: { HEAD: { label: "总部" }, BRANCH: { label: "校区" }, DEPARTMENT: { label: "部门" }, TENANT: { label: "机构" }, CAMPUS: { label: "校区" }, COMPANY: { label: "分公司" }, CUSTOM: { label: "自定义架构" } },
   contract_type: { NEW_SIGN: { label: "新签" }, RENEWAL: { label: "续费" }, REFERRAL: { label: "引流" } },
   course_type: { ONE_ON_ONE_COURSE: { label: "一对一" }, SMALL_CLASS: { label: "小班" }, ONE_ON_N_GROUP: { label: "一对N" } },
   product_type: { ONE_ON_ONE_COURSE: { label: "一对一" }, SMALL_CLASS: { label: "小班" }, ONE_ON_N_GROUP: { label: "一对N" } },
   funds_type: { CONTRACT_PAY: { label: "合同收款" }, PRE_STORE: { label: "预存" } },
-  charge_type: { NORMAL: { label: "实收扣费" }, PROMOTION: { label: "优惠扣费" }, PROMOTION_HOUR: { label: "赠课扣费" } },
+  charge_type: { NORMAL: { label: "实收扣费" }, PROMOTION: { label: "优惠扣费" }, PROMOTION_HOUR: { label: "赠课扣费" }, MAKE_UP: { label: "补课扣费" }, REFUND_REVERSE: { label: "退费冲销" } },
   pay_way_type: { CASH: { label: "现金" }, WECHAT: { label: "微信" }, ALIPAY: { label: "支付宝" }, ELE_ACCOUNT: { label: "电子账户" } },
   promotion_type: { REDUCE: { label: "立减" }, DISCOUNT: { label: "折扣" } },
   follow_type: { PHONE: { label: "电话" }, VISIT: { label: "到访" }, WECHAT: { label: "微信" } },
   follow_result: { CONTACTED: { label: "已联系" }, NO_ANSWER: { label: "未接通" }, INTERESTED: { label: "有意向" }, NOT_INTERESTED: { label: "无意向" } },
-  source_type: { REFERRAL: { label: "转介绍" }, WALK_IN: { label: "到访" }, ONLINE: { label: "线上" }, MANUAL_ADJUSTMENT: { label: "手工调整" } },
+  source_type: { REFERRAL: { label: "转介绍" }, WALK_IN: { label: "到访" }, ONLINE: { label: "线上" }, MANUAL: { label: "手工录入" }, MANUAL_ADJUSTMENT: { label: "手工调整" } },
   channel_type: { ONLINE: { label: "线上" }, REFERRAL: { label: "转介绍" }, OFFLINE: { label: "线下" } },
-  trial_status: { SCHEDULED: { label: "已预约" }, FINISHED: { label: "已试听" }, CANCELLED: { label: "已取消" } },
+  trial_status: { SCHEDULED: { label: "已预约" }, FINISHED: { label: "已试听" }, COMPLETED: { label: "已试听" }, CANCELLED: { label: "已取消" } },
   conversion_status: { PENDING: { label: "待转化" }, CONVERTED: { label: "已转化" }, LOST: { label: "未转化" } },
   task_type: { FOLLOWUP: { label: "跟进" }, TRIAL_FOLLOWUP: { label: "试听跟进" } },
   task_status: { PENDING: { label: "待处理" }, COMPLETED: { label: "已完成" }, CANCELED: { label: "已取消" } },
@@ -46,6 +46,8 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   action_type: { open_page: { label: "打开页面" }, execute_api: { label: "执行接口" }, open_modal: { label: "打开弹窗" }, open_ai_customization: { label: "AI 定制" }, dropdown: { label: "下拉菜单" }, input: { label: "输入" }, display: { label: "展示" }, tab: { label: "页签" }, export: { label: "导出" }, import: { label: "导入" } },
   api_type: { query: { label: "查询" }, detail: { label: "详情" }, create: { label: "新增" }, update: { label: "更新" }, delete: { label: "删除" }, command: { label: "命令" } },
   resource_type: { page: { label: "页面" }, action: { label: "动作" }, field: { label: "字段" } },
+  page_permission: { read: { label: "只读" }, all: { label: "全部操作" } },
+  data_permission: { self_only: { label: "本人创建" }, own_organization: { label: "当前管理架构" }, organization_or_sub: { label: "当前管理架构及下级" }, own_students: { label: "负责学员" }, own_courses: { label: "负责课程" }, all: { label: "全部数据" } },
   organization_scope: { role_organization: { label: "角色组织" }, all: { label: "全部" } },
   receiver_scope: { student: { label: "学员" }, staff: { label: "员工" }, all: { label: "全部" } },
   pay_type: { PREPAID: { label: "预付" }, POSTPAID: { label: "后付" }, TRIAL: { label: "试用" } },
@@ -61,7 +63,7 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   record_type: { customization: { label: "AI 定制" }, assistant: { label: "AI 助手" } },
   change_type: { PRESTORE_IN: { label: "预存入账" }, CONTRACT_PAY_OUT: { label: "合同扣款" }, REFUND_IN: { label: "退费入账" }, PRESTORE_DELETE: { label: "删除预存" }, CONTRACT_PAY_DELETE: { label: "删除合同扣款" }, REFUND_DELETE: { label: "删除退费" }, update: { label: "更新" }, rollback: { label: "回滚" }, init: { label: "初始化" } },
   refund_type: { CONTRACT_PRODUCT: { label: "合同产品退费" }, CONTRACT: { label: "合同退费" } },
-  target_type: { bundle: { label: "整包配置" }, page: { label: "页面" }, action: { label: "按钮动作" }, api: { label: "接口" }, modal: { label: "弹窗" }, skill: { label: "技能" }, import: { label: "导入" }, report: { label: "报表" }, business_rule: { label: "业务规则" }, print_template: { label: "打印模板" }, mini_class: { label: "小班" }, one_on_n_group: { label: "1对N小组" } },
+  target_type: { bundle: { label: "整包配置" }, page: { label: "页面" }, action: { label: "按钮动作" }, api: { label: "接口" }, modal: { label: "弹窗" }, skill: { label: "技能" }, import: { label: "导入" }, report: { label: "报表" }, business_rule: { label: "业务规则" }, print_template: { label: "打印模板" }, page_dsl: { label: "页面" }, api_dsl: { label: "接口" }, action_dsl: { label: "按钮动作" }, skill_registry: { label: "技能" }, import_dsl: { label: "导入" }, report_dsl: { label: "报表" }, db_schema: { label: "数据表" }, permission_policy: { label: "权限策略" }, approval_flow: { label: "审批流" }, feature_registry: { label: "功能" }, mini_class: { label: "小班" }, one_on_n_group: { label: "1对N小组" } },
   schema_scope: { tenant: { label: "机构模板/租户自定义" }, admin: { label: "平台管理" } },
   source_label: { 租户自定义: { label: "租户自定义" }, 模板机构: { label: "模板机构" } },
   account_type: { DEFAULT: { label: "默认账户" } },
@@ -81,6 +83,17 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   send_status: { PENDING: { label: "待发送" }, SUCCESS: { label: "发送成功" }, FAILED: { label: "发送失败" } },
   reward_status: { PENDING: { label: "待处理" }, LOCKED: { label: "锁定中" }, ELIGIBLE: { label: "可发放" }, ISSUED: { label: "已发放" } },
   payment_status: { PENDING: { label: "待支付" }, PAID: { label: "已支付" }, FAILED: { label: "支付失败" }, CLOSED: { label: "已关闭" }, REFUNDED: { label: "已退款" } },
+  organization_performance_owner: { contractOrganization: { label: "合同所属校区" }, courseOrganization: { label: "上课校区" }, receiptOrganization: { label: "收款校区" } },
+  personal_performance_owner: { signStaff: { label: "签约顾问" }, ownerStaff: { label: "学员归属顾问" }, classTeacher: { label: "任课老师" }, splitByProductOwner: { label: "按产品归属人拆分" } },
+  business_action_code: { "contract_list.create": { label: "新增合同" }, "refund_record.create": { label: "新增退费" }, "course_list.cancel": { label: "取消课程" }, "charge_record.reverse": { label: "撤销扣费" }, "product_list.edit": { label: "编辑产品" }, "contract_list.delete": { label: "作废合同" }, "funds_history.create": { label: "新增收款" } },
+  approval_flow_code: { contract_discount_approval: { label: "合同优惠审批" }, refund_create_approval: { label: "退费审批" }, course_cancel_approval: { label: "课程取消审批" }, charge_reverse_approval: { label: "扣费冲销审批" }, product_price_approval: { label: "产品价格审批" } },
+  approval_trigger_event: { contract_discount_submit: { label: "合同优惠提交" }, lead_enroll_submit: { label: "新生报名提交" }, contract_create_submit: { label: "合同创建提交" }, funds_create_submit: { label: "收款提交" }, refund_create_submit: { label: "退费提交" }, course_create_submit: { label: "排课提交" }, course_cancel_submit: { label: "课程取消提交" }, charge_reverse_submit: { label: "撤销扣费提交" }, product_price_change_submit: { label: "产品改价提交" } },
+  approval_trigger_page: { contract_list: { label: "合同列表" }, lead_list: { label: "新生报名" }, funds_history: { label: "收款记录" }, refund_record: { label: "退费记录" }, course_list: { label: "排课列表" }, charge_record: { label: "扣费记录" }, product_list: { label: "产品列表" } },
+  approval_action_code: { "contract_list.funds": { label: "允许合同收款" }, "contract_list.create": { label: "允许新增合同" }, "lead_list.enroll": { label: "允许报名转化" }, "funds_history.create": { label: "允许新增收款" }, "refund_record.create": { label: "允许新增退费" }, "course_list.create": { label: "允许新增排课" }, "course_list.cancel": { label: "允许取消课程" }, "charge_record.reverse": { label: "允许撤销扣费" }, "product_list.edit": { label: "允许编辑产品" } },
+  approval_role: { PRINCIPAL: { label: "校长" }, MANAGER: { label: "校长" }, SALES: { label: "顾问" }, TEACHER: { label: "老师" }, STUDY_MANAGER: { label: "学管师" } },
+  rule_condition_field: { transaction_amount: { label: "收款金额" }, refund_real_amount: { label: "退费金额" }, charge_amount: { label: "扣费金额" }, promotion_amount: { label: "优惠金额" }, unit_price: { label: "产品单价" }, old_unit_price: { label: "原产品单价" }, start_time: { label: "开始时间" }, end_time: { label: "结束时间" }, teacher_id: { label: "授课老师" }, student_id: { label: "上课学员" }, course_date: { label: "上课日期" } },
+  rule_system_value: { start_time: { label: "开始时间" }, end_time: { label: "结束时间" }, old_unit_price: { label: "原产品单价" }, "course_date,start_time,end_time": { label: "同一天同时间段" }, "teacher_course_date,start_time,end_time": { label: "老师同一天同时间段" }, "student_course_date,start_time,end_time": { label: "学员同一天同时间段" } },
+  rule_operator: { ">": { label: "大于" }, ">=": { label: "大于等于" }, "<": { label: "小于" }, "<=": { label: "小于等于" }, "=": { label: "等于" }, "!=": { label: "不等于" }, no_time_overlap: { label: "不可时间冲突" }, lt: { label: "小于" }, unique_combo: { label: "组合不可重复" } },
   fulfillment_status: { PENDING: { label: "待履约" }, PROCESSING: { label: "处理中" }, SUCCESS: { label: "已完成" }, FAILED: { label: "履约失败" } }
 };
 
@@ -89,6 +102,11 @@ const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   businessType: "business_type",
   business_type: "business_type"
 };
+
+export function systemDictionaryLabel(dictCode: string, itemValue: unknown) {
+  const value = String(itemValue ?? "");
+  return SYSTEM_DICTIONARIES[dictCode]?.[value]?.label;
+}
 
 export function dictionaryCodeForFieldName(fieldName: string) {
   return DICTIONARY_FIELD_ALIASES[fieldName] ?? (SYSTEM_DICTIONARIES[fieldName] ? fieldName : undefined);

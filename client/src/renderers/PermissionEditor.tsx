@@ -23,14 +23,7 @@ type ResourceItem = {
   field_permission?: Record<string, string>;
 };
 
-const dataPermissionOptions = [
-  ["self_only", "本人创建"],
-  ["own_organization", "当前管理架构"],
-  ["organization_or_sub", "当前管理架构及下级"],
-  ["own_students", "负责学员"],
-  ["own_courses", "负责课程"],
-  ["all", "全部数据"]
-];
+type DictionaryOption = { value: string; label: string };
 
 type PermissionFeature = { featureCode: string; featureName: string; pages: PermissionPage[] };
 type PermissionModule = { moduleCode: string; moduleName: string; features: PermissionFeature[] };
@@ -83,6 +76,8 @@ export function PermissionEditor({
   const [error, setError] = useState("");
   const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
   const [expandedFeatures, setExpandedFeatures] = useState<Record<string, boolean>>({});
+  const [pagePermissionOptions, setPagePermissionOptions] = useState<DictionaryOption[]>([]);
+  const [dataPermissionOptions, setDataPermissionOptions] = useState<DictionaryOption[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +107,37 @@ export function PermissionEditor({
       cancelled = true;
     };
   }, [scope, schemaName, roleId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadOptions = async (dictCode: string) => {
+      const result = await GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: "__dictionary__",
+        apiCode: "dictionary.options",
+        params: { dictCode }
+      });
+      const rows = Array.isArray((result.data as { rows?: unknown[] })?.rows) ? (result.data as { rows: Array<Record<string, unknown>> }).rows : [];
+      return rows
+        .map((row) => ({ value: String(row.itemValue ?? row.item_value ?? row.value ?? ""), label: String(row.label ?? row.item_label ?? "") }))
+        .filter((option) => option.value && option.label);
+    };
+    Promise.all([loadOptions("page_permission"), loadOptions("data_permission")])
+      .then(([pageOptions, dataOptions]) => {
+        if (cancelled) return;
+        setPagePermissionOptions(pageOptions);
+        setDataPermissionOptions(dataOptions);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPagePermissionOptions([]);
+        setDataPermissionOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope, schemaName]);
 
   const pageMap = useMemo(() => new Map(pages.map((page) => [page.pageCode, page])), [pages]);
   const tree = useMemo(() => {
@@ -265,14 +291,13 @@ export function PermissionEditor({
                 <label className="flex flex-col gap-1 text-sm">
                   <span className="text-[#5f6b7a]">页面权限</span>
                   <select className={token.input} value={resource.page_permission ?? "read"} onChange={(event) => upsert(active, { page_permission: event.target.value })}>
-                    <option value="read">只读</option>
-                    <option value="all">全部操作</option>
+                    {pagePermissionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </label>
                 <label className="flex flex-col gap-1 text-sm">
                   <span className="text-[#5f6b7a]">数据权限</span>
                   <select className={token.input} value={resource.data_permission ?? "organization_or_sub"} onChange={(event) => upsert(active, { data_permission: event.target.value })}>
-                    {dataPermissionOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    {dataPermissionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </label>
               </div>
