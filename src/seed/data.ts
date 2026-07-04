@@ -2696,6 +2696,12 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   }
 
   if (page.page === "student_list") {
+    baseDsl.table.selectable = true;
+    baseDsl.toolbar = [
+      { actionCode: "student_list.create", label: "新增", type: "open_modal", variant: "primary" },
+      { actionCode: "student_list.batchEnroll", label: "批量报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "批量报名", fields: contractCreateFields, requiresSelection: true, mapSelectedToValue: { student_ids: "id" }, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) } },
+      { actionCode: "student_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
+    ];
     baseDsl.table.rowActions = [
       { actionCode: "student_list.detail", label: "详情", type: "open_modal" },
       { actionCode: "student_list.edit", label: "编辑", type: "open_modal" },

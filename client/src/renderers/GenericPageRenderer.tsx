@@ -82,6 +82,7 @@ export function GenericPageRenderer({
   const [modal, setModal] = useState<ModalState>(null);
   const [customizationRecordId, setCustomizationRecordId] = useState("");
   const [importConfig, setImportConfig] = useState<Record<string, unknown> | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [rightRailItems, setRightRailItems] = useState<Record<string, RightRailItem[]>>({});
   const [dictionaryLabels, setDictionaryLabels] = useState<Record<string, Record<string, string>>>({});
   const [dictionaryOptionIds, setDictionaryOptionIds] = useState<Record<string, Record<string, string>>>({});
@@ -318,6 +319,7 @@ export function GenericPageRenderer({
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
       setTotal(data.total);
+      setSelectedRowIds((current) => current.filter((id) => data.rows.some((row) => String(row.id) === id)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -418,8 +420,16 @@ export function GenericPageRenderer({
       openTarget(target, action.label ?? "打开页面", targetFilters(target));
       return;
     }
-    if (action.actionCode.endsWith(".create")) {
-      setModal({ type: "create", value: resolveDictionaryDefaults(action.defaultValues) ?? {}, action });
+    if (action.actionCode.endsWith(".create") || action.actionCode.endsWith(".batchEnroll")) {
+      if (action.requiresSelection && selectedRowIds.length === 0) {
+        toast.error("请先选择学员");
+        return;
+      }
+      const selectedRows = rows.filter((row) => selectedRowIds.includes(String(row.id)));
+      const selectedValues = action.mapSelectedToValue && selectedRows.length
+        ? Object.fromEntries(Object.entries(action.mapSelectedToValue).map(([targetKey, sourceKey]) => [targetKey, selectedRows.map((row) => row[String(sourceKey)]).filter((value) => value !== undefined && value !== null && value !== "")]))
+        : {};
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...selectedValues }, action });
       return;
     }
     if (isImportToolbarAction(action)) {
@@ -875,7 +885,8 @@ export function GenericPageRenderer({
   if (dsl.layout === "enrollment") {
     const byKeys = (keys: string[]) => visibleModalFields(enrollmentFields).filter((field) => keys.includes(field.key));
 
-    function r2(v: number) { return Math.round(v * 100) / 100; }
+    function r2(v: number) { return Math.round((v + Number.EPSILON) * 100) / 100; }
+    function floor2(v: number) { return Math.floor((v + Number.EPSILON) * 100) / 100; }
 
     function updateCpField(productId: string, field: string, rawValue: unknown) {
       const cpKey = `cp_${productId}`;
@@ -917,7 +928,7 @@ export function GenericPageRenderer({
             <GenericFormRenderer
               scope={scope}
               schemaName={schemaName}
-              fields={byKeys(["student_id"])}
+              fields={byKeys(["student_ids"])}
               value={enrollmentValueWithDefaults}
               onChange={(next) => setEnrollmentValue(next)}
               presentation={presentationWithDictionaries}
@@ -1030,8 +1041,8 @@ export function GenericPageRenderer({
                         const existing = (merged[cpKey] ?? {}) as Record<string, unknown>;
                         const share = idx === contractProducts.length - 1
                           ? r2(remaining)
-                          : totalProductAmount > 0 ? r2(totalPromotion * (cp.totalAmount / totalProductAmount)) : 0;
-                        remaining -= share;
+                          : totalProductAmount > 0 ? floor2(totalPromotion * (cp.totalAmount / totalProductAmount)) : 0;
+                        remaining = r2(remaining - share);
                         merged[cpKey] = { ...existing, promotion_amount: r2(share) };
                       });
                       setEnrollmentValue(merged);
@@ -1210,6 +1221,9 @@ export function GenericPageRenderer({
           rowActions={tableDsl.rowActions}
           onAction={onRowAction}
           presentation={presentationWithDictionaries}
+          selectable={Boolean(tableDsl.selectable)}
+          selectedRowIds={selectedRowIds}
+          onSelectionChange={setSelectedRowIds}
         />
       </div>
 

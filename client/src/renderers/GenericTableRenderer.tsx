@@ -20,10 +20,11 @@ function isImageField(column: FieldDsl) {
   return column.type === "image" || key.includes("image") || key.includes("avatar") || key.includes("photo") || key.includes("cover") || key.includes("logo") || key.endsWith("_url");
 }
 
-function formatValue(value: unknown, type?: string): string {
+function formatValue(value: unknown, type?: string, key?: string): string {
   if (value === null || value === undefined || value === "") return "-";
   if (type === "datetime") return new Date(String(value)).toLocaleString();
   if (type === "date") return String(value).slice(0, 10);
+  if ((type === "number" || /amount|price|balance/i.test(key ?? "")) && Number.isFinite(Number(value))) return Number(value).toFixed(2);
   if (Array.isArray(value)) return value.map((item) => formatValue(item)).filter((item) => item !== "-").join(", ");
   if (typeof value === "object") return typeof value === "string" ? value : JSON.stringify(value);
   return String(value);
@@ -59,7 +60,7 @@ function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation
   const rawValue = column.displayKey && row[column.displayKey] !== undefined && row[column.displayKey] !== null && row[column.displayKey] !== ""
     ? row[column.displayKey]
     : row[column.key];
-  const text = formatValue(rawValue, column.type);
+  const text = formatValue(rawValue, column.type, column.key);
   const displayText = text === "-" ? text : (enumLabelFor(column.key, text, presentation?.valueLabels) ?? text);
   if (isImageField(column) && text !== "-") {
     return <img src={text} alt={column.title ?? column.label ?? column.key} className="h-12 w-16 rounded border border-[#dde3ee] object-cover" />;
@@ -71,7 +72,7 @@ function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation
 
 function renderPlainCellTitle(column: FieldDsl, row: Record<string, unknown>, presentation?: Presentation) {
   const raw = column.displayKey ? row[column.displayKey] ?? row[column.key] : row[column.key];
-  const text = formatValue(raw, column.type);
+  const text = formatValue(raw, column.type, column.key);
   return text === "-" ? text : enumLabelFor(column.key, text, presentation?.valueLabels) ?? text;
 }
 
@@ -80,13 +81,19 @@ export function GenericTableRenderer({
   rows,
   rowActions = [],
   onAction,
-  presentation
+  presentation,
+  selectable = false,
+  selectedRowIds = [],
+  onSelectionChange
 }: {
   columns: FieldDsl[];
   rows: Record<string, unknown>[];
   rowActions?: ActionDsl[];
   onAction: (action: ActionDsl, row: Record<string, unknown>) => void;
   presentation?: PageDsl["presentation"];
+  selectable?: boolean;
+  selectedRowIds?: string[];
+  onSelectionChange?: (ids: string[]) => void;
 }) {
   const sortedColumns = sortWithOrder(columns);
   const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
@@ -99,12 +106,31 @@ export function GenericTableRenderer({
   const numericColumns = sortedColumns.filter((column) => column.type === "number" || /(_amount|amount|hour|qty|count|total|price|balance)$/i.test(column.key));
   const hasSummary = rows.length > 0 && numericColumns.length > 0;
   const summaryValue = (key: string) => rows.reduce((sum, row) => sum + Number(row[key] ?? 0), 0);
+  const rowIds = rows.map((row) => String(row.id));
+  const selectedSet = new Set(selectedRowIds);
+  const allPageSelected = rowIds.length > 0 && rowIds.every((id) => selectedSet.has(id));
+  const toggleRow = (id: string, checked: boolean) => {
+    const next = new Set(selectedRowIds);
+    if (checked) next.add(id);
+    else next.delete(id);
+    onSelectionChange?.([...next]);
+  };
+  const togglePage = (checked: boolean) => {
+    const next = new Set(selectedRowIds);
+    for (const id of rowIds) checked ? next.add(id) : next.delete(id);
+    onSelectionChange?.([...next]);
+  };
 
   return (
     <div className="h-full overflow-auto bg-white">
       <table className="min-w-full border-collapse">
         <thead className={stickyHeader ? "sticky top-0 z-10" : undefined}>
           <tr>
+            {selectable && (
+              <th className={`${token.th} w-[44px] min-w-[44px] text-center`}>
+                <input type="checkbox" checked={allPageSelected} onChange={(event) => togglePage(event.target.checked)} />
+              </th>
+            )}
             {sortedColumns.map((column) => (
               <th
                 key={column.key}
@@ -120,6 +146,11 @@ export function GenericTableRenderer({
         <tbody>
           {rows.map((row) => (
             <tr key={String(row.id)} className="hover:bg-[#f2fbfe]">
+              {selectable && (
+                <td className={`${token.td} ${tdDensity} w-[44px] text-center`}>
+                  <input type="checkbox" checked={selectedSet.has(String(row.id))} onChange={(event) => toggleRow(String(row.id), event.target.checked)} />
+                </td>
+              )}
               {sortedColumns.map((column) => (
                 <td
                   key={column.key}
@@ -204,16 +235,17 @@ export function GenericTableRenderer({
           ))}
           {!rows.length && (
             <tr>
-              <td className="px-3 py-10 text-center text-sm text-[#607083]" colSpan={columns.length + (hasActions ? 1 : 0)}>
+              <td className="px-3 py-10 text-center text-sm text-[#607083]" colSpan={columns.length + (hasActions ? 1 : 0) + (selectable ? 1 : 0)}>
                 暂无数据
               </td>
             </tr>
           )}
           {hasSummary && (
             <tr className="sticky bottom-0 z-10 border-t border-[#d9e3ed] bg-white font-semibold text-[#172033] shadow-[0_-1px_0_#e5e8ef]">
+              {selectable && <td className={`${token.td} ${tdDensity}`} />}
               {sortedColumns.map((column, index) => (
                 <td key={column.key} className={`${token.td} ${tdDensity} ${alignClass(column.align)} whitespace-nowrap`}>
-                  {index === 0 ? "合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toFixed(2).replace(/\.00$/, "") : ""}
+                  {index === 0 ? "合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toFixed(2) : ""}
                 </td>
               ))}
               {hasActions && <td className={`${token.td} ${tdDensity}`} />}

@@ -53,11 +53,11 @@ function asArray(value: unknown): Record<string, unknown>[] {
 }
 
 function roundMoney(value: number) {
-  return Math.round(value * 100) / 100;
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function floorMoney(value: number) {
-  return Math.floor(value * 100) / 100;
+  return Math.floor((value + Number.EPSILON) * 100) / 100;
 }
 
 
@@ -435,8 +435,8 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
           ? index === 0 ? promotionAmount : 0
           : index === productInputs.length - 1
             ? roundMoney(remainingPromotion)
-            : totalAmount > 0 ? roundMoney(promotionAmount * (planRealAmount / totalAmount)) : 0;
-    remainingPromotion -= planPromotionAmount;
+            : totalAmount > 0 ? floorMoney(promotionAmount * (planRealAmount / totalAmount)) : 0;
+    remainingPromotion = roundMoney(remainingPromotion - planPromotionAmount);
     const cpId = str(item.id, await nextTextId(client, schemaName, "contract_product"));
     const cp = await one(client,
       `insert into ${table(schemaName, "contract_product")}
@@ -543,8 +543,8 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
       ? index === 0 ? promotionAmount : 0
       : index === rawPlanRows.length - 1
         ? roundMoney(remainingPromotion)
-        : totalAmount > 0 ? roundMoney(promotionAmount * (planRealAmount / totalAmount)) : 0;
-    remainingPromotion -= planPromotionAmount;
+        : totalAmount > 0 ? floorMoney(promotionAmount * (planRealAmount / totalAmount)) : 0;
+    remainingPromotion = roundMoney(remainingPromotion - planPromotionAmount);
     return { ...item, planRealHour, planRealAmount, planPromotionAmount };
   });
 
@@ -625,7 +625,7 @@ async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId
     const cpRemaining = num(cp.remaining_real_amount);
     const arrangeAmount =
       isProportionalMode && totalRemaining > 0 && index < rows.length - 1
-        ? Math.min(cpRemaining, Math.round((amount * (cpRemaining / totalRemaining)) * 100) / 100)
+        ? Math.min(cpRemaining, floorMoney(amount * (cpRemaining / totalRemaining)))
         : Math.min(cpRemaining, remaining);
     if (arrangeAmount <= 0) continue;
     const hourRatio = num(cp.plan_real_amount) > 0 ? num(cp.plan_real_hour) / num(cp.plan_real_amount) : 0;
@@ -644,7 +644,7 @@ async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId
        where id = $3`,
       [arrangeAmount, arrangeHour, cp.id]
     );
-    remaining -= arrangeAmount;
+    remaining = roundMoney(remaining - arrangeAmount);
   }
 }
 
@@ -664,7 +664,7 @@ async function arrangePromotion(client: pg.PoolClient, schemaName: string, funds
     const planAmount = num(cp.plan_real_amount);
     const arrangePromotionAmount = index === cpRows.length - 1
       ? roundMoney(remainingPromotion)
-      : totalPlanAmount > 0 ? roundMoney(totalPromotion * (planAmount / totalPlanAmount)) : 0;
+      : totalPlanAmount > 0 ? floorMoney(totalPromotion * (planAmount / totalPlanAmount)) : 0;
     if (arrangePromotionAmount <= 0) continue;
     const arrangePromotionHour = num(cp.plan_promotion_hour);
     await client.query(
@@ -681,7 +681,7 @@ async function arrangePromotion(client: pg.PoolClient, schemaName: string, funds
        where id = $3`,
       [arrangePromotionHour, arrangePromotionAmount, cp.id]
     );
-    remainingPromotion -= arrangePromotionAmount;
+    remainingPromotion = roundMoney(remainingPromotion - arrangePromotionAmount);
   }
 }
 
@@ -693,10 +693,14 @@ async function arrangePerformance(client: pg.PoolClient, schemaName: string, fun
     `select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false order by created_at asc`,
     [contractId]
   );
-  for (const cp of cpRows) {
+  let remainingPerformance = roundMoney(amount);
+  for (let index = 0; index < cpRows.length; index += 1) {
+    const cp = cpRows[index];
     const orgId = str(cp.organization_id, str(contract.organization_id));
     const signStaffId = str(contract.sign_staff_id);
-    const perfAmount = roundMoney(amount * (num(cp.plan_real_amount) / Math.max(num(contract.total_amount), 1)));
+    const perfAmount = index === cpRows.length - 1
+      ? roundMoney(remainingPerformance)
+      : floorMoney(amount * (num(cp.plan_real_amount) / Math.max(num(contract.total_amount), 1)));
     if (perfAmount <= 0) continue;
     await client.query(
       `insert into ${table(schemaName, "performance_arrange_log")}
@@ -704,6 +708,7 @@ async function arrangePerformance(client: pg.PoolClient, schemaName: string, fun
        values ($1,$2,$3,'SALES',$4,$5,$6,$7,$8)`,
       [await nextTextId(client, schemaName, "performance_arrange_log"), cp.id, fundsId, orgId, perfAmount, signStaffId || null, signStaffId ? roundMoney(perfAmount * 0.5) : 0, orgId]
     );
+    remainingPerformance = roundMoney(remainingPerformance - perfAmount);
   }
 }
 
@@ -1427,15 +1432,15 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
     const cpRemainingPromotionHour = num(cp.remaining_promotion_hour);
 
     const proportion = totalRemainingReal > 0 ? cpRemainingReal / totalRemainingReal : (1 / cpRows.length);
-    const cpRefundHour = isLast ? roundMoney(remainRefundHour) : roundMoney(targetRefundHour * proportion);
-    const cpRefundAmount = isLast ? roundMoney(remainRefundAmount) : roundMoney(targetRefundAmount * proportion);
-    const cpRefundPromotionHour = isLast ? roundMoney(remainRefundPromotionHour) : roundMoney(targetRefundPromotionHour * proportion);
-    const cpRefundPromotionAmount = isLast ? roundMoney(remainRefundPromotionAmount) : roundMoney(targetRefundPromotionAmount * proportion);
+    const cpRefundHour = isLast ? roundMoney(remainRefundHour) : floorMoney(targetRefundHour * proportion);
+    const cpRefundAmount = isLast ? roundMoney(remainRefundAmount) : floorMoney(targetRefundAmount * proportion);
+    const cpRefundPromotionHour = isLast ? roundMoney(remainRefundPromotionHour) : floorMoney(targetRefundPromotionHour * proportion);
+    const cpRefundPromotionAmount = isLast ? roundMoney(remainRefundPromotionAmount) : floorMoney(targetRefundPromotionAmount * proportion);
 
-    remainRefundHour -= cpRefundHour;
-    remainRefundAmount -= cpRefundAmount;
-    remainRefundPromotionHour -= cpRefundPromotionHour;
-    remainRefundPromotionAmount -= cpRefundPromotionAmount;
+    remainRefundHour = roundMoney(remainRefundHour - cpRefundHour);
+    remainRefundAmount = roundMoney(remainRefundAmount - cpRefundAmount);
+    remainRefundPromotionHour = roundMoney(remainRefundPromotionHour - cpRefundPromotionHour);
+    remainRefundPromotionAmount = roundMoney(remainRefundPromotionAmount - cpRefundPromotionAmount);
 
     if (cpRefundHour <= 0 && cpRefundAmount <= 0 && cpRefundPromotionHour <= 0 && cpRefundPromotionAmount <= 0) continue;
 
