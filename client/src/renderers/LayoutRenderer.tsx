@@ -20,12 +20,12 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
   const [activeModule, setActiveModule] = useState<string>();
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState<string>();
-  const [pageDsl, setPageDsl] = useState<PageDsl | null>(null);
+  const [pageDsls, setPageDsls] = useState<Record<string, PageDsl>>({});
   const [error, setError] = useState("");
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [showAssistantPanel, setShowAssistantPanel] = useState(false);
   const [aiSessionId, setAiSessionId] = useState<string>();
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
   const [managementOpen, setManagementOpen] = useState(false);
   const [managementSearch, setManagementSearch] = useState("");
   const [managementOrganizations, setManagementOrganizations] = useState<Array<{ id: string; name: string; parent_id?: string | null; organization_type?: string; organization_type_label?: string }>>([]);
@@ -86,9 +86,13 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
     setActiveTab(pageCode);
     try {
       const res = await GatewayClient.page(scope, pageCode, schemaName);
-      setPageDsl(res.page.dsl_json as PageDsl);
+      setPageDsls((current) => ({ ...current, [pageCode]: res.page.dsl_json as PageDsl }));
     } catch (err) {
-      setPageDsl(null);
+      setPageDsls((current) => {
+        const next = { ...current };
+        delete next[pageCode];
+        return next;
+      });
       setError(err instanceof Error ? err.message : String(err));
     }
   }
@@ -103,15 +107,29 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
     const tab = tabs.find((item) => item.pageCode === activeTab);
     if (!tab) return;
     await openPage(tab.pageCode, tab.title, tab.initialFilters);
-    setRefreshKey((current) => current + 1);
+    setRefreshKeys((current) => ({ ...current, [tab.pageCode]: (current[tab.pageCode] ?? 0) + 1 }));
   }
 
   function close(pageCode: string) {
+    setPageDsls((current) => {
+      const next = { ...current };
+      delete next[pageCode];
+      return next;
+    });
+    setRefreshKeys((current) => {
+      const next = { ...current };
+      delete next[pageCode];
+      return next;
+    });
     setTabs((current) => {
       const next = current.filter((tab) => tab.pageCode !== pageCode);
       if (activeTab === pageCode) {
         const fallback = next[next.length - 1] ?? defaultPage;
-        void openPage(fallback.pageCode, fallback.title);
+        if (fallback.pageCode === defaultPage.pageCode && !next.some((tab) => tab.pageCode === fallback.pageCode)) {
+          void openPage(fallback.pageCode, fallback.title);
+        } else {
+          setActiveTab(fallback.pageCode);
+        }
       }
       return next;
     });
@@ -241,18 +259,24 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
         <TabManager tabs={tabs} active={activeTab} onActive={activate} onClose={close} onRefresh={() => void refreshActivePage()} />
         <section className="min-h-0 flex-1 overflow-hidden">
           {error && <div className="m-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-          {pageDsl && (
-            <GenericPageRenderer
-              scope={scope}
-              schemaName={schemaName}
-              dsl={pageDsl}
-              initialFilters={tabs.find((tab) => tab.pageCode === activeTab)?.initialFilters}
-              refreshKey={refreshKey}
-              onOpenPage={openPage}
-              onOpenAiCustomization={isTestSchema ? undefined : () => openAiCustomization()}
-              onContinueAiCustomization={isTestSchema ? undefined : openAiCustomization}
-            />
-          )}
+          {tabs.map((tab) => {
+            const dsl = pageDsls[tab.pageCode];
+            if (!dsl) return null;
+            return (
+              <div key={tab.pageCode} className={tab.pageCode === activeTab ? "h-full" : "hidden"}>
+                <GenericPageRenderer
+                  scope={scope}
+                  schemaName={schemaName}
+                  dsl={dsl}
+                  initialFilters={tab.initialFilters}
+                  refreshKey={refreshKeys[tab.pageCode] ?? 0}
+                  onOpenPage={openPage}
+                  onOpenAiCustomization={isTestSchema ? undefined : () => openAiCustomization()}
+                  onContinueAiCustomization={isTestSchema ? undefined : openAiCustomization}
+                />
+              </div>
+            );
+          })}
         </section>
       </main>
       {showAiPanel && schemaName && !isTestSchema && (

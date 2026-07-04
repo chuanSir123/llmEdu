@@ -461,7 +461,7 @@ export function GenericPageRenderer({
           schemaName,
           pageCode: "contract_product_list",
           apiCode: "contract_product_list.query",
-          params: { contract_id: next.id, page: 1, pageSize: 200 }
+          params: { filters: { contract_id: next.id }, page: 1, pageSize: 200 }
         });
         const data = result.data as { rows?: Array<Record<string, unknown>> };
         const productIds = (data.rows ?? []).map((item) => item.product_id).filter((value) => value !== undefined && value !== null && value !== "").map(String);
