@@ -93,9 +93,10 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
     }
   }
 
-  async function activate(pageCode: string) {
-    const tab = tabs.find((item) => item.pageCode === pageCode);
-    if (tab) await openPage(tab.pageCode, tab.title);
+  function activate(pageCode: string) {
+    if (tabs.some((item) => item.pageCode === pageCode)) {
+      setActiveTab(pageCode);
+    }
   }
 
   async function refreshActivePage() {

@@ -646,6 +646,29 @@ function remapDefaultBusinessIds(rows: Array<[string, Record<string, unknown>[]]
   return idMap;
 }
 
+
+function validateDemoBusinessSeed(rows: Array<[string, Record<string, unknown>[]]>) {
+  const byTable = new Map(rows);
+  const contracts = byTable.get("contract") ?? [];
+  const contractProducts = byTable.get("contract_product") ?? [];
+  const moneyLogs = byTable.get("money_arrange_log") ?? [];
+  const performanceLogs = byTable.get("performance_arrange_log") ?? [];
+  const countByContract = new Map<string, number>();
+  for (const row of contractProducts) {
+    const contractId = String(row.contract_id ?? "");
+    countByContract.set(contractId, (countByContract.get(contractId) ?? 0) + 1);
+  }
+  for (const contract of contracts) {
+    const contractId = String(contract.id ?? "");
+    if ((countByContract.get(contractId) ?? 0) !== 2) {
+      throw new Error(`demo seed contract ${contractId} must initialize exactly 2 contract products`);
+    }
+  }
+  if (moneyLogs.length !== contractProducts.length || performanceLogs.length !== contractProducts.length) {
+    throw new Error("demo seed must keep contract products, fund allocations and performance allocations aligned");
+  }
+}
+
 async function seedTenantData() {
   const schema = "demo_school";
   const rows: Array<[string, Record<string, unknown>[]]> = [
@@ -702,12 +725,14 @@ async function seedTenantData() {
       { id: "promo_discount_9", name: "新生 9 折", type: "DISCOUNT", value: 9, status: "ACTIVE" }
     ]],
     ["contract", [
-      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "NEW_SIGN", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 4000, paid_amount: 2000, promotion_amount: 300, contract_status: "ACTIVE" },
-      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "RENEWAL", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 3000, paid_amount: 3000, promotion_amount: 0, contract_status: "ACTIVE" }
+      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "NEW_SIGN", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 7000, paid_amount: 3500, promotion_amount: 300, contract_status: "ACTIVE" },
+      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "RENEWAL", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 5880, paid_amount: 5880, promotion_amount: 0, contract_status: "ACTIVE" }
     ]],
     ["contract_product", [
-      { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 2, plan_real_amount: 4000, plan_promotion_amount: 300, paid_real_hour: 10, paid_promotion_hour: 2, paid_real_amount: 2000, paid_promotion_amount: 300, consumed_real_hour: 2, remaining_real_hour: 8, remaining_promotion_hour: 2, remaining_real_amount: 1600, remaining_promotion_amount: 300 },
-      { id: "cp_002", contract_id: "contract_002", product_id: "prod_002", plan_real_hour: 30, paid_real_hour: 30, paid_real_amount: 3000, consumed_real_hour: 3, remaining_real_hour: 27, remaining_real_amount: 2700 }
+      { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 1.14, plan_real_amount: 4000, plan_promotion_amount: 171.43, paid_real_hour: 10, paid_promotion_hour: 1.14, paid_real_amount: 2000, paid_promotion_amount: 171.43, consumed_real_hour: 1, remaining_real_hour: 9, remaining_promotion_hour: 1.14, remaining_real_amount: 1800, remaining_promotion_amount: 171.43 },
+      { id: "cp_002", contract_id: "contract_001", product_id: "prod_002", plan_real_hour: 30, plan_promotion_hour: 1.29, plan_real_amount: 3000, plan_promotion_amount: 128.57, paid_real_hour: 15, paid_promotion_hour: 1.29, paid_real_amount: 1500, paid_promotion_amount: 128.57, consumed_real_hour: 0, remaining_real_hour: 15, remaining_promotion_hour: 1.29, remaining_real_amount: 1500, remaining_promotion_amount: 128.57 },
+      { id: "cp_003", contract_id: "contract_002", product_id: "prod_002", plan_real_hour: 30, plan_real_amount: 3000, paid_real_hour: 30, paid_real_amount: 3000, consumed_real_hour: 3, remaining_real_hour: 27, remaining_real_amount: 2700 },
+      { id: "cp_004", contract_id: "contract_002", product_id: "prod_003", plan_real_hour: 24, plan_real_amount: 2880, paid_real_hour: 24, paid_real_amount: 2880, consumed_real_hour: 0, remaining_real_hour: 24, remaining_real_amount: 2880 }
     ]],
     ["mini_class", [{ id: "mc_001", name: "三年级语文小班", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", product_id: "prod_002", grade: "三年级", subject: "语文", capacity: 12, status: "ACTIVE" }]],
     ["one_on_n_group", [{ id: "ong_001", name: "英语一对三 A 组", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", grade: "三年级", subject: "英语", capacity: 3, status: "ACTIVE" }]],
@@ -717,7 +742,7 @@ async function seedTenantData() {
     ]],
     ["generic_course_student", [
       { id: "cs_001", course_id: "course_001", student_id: "stu_001", attendance_status: "PRESENT", contract_product_id: "cp_001" },
-      { id: "cs_002", course_id: "course_002", student_id: "stu_002", attendance_status: "PENDING", contract_product_id: "cp_002" }
+      { id: "cs_002", course_id: "course_002", student_id: "stu_002", attendance_status: "PENDING", contract_product_id: "cp_003" }
     ]],
     ["trial_lesson", [
       { id: "trial_001", student_id: "stu_004", course_title: "李小明数学试听课", trial_time: "2026-06-13T15:00:00+08:00", teacher_id: "user_002", sales_user_id: "user_004", trial_status: "SCHEDULED", conversion_status: "PENDING", remark: "体验一对一数学" }
@@ -739,8 +764,8 @@ async function seedTenantData() {
     ]],
     ["account_charge_records", [{ id: "charge_001", course_id: "course_001", charge_type: "NORMAL", charge_hour: 1, charge_amount: 200, contract_product_id: "cp_001", organization_id: "org_001", student_id: "stu_001", charge_status: "CONFIRMED" }]],
     ["funds_change_history", [
-      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 2000, transaction_time: "2026-06-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
-      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 3000, transaction_time: "2026-06-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 3500, transaction_time: "2026-06-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 5880, transaction_time: "2026-06-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
       { id: "fund_003", student_id: "stu_001", transaction_amount: 500, transaction_time: "2026-06-10T09:00:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "PRE_STORE", organization_id: "org_001" }
     ]],
     ["pay_way_config", [
@@ -770,7 +795,7 @@ async function seedTenantData() {
       { id: "push_contract_paid", rule_name: "合同收款成功通知", business_event: "funds.created", template_id: "tmpl_contract_paid", receiver_scope: "student", status: "ACTIVE", rule_json: JSON.stringify({ triggerTables: ["funds_change_history"], eventTypes: ["合同", "收款"], url: "/wx/home/contracts" }) },
       { id: "push_charge_confirmed", rule_name: "课消扣费通知", business_event: "charge.confirmed", template_id: "tmpl_charge", receiver_scope: "student", status: "ACTIVE", rule_json: JSON.stringify({ triggerTables: ["account_charge_records"], eventTypes: ["扣费"] }) }
     ]],
-    ["wechat_push_log", [{ id: "push_log_001", rule_id: "push_contract_paid", business_event: "funds.created", business_id: "fund_001", student_id: "stu_001", openid: "openid_stu_001", template_id: "tmpl_contract_paid", send_status: "SUCCESS", payload_json: JSON.stringify({ amount: 2000 }) }]],
+    ["wechat_push_log", [{ id: "push_log_001", rule_id: "push_contract_paid", business_event: "funds.created", business_id: "fund_001", student_id: "stu_001", openid: "openid_stu_001", template_id: "tmpl_contract_paid", send_status: "SUCCESS", payload_json: JSON.stringify({ amount: 3500 }) }]],
     ["notice", [{ id: "notice_001", title: "六月教务安排", content: "请各校区完成课消核对。", status: "PUBLISHED" }]],
     ["product_grant", [
       { id: "pg_001", product_id: "prod_001", organization_id: "org_001" },
@@ -787,21 +812,28 @@ async function seedTenantData() {
       { id: "cph_001", contract_id: "contract_001", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 300 }
     ]],
     ["contract_product_promotion_history", [
-      { id: "cpph_001", contract_product_id: "cp_001", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 300 }
+      { id: "cpph_001", contract_product_id: "cp_001", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 171.43 },
+      { id: "cpph_002", contract_product_id: "cp_002", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 128.57 }
     ]],
     ["money_arrange_log", [
       { id: "arr_001", contract_product_id: "cp_001", arrange_real_hour: 10, arrange_real_amount: 2000, funds_change_history_id: "fund_001", organization_id: "org_001" },
-      { id: "arr_002", contract_product_id: "cp_002", arrange_real_hour: 30, arrange_real_amount: 3000, funds_change_history_id: "fund_002", organization_id: "org_001" }
+      { id: "arr_002", contract_product_id: "cp_002", arrange_real_hour: 15, arrange_real_amount: 1500, funds_change_history_id: "fund_001", organization_id: "org_001" },
+      { id: "arr_003", contract_product_id: "cp_003", arrange_real_hour: 30, arrange_real_amount: 3000, funds_change_history_id: "fund_002", organization_id: "org_001" },
+      { id: "arr_004", contract_product_id: "cp_004", arrange_real_hour: 24, arrange_real_amount: 2880, funds_change_history_id: "fund_002", organization_id: "org_001" }
     ]],
     ["promotion_arrange_log", [
-      { id: "promo_arr_001", contract_product_id: "cp_001", arrange_promotion_hour: 2, arrange_promotion_amount: 300, funds_change_history_id: "fund_001", organization_id: "org_001" }
+      { id: "promo_arr_001", contract_product_id: "cp_001", arrange_promotion_hour: 1.14, arrange_promotion_amount: 171.43, funds_change_history_id: "fund_001", organization_id: "org_001" },
+      { id: "promo_arr_002", contract_product_id: "cp_002", arrange_promotion_hour: 1.29, arrange_promotion_amount: 128.57, funds_change_history_id: "fund_001", organization_id: "org_001" }
     ]],
     ["performance_arrange_log", [
       { id: "perf_001", contract_product_id: "cp_001", funds_change_history_id: "fund_001", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 2000, personal_performance_user_id: "user_004", personal_performance_amount: 2000, organization_id: "org_001" },
-      { id: "perf_002", contract_product_id: "cp_002", funds_change_history_id: "fund_002", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 3000, personal_performance_user_id: "user_004", personal_performance_amount: 3000, organization_id: "org_001" }
+      { id: "perf_002", contract_product_id: "cp_002", funds_change_history_id: "fund_001", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 1500, personal_performance_user_id: "user_004", personal_performance_amount: 1500, organization_id: "org_001" },
+      { id: "perf_003", contract_product_id: "cp_003", funds_change_history_id: "fund_002", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 3000, personal_performance_user_id: "user_004", personal_performance_amount: 3000, organization_id: "org_001" },
+      { id: "perf_004", contract_product_id: "cp_004", funds_change_history_id: "fund_002", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 2880, personal_performance_user_id: "user_004", personal_performance_amount: 2880, organization_id: "org_001" }
     ]]
   ];
 
+  validateDemoBusinessSeed(rows);
   const businessIdMap = remapDefaultBusinessIds(rows);
 
   for (const [table, tableRows] of rows) {
