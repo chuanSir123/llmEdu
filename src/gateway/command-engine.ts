@@ -57,7 +57,21 @@ function roundMoney(value: number) {
 }
 
 function floorMoney(value: number) {
-  return Math.floor((value + Number.EPSILON) * 100) / 100;
+  return Math.floor((value + 1e-9) * 100) / 100;
+}
+
+function allocateProportionally(total: number, weights: number[]) {
+  if (!weights.length) return [] as number[];
+  const totalCents = Math.round(num(total) * 100);
+  const weightSum = weights.reduce((sum, weight) => sum + Math.max(num(weight), 0), 0);
+  let remainingCents = totalCents;
+  return weights.map((weight, index) => {
+    const shareCents = index === weights.length - 1
+      ? remainingCents
+      : weightSum > 0 ? Math.floor(totalCents * (Math.max(num(weight), 0) / weightSum) + 1e-9) : 0;
+    remainingCents -= shareCents;
+    return shareCents / 100;
+  });
 }
 
 function allocateProportionally(total: number, weights: number[]) {
