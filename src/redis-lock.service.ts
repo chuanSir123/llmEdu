@@ -4,6 +4,23 @@ import { env } from "./config/env.js";
 
 type RedisUrl = { host: string; port: number; password?: string; db?: number };
 
+const localLocks = new Set<string>();
+
+function isRedisUnavailable(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code?: unknown }).code) : "";
+  return code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT" || code === "ECONNRESET";
+}
+
+async function withLocalLock<T>(key: string, fn: () => Promise<T>) {
+  if (localLocks.has(key)) throw Object.assign(new Error(`资源正忙，请稍后重试: ${key}`), { statusCode: 409 });
+  localLocks.add(key);
+  try {
+    return await fn();
+  } finally {
+    localLocks.delete(key);
+  }
+}
+
 function parseRedisUrl(value: string): RedisUrl {
   const url = new URL(value);
   return { host: url.hostname || "127.0.0.1", port: Number(url.port || 6379), password: url.password ? decodeURIComponent(url.password) : undefined, db: url.pathname && url.pathname !== "/" ? Number(url.pathname.slice(1)) : undefined };
@@ -73,7 +90,14 @@ export async function releaseRedisLock(key: string, token: string) {
 }
 
 export async function withRedisLock<T>(key: string, fn: () => Promise<T>, ttlMs = 15_000): Promise<T> {
-  const token = await acquireRedisLock(key, ttlMs);
+  let token: string;
+  try {
+    token = await acquireRedisLock(key, ttlMs);
+  } catch (error) {
+    if (!isRedisUnavailable(error)) throw error;
+    console.warn("redis unavailable, falling back to process-local lock", key, error);
+    return withLocalLock(key, fn);
+  }
   try {
     return await fn();
   } finally {

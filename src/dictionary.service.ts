@@ -22,6 +22,8 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   course_status: { SCHEDULED: { label: "待上课", metadata: { tone: "blue" } }, FINISHED: { label: "已完成", metadata: { tone: "green", businessSemantic: "finished" } }, CANCELLED: { label: "已取消", metadata: { tone: "gray", businessSemantic: "cancelled" } } },
   charge_status: { CONFIRMED: { label: "已确认", metadata: { tone: "green", businessSemantic: "charged" } }, PENDING: { label: "待确认", metadata: { tone: "amber" } }, REVERSED: { label: "已撤销", metadata: { tone: "gray" } } },
   attendance_status: { PENDING: { label: "待签到", metadata: { tone: "amber" } }, PRESENT: { label: "已签到", metadata: { tone: "green" } }, ABSENT: { label: "缺勤", metadata: { tone: "red" } }, LEAVE: { label: "请假", metadata: { tone: "gray" } } },
+  approval_status: { PENDING: { label: "审批中", metadata: { tone: "amber" } }, APPROVED: { label: "已通过", metadata: { tone: "green" } }, REJECTED: { label: "已驳回", metadata: { tone: "red" } }, CANCELED: { label: "已撤回", metadata: { tone: "gray" } } },
+  approval_flow_status: { ACTIVE: { label: "已开启", metadata: { tone: "green" } }, INACTIVE: { label: "已关闭", metadata: { tone: "gray" } } },
   status: { ACTIVE: { label: "启用", metadata: { tone: "green" } }, INACTIVE: { label: "停用" }, ENABLED: { label: "启用" }, DISABLED: { label: "停用" }, PUBLISHED: { label: "已发布", metadata: { tone: "blue" } }, DRAFT: { label: "草稿" }, draft: { label: "草稿", metadata: { tone: "amber" } }, active: { label: "生效", metadata: { tone: "green" } }, archived: { label: "归档", metadata: { tone: "gray" } }, rejected: { label: "已驳回" }, pending: { label: "待处理" }, success: { label: "成功" }, failed: { label: "失败" }, running: { label: "执行中" }, skipped: { label: "已跳过" }, APPROVED: { label: "已通过" }, REJECTED: { label: "已拒绝" }, CANCELED: { label: "已取消" } },
   mode: { draft: { label: "草稿" }, publish_after_confirm: { label: "确认后发布", metadata: { tone: "blue" } }, import: { label: "导入" }, validate: { label: "校验" } },
   staff_type: { MANAGER: { label: "校长" }, TEACHER: { label: "老师" }, STUDY_MANAGER: { label: "学管师" }, SALES: { label: "顾问" } },
@@ -41,6 +43,8 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   conversion_status: { PENDING: { label: "待转化" }, CONVERTED: { label: "已转化" }, LOST: { label: "未转化" } },
   task_type: { FOLLOWUP: { label: "跟进" }, TRIAL_FOLLOWUP: { label: "试听跟进" } },
   task_status: { PENDING: { label: "待处理" }, COMPLETED: { label: "已完成" }, CANCELED: { label: "已取消" } },
+  lead_stage: { NEW: { label: "新线索" }, FOLLOWING: { label: "跟进中" }, TRIAL_SCHEDULED: { label: "已邀约试听" }, TRIAL_COMPLETED: { label: "已试听" }, CONVERTED: { label: "已转化" }, LOST: { label: "已流失" } },
+  lead_assignment_action_type: { ASSIGN: { label: "分配" }, TRANSFER: { label: "转移" }, RECLAIM: { label: "回收" } },
   business_rule_category: { funds_allocation: { label: "资金分配" }, promotion_allocation: { label: "优惠分配" }, performance_allocation: { label: "业绩分配" }, approval_trigger: { label: "审批触发" }, validation: { label: "校验规则" }, workflow: { label: "业务流转" }, refund: { label: "退费规则" }, charge: { label: "扣费规则" }, attendance: { label: "考勤规则" } },
   business_type: { contract: { label: "合同签约" }, funds: { label: "收款" }, course: { label: "排课" }, course_cancel: { label: "课程取消" }, attendance: { label: "考勤" }, charge: { label: "扣费" }, charge_reverse: { label: "撤销扣费" }, refund: { label: "退费" }, contract_refund: { label: "合同退费" }, product_price: { label: "产品价格" }, performance: { label: "业绩" } },
   action_type: { open_page: { label: "打开页面" }, execute_api: { label: "执行接口" }, open_modal: { label: "打开弹窗" }, open_ai_customization: { label: "AI 定制" }, dropdown: { label: "下拉菜单" }, input: { label: "输入" }, display: { label: "展示" }, tab: { label: "页签" }, export: { label: "导出" }, import: { label: "导入" } },
@@ -103,8 +107,18 @@ const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   business_type: "business_type"
 };
 
+export function dictionaryItemId(dictCode: string, itemValue: unknown) {
+  return `${dictCode}.${String(itemValue ?? "")}`;
+}
+
+function dictionaryItemValueFromId(dictCode: string, value: unknown) {
+  const text = String(value ?? "");
+  const prefix = `${dictCode}.`;
+  return text.startsWith(prefix) ? text.slice(prefix.length) : text;
+}
+
 export function systemDictionaryLabel(dictCode: string, itemValue: unknown) {
-  const value = String(itemValue ?? "");
+  const value = dictionaryItemValueFromId(dictCode, itemValue);
   return SYSTEM_DICTIONARIES[dictCode]?.[value]?.label;
 }
 
@@ -119,19 +133,20 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
     .filter((item): item is { field: string; dictCode: string; value: unknown } => Boolean(item.dictCode) && typeof item.value === "string" && item.value.trim() !== "");
   if (!candidates.length) return normalized;
 
-  const ids = [...new Set(candidates.map((item) => String(item.value)))];
+  const values = [...new Set(candidates.map((item) => String(item.value)))];
   const dictCodes = [...new Set(candidates.map((item) => item.dictCode))];
   const { rows } = await pool.query(
     `select id, dict_code, item_value
        from admin.dictionary_item
-      where id = any($1::text[]) and dict_code = any($2::text[]) and deleted = false
+      where dict_code = any($2::text[]) and deleted = false
+        and (id = any($1::text[]) or item_value = any($1::text[]))
         and ((schema_scope = 'admin' and schema_name = '') or (schema_scope = 'tenant' and schema_name = $3))`,
-    [ids, dictCodes, schemaName]
+    [values, dictCodes, schemaName]
   );
-  const byIdAndCode = new Map(rows.map((row) => [`${row.dict_code}:${row.id}`, row.item_value]));
+  const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_value}`, row.id]]));
   for (const item of candidates) {
-    const itemValue = byIdAndCode.get(`${item.dictCode}:${String(item.value)}`);
-    if (itemValue !== undefined) normalized[item.field] = itemValue;
+    const itemId = byInputAndCode.get(`${item.dictCode}:${String(item.value)}`);
+    if (itemId !== undefined) normalized[item.field] = itemId;
   }
   return normalized;
 }
@@ -154,17 +169,18 @@ export async function seedSystemDictionaries() {
     sort = 10;
     for (const [itemValue, item] of Object.entries(items)) {
       await pool.query(
-        `insert into admin.dictionary_item(dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
-         values($1,$2,$3,'admin','',true,true,$4,'ACTIVE',$5,false)
+        `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
+         values($1,$2,$3,$4,'admin','',true,true,$5,'ACTIVE',$6,false)
          on conflict (dict_code, schema_name, item_value) do update
-           set item_label = excluded.item_label,
+           set id = excluded.id,
+               item_label = excluded.item_label,
                is_system = true,
                locked = true,
                status = 'ACTIVE',
                metadata_json = admin.dictionary_item.metadata_json || excluded.metadata_json,
                deleted = false,
                updated_at = now()`,
-        [dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
+        [dictionaryItemId(dictCode, itemValue), dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
       );
       sort += 10;
     }
