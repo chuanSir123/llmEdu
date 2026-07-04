@@ -777,6 +777,8 @@ export const pages: PageSeed[] = [
     group: "合同收费",
     fields: [
       { key: "contract_no", label: "合同编号" },
+      { key: "contract_id", label: "合同ID", hidden: true, filter: true },
+      { key: "product_id", label: "产品ID", hidden: true },
       { key: "product_name", label: "产品" },
       { key: "remaining_real_hour", label: "剩余课时" },
       { key: "remaining_real_amount", label: "剩余金额" },
@@ -803,6 +805,7 @@ export const pages: PageSeed[] = [
       { key: "student_name", label: "学员" },
       { key: "student_id", label: "学员ID", hidden: true },
       { key: "organization_id", label: "校区ID", hidden: true },
+      { key: "sign_staff_id", label: "签约人ID", hidden: true },
       { key: "organization_name", label: "校区" },
       { key: "paid_status", label: "付款状态", filter: true },
       { key: "contract_type", label: "合同类型" },

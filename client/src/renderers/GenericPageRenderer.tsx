@@ -432,6 +432,47 @@ export function GenericPageRenderer({
     await load();
   }
 
+  async function loadDetailValue(row: Record<string, unknown>) {
+    if (!dsl.detailApi || row.id === undefined || row.id === null) return row;
+    try {
+      const result = await GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: dsl.pageCode,
+        apiCode: dsl.detailApi,
+        params: { id: row.id }
+      });
+      const detail = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data as Record<string, unknown> : {};
+      return { ...row, ...detail };
+    } catch {
+      return row;
+    }
+  }
+
+  async function hydrateEditValue(row: Record<string, unknown>) {
+    const detail = await loadDetailValue(row);
+    if (dsl.pageCode !== "contract_list") return detail;
+    const next: Record<string, unknown> = { ...detail };
+    if (next.student_id !== undefined && next.student_ids === undefined) next.student_ids = [next.student_id];
+    if (next.id !== undefined && next.product_ids === undefined) {
+      try {
+        const result = await GatewayClient.executeApi({
+          scope,
+          schemaName,
+          pageCode: "contract_product_list",
+          apiCode: "contract_product_list.query",
+          params: { contract_id: next.id, page: 1, pageSize: 200 }
+        });
+        const data = result.data as { rows?: Array<Record<string, unknown>> };
+        const productIds = (data.rows ?? []).map((item) => item.product_id).filter((value) => value !== undefined && value !== null && value !== "").map(String);
+        if (productIds.length) next.product_ids = productIds;
+      } catch {
+        // 保留合同主表详情，避免关联产品加载失败时阻断编辑弹窗。
+      }
+    }
+    return next;
+  }
+
   async function onRowAction(action: ActionDsl, row: Record<string, unknown>) {
     if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
     if (action.actionCode.endsWith(".detail")) {
@@ -443,7 +484,7 @@ export function GenericPageRenderer({
       return;
     }
     if (action.actionCode.endsWith(".edit")) {
-      setModal({ type: "edit", value: row });
+      setModal({ type: "edit", value: await hydrateEditValue(row) });
       return;
     }
     if (action.type === "open_page" || action.actionType === "open_page") {
