@@ -7,6 +7,7 @@ import { token } from "../styles/designTokens";
 import { ActionRenderer } from "./ActionRenderer";
 import { GenericTableRenderer } from "./GenericTableRenderer";
 import { ModalRenderer } from "./ModalRenderer";
+import { ApprovalTaskDetail } from "./ApprovalTaskDetail";
 import { GenericFormRenderer } from "./GenericFormRenderer";
 import { ImportHandler } from "./ImportHandler";
 import { exportToExcel } from "./ExportHandler";
@@ -480,7 +481,23 @@ export function GenericPageRenderer({
         setCustomizationRecordId(String(row.id ?? ""));
         return;
       }
-      setModal({ type: "detail", value: row });
+      const detail = await loadDetailValue(row);
+      if (dsl.pageCode === "approval_task_list") {
+        try {
+          const result = await GatewayClient.executeApi({
+            scope,
+            schemaName,
+            pageCode: "approval_task_log_list",
+            apiCode: "approval_task_log_list.query",
+            params: { filters: { task_id: row.id }, page: 1, pageSize: 50 }
+          });
+          const data = result.data as { rows?: Array<Record<string, unknown>> };
+          detail.logs = data.rows ?? [];
+        } catch {
+          detail.logs = [];
+        }
+      }
+      setModal({ type: "detail", value: detail });
       return;
     }
     if (action.actionCode.endsWith(".edit")) {
@@ -1218,7 +1235,22 @@ export function GenericPageRenderer({
           <span className="ml-2">共 {total.toLocaleString()} 条</span>
         </div>
       </div>
-      {modal && (
+      {modal && dsl.pageCode === "approval_task_list" && modal.type === "detail" ? (
+        <ApprovalTaskDetail
+          value={modal.value}
+          onClose={() => setModal(null)}
+          onApprove={async () => {
+            await GatewayClient.executeApi({ scope, schemaName, pageCode: dsl.pageCode, apiCode: "approvalTask.approve", params: { id: modal.value.id } });
+            setModal(null);
+            await load(filters, page);
+          }}
+          onReject={async () => {
+            await GatewayClient.executeApi({ scope, schemaName, pageCode: dsl.pageCode, apiCode: "approvalTask.reject", params: { id: modal.value.id } });
+            setModal(null);
+            await load(filters, page);
+          }}
+        />
+      ) : modal && (
         <ModalRenderer
           scope={scope}
           schemaName={schemaName}

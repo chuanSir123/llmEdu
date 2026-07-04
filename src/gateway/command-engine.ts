@@ -113,7 +113,7 @@ async function loadRule(client: pg.PoolClient, schemaName: string, ruleCode: str
 function commandApprovalHint(command: CommandDsl["command"]) {
   const map: Partial<Record<CommandDsl["command"], { flowCode: string; businessType: string; event: string; pageCode: string; actionCode: string; require?: boolean }>> = {
     "contract.create": { flowCode: "contract_create_approval", businessType: "contract_create", event: "contract_create_submit", pageCode: "contract_list", actionCode: "contract_list.create" },
-    "contract.update": { flowCode: "contract_create_approval", businessType: "contract_create", event: "contract_create_submit", pageCode: "contract_list", actionCode: "contract_list.edit" },
+    "contract.update": { flowCode: "contract_update_approval", businessType: "contract_update", event: "contract_update_submit", pageCode: "contract_list", actionCode: "contract_list.edit" },
     "funds.create": { flowCode: "funds_create_approval", businessType: "funds_create", event: "funds_create_submit", pageCode: "funds_history", actionCode: "funds_history.create" },
     "refund.create": { flowCode: "refund_create_approval", businessType: "refund_create", event: "refund_create_submit", pageCode: "refund_record", actionCode: "refund_record.create" },
     "course.create": { flowCode: "course_create_approval", businessType: "course_create", event: "course_create_submit", pageCode: "course_list", actionCode: "course_list.create" },

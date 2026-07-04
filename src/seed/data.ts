@@ -1142,7 +1142,7 @@ export const pages: PageSeed[] = [
       { key: "business_type", label: "业务类型" },
       { key: "organization_id", label: "组织架构" },
       { key: "steps_summary", label: "流转角色" },
-      { key: "status", label: "状态", filter: true }
+      { key: "status", label: "状态", filter: true, dictCode: "approval_flow_status" }
     ]
   },
   {
@@ -1158,7 +1158,9 @@ export const pages: PageSeed[] = [
       { key: "business_id", label: "业务单据" },
       { key: "applicant_name", label: "申请人" },
       { key: "current_approver_name", label: "当前审批人" },
-      { key: "status", label: "状态", filter: true, badge: true },
+      { key: "status", label: "状态", filter: true, badge: true, dictCode: "approval_status" },
+      { key: "current_step_index", label: "当前节点", hidden: true },
+      { key: "form_json", label: "审批详情", hidden: true },
       { key: "created_at", label: "发起时间", type: "datetime" },
       { key: "updated_at", label: "更新时间", type: "datetime" }
     ],
@@ -2095,6 +2097,7 @@ export const actionDslSeeds: Array<{ actionCode: string; actionName: string; act
   { actionCode: "approval_flow_list.edit", actionName: "编辑审批", actionType: "open_modal", pageCode: "approval_flow_list", module: "oa", feature: "approval_flow_list", dsl: { actionCode: "approval_flow_list.edit", actionName: "编辑审批", actionType: "open_modal", afterSuccess: [{ type: "toast", message: "审批配置已更新" }, { type: "refreshPage" }] } },
   { actionCode: "approval_flow_list.delete", actionName: "删除审批", actionType: "execute_api", pageCode: "approval_flow_list", module: "oa", feature: "approval_flow_list", dsl: { actionCode: "approval_flow_list.delete", actionName: "删除审批", actionType: "execute_api", apiCode: "approval_flow_list.delete", confirm: true, afterSuccess: [{ type: "toast", message: "审批配置已删除" }, { type: "refreshPage" }] } },
   { actionCode: "approval_flow_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "approval_flow_list", module: "oa", feature: "approval_flow_list", dsl: { actionCode: "approval_flow_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "approval_flow_list.query" } },
+  { actionCode: "approval_task_list.detail", actionName: "查看详情", actionType: "open_modal", pageCode: "approval_task_list", module: "oa", feature: "approval_task_list", dsl: { actionCode: "approval_task_list.detail", actionName: "查看详情", actionType: "open_modal", modalCode: "approval_task_detail_modal" } },
   { actionCode: "approval_task_list.approve", actionName: "同意", actionType: "execute_api", pageCode: "approval_task_list", module: "oa", feature: "approval_task_list", dsl: { actionCode: "approval_task_list.approve", actionName: "同意", actionType: "execute_api", apiCode: "approvalTask.approve", confirm: true, afterSuccess: [{ type: "toast", message: "审批已同意" }, { type: "refreshPage" }] } },
   { actionCode: "approval_task_list.reject", actionName: "驳回", actionType: "execute_api", pageCode: "approval_task_list", module: "oa", feature: "approval_task_list", dsl: { actionCode: "approval_task_list.reject", actionName: "驳回", actionType: "execute_api", apiCode: "approvalTask.reject", confirm: true, afterSuccess: [{ type: "toast", message: "审批已驳回" }, { type: "refreshPage" }] } },
   { actionCode: "approval_task_list.cancel", actionName: "撤回", actionType: "execute_api", pageCode: "approval_task_list", module: "oa", feature: "approval_task_list", dsl: { actionCode: "approval_task_list.cancel", actionName: "撤回", actionType: "execute_api", apiCode: "approvalTask.cancel", confirm: true, afterSuccess: [{ type: "toast", message: "审批已撤回" }, { type: "refreshPage" }] } },
@@ -2649,7 +2652,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     ];
     baseDsl.modal.fields = [
       { key: "name", label: "审批名称", type: "text", required: true },
-      { key: "status", label: "状态", type: "text" },
+      { key: "status", label: "状态", type: "text", dictCode: "approval_flow_status", defaultValue: "INACTIVE" },
       { key: "organization_id", label: "组织架构", type: "text", optionSource: orgSelect },
       { key: "config_json", label: "审批配置", type: "approval_flow_editor", span: "full" }
     ];
@@ -2670,7 +2673,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { key: "created_at", title: "发起时间", width: 170 },
       { key: "updated_at", title: "更新时间", width: 170 }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["approval_task_list.approve", "approval_task_list.reject", "approval_task_list.cancel"];
+    baseDsl.presentation.table.primaryRowActions = ["approval_task_list.detail", "approval_task_list.approve", "approval_task_list.reject", "approval_task_list.cancel"];
   }
 
   if (page.page === "business_rule_list") {
@@ -3861,7 +3864,7 @@ export const approvalFlows = [
     flow_code: "contract_discount_approval",
     flow_name: "合同优惠审批",
     module_code: "finance",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "contract_discount_approval",
@@ -3880,7 +3883,7 @@ export const approvalFlows = [
     flow_code: "lead_enroll_approval",
     flow_name: "新生报名审批",
     module_code: "recruit",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "lead_enroll_approval",
@@ -3899,7 +3902,7 @@ export const approvalFlows = [
     flow_code: "contract_create_approval",
     flow_name: "合同创建审批",
     module_code: "finance",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "contract_create_approval",
@@ -3915,10 +3918,29 @@ export const approvalFlows = [
     }
   },
   {
+    flow_code: "contract_update_approval",
+    flow_name: "合同修改审批",
+    module_code: "finance",
+    status: "INACTIVE",
+    config_json: {
+      resourceType: "approval_flow",
+      flowCode: "contract_update_approval",
+      flowName: "合同修改审批",
+      moduleCode: "finance",
+      businessType: "contract_update",
+      trigger: { event: "contract_update_submit", pageCode: "contract_list" },
+      steps: [
+        { stepCode: "sales_submit", stepName: "销售提交", assigneeRole: "SALES" },
+        { stepCode: "principal_review", stepName: "校长审批", assigneeRole: "PRINCIPAL" }
+      ],
+      afterApproved: [{ type: "execute_original_command" }]
+    }
+  },
+  {
     flow_code: "funds_create_approval",
     flow_name: "收款审批",
     module_code: "finance",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "funds_create_approval",
@@ -3937,7 +3959,7 @@ export const approvalFlows = [
     flow_code: "refund_create_approval",
     flow_name: "退费审批",
     module_code: "finance",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "refund_create_approval",
@@ -3956,7 +3978,7 @@ export const approvalFlows = [
     flow_code: "course_create_approval",
     flow_name: "排课审批",
     module_code: "education",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "course_create_approval",
@@ -3975,7 +3997,7 @@ export const approvalFlows = [
     flow_code: "course_cancel_approval",
     flow_name: "课程取消审批",
     module_code: "education",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "course_cancel_approval",
@@ -3994,7 +4016,7 @@ export const approvalFlows = [
     flow_code: "charge_reverse_approval",
     flow_name: "撤销扣费审批",
     module_code: "education",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "charge_reverse_approval",
@@ -4013,7 +4035,7 @@ export const approvalFlows = [
     flow_code: "product_price_approval",
     flow_name: "产品价格审批",
     module_code: "finance",
-    status: "ACTIVE",
+    status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "product_price_approval",
