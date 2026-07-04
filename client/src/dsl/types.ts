@@ -85,6 +85,8 @@ export type ActionDsl = {
   defaultValues?: Record<string, unknown>;
   defaultParams?: Record<string, unknown>;
   mapRowToValue?: Record<string, string>;
+  mapSelectedToValue?: Record<string, string>;
+  requiresSelection?: boolean;
   modalSize?: "default" | "large" | "fullscreen";
   afterSuccess?: Array<{ type: "toast" | "redirect" | "refreshPage"; message?: string; to?: string }>;
   visibleWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | Record<string, unknown> | Array<Record<string, unknown>> | undefined>;
@@ -221,6 +223,7 @@ export type PageDsl = {
     rowKey: string;
     columns: FieldDsl[];
     rowActions: ActionDsl[];
+    selectable?: boolean;
   };
   modal: {
     fields: FieldDsl[];

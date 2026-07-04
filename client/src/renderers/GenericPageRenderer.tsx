@@ -7,6 +7,7 @@ import { token } from "../styles/designTokens";
 import { ActionRenderer } from "./ActionRenderer";
 import { GenericTableRenderer } from "./GenericTableRenderer";
 import { ModalRenderer } from "./ModalRenderer";
+import { ApprovalTaskDetail } from "./ApprovalTaskDetail";
 import { GenericFormRenderer } from "./GenericFormRenderer";
 import { ImportHandler } from "./ImportHandler";
 import { exportToExcel } from "./ExportHandler";
@@ -81,6 +82,7 @@ export function GenericPageRenderer({
   const [modal, setModal] = useState<ModalState>(null);
   const [customizationRecordId, setCustomizationRecordId] = useState("");
   const [importConfig, setImportConfig] = useState<Record<string, unknown> | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [rightRailItems, setRightRailItems] = useState<Record<string, RightRailItem[]>>({});
   const [dictionaryLabels, setDictionaryLabels] = useState<Record<string, Record<string, string>>>({});
   const [dictionaryOptionIds, setDictionaryOptionIds] = useState<Record<string, Record<string, string>>>({});
@@ -138,10 +140,15 @@ export function GenericPageRenderer({
       const ids: Record<string, string> = {};
       const meta: Record<string, Record<string, unknown>> = {};
       for (const row of data.rows ?? []) {
-        const itemValue = String(row.itemValue ?? row.item_value ?? row.value ?? "");
-        labels[itemValue] = String(row.label ?? row.item_label ?? itemValue);
-        ids[itemValue] = String(row.value ?? "");
-        meta[itemValue] = row.metadata ?? row.metadata_json ?? {};
+        const itemValue = String(row.itemValue ?? row.item_value ?? "");
+        const optionId = String(row.value ?? "");
+        const label = String(row.label ?? row.item_label ?? itemValue ?? optionId);
+        if (itemValue) labels[itemValue] = label;
+        if (optionId) labels[optionId] = label;
+        if (itemValue) ids[itemValue] = optionId;
+        if (optionId) ids[optionId] = optionId;
+        if (itemValue) meta[itemValue] = row.metadata ?? row.metadata_json ?? {};
+        if (optionId) meta[optionId] = row.metadata ?? row.metadata_json ?? {};
       }
       return [dictCode, { labels, ids, meta }] as const;
     }))
@@ -312,6 +319,7 @@ export function GenericPageRenderer({
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
       setRows(data.rows);
       setTotal(data.total);
+      setSelectedRowIds((current) => current.filter((id) => data.rows.some((row) => String(row.id) === id)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -412,8 +420,16 @@ export function GenericPageRenderer({
       openTarget(target, action.label ?? "打开页面", targetFilters(target));
       return;
     }
-    if (action.actionCode.endsWith(".create")) {
-      setModal({ type: "create", value: resolveDictionaryDefaults(action.defaultValues) ?? {}, action });
+    if (action.actionCode.endsWith(".create") || action.actionCode.endsWith(".batchEnroll")) {
+      if (action.requiresSelection && selectedRowIds.length === 0) {
+        toast.error("请先选择学员");
+        return;
+      }
+      const selectedRows = rows.filter((row) => selectedRowIds.includes(String(row.id)));
+      const selectedValues = action.mapSelectedToValue && selectedRows.length
+        ? Object.fromEntries(Object.entries(action.mapSelectedToValue).map(([targetKey, sourceKey]) => [targetKey, selectedRows.map((row) => row[String(sourceKey)]).filter((value) => value !== undefined && value !== null && value !== "")]))
+        : {};
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...selectedValues }, action });
       return;
     }
     if (isImportToolbarAction(action)) {
@@ -427,6 +443,47 @@ export function GenericPageRenderer({
     await load();
   }
 
+  async function loadDetailValue(row: Record<string, unknown>) {
+    if (!dsl.detailApi || row.id === undefined || row.id === null) return row;
+    try {
+      const result = await GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: dsl.pageCode,
+        apiCode: dsl.detailApi,
+        params: { id: row.id }
+      });
+      const detail = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data as Record<string, unknown> : {};
+      return { ...row, ...detail };
+    } catch {
+      return row;
+    }
+  }
+
+  async function hydrateEditValue(row: Record<string, unknown>) {
+    const detail = await loadDetailValue(row);
+    if (dsl.pageCode !== "contract_list") return detail;
+    const next: Record<string, unknown> = { ...detail };
+    if (next.student_id !== undefined && next.student_ids === undefined) next.student_ids = [next.student_id];
+    if (next.id !== undefined && next.product_ids === undefined) {
+      try {
+        const result = await GatewayClient.executeApi({
+          scope,
+          schemaName,
+          pageCode: "contract_product_list",
+          apiCode: "contract_product_list.query",
+          params: { filters: { contract_id: next.id }, page: 1, pageSize: 200 }
+        });
+        const data = result.data as { rows?: Array<Record<string, unknown>> };
+        const productIds = (data.rows ?? []).map((item) => item.product_id).filter((value) => value !== undefined && value !== null && value !== "").map(String);
+        if (productIds.length) next.product_ids = productIds;
+      } catch {
+        // 保留合同主表详情，避免关联产品加载失败时阻断编辑弹窗。
+      }
+    }
+    return next;
+  }
+
   async function onRowAction(action: ActionDsl, row: Record<string, unknown>) {
     if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
     if (action.actionCode.endsWith(".detail")) {
@@ -434,11 +491,27 @@ export function GenericPageRenderer({
         setCustomizationRecordId(String(row.id ?? ""));
         return;
       }
-      setModal({ type: "detail", value: row });
+      const detail = await loadDetailValue(row);
+      if (dsl.pageCode === "approval_task_list") {
+        try {
+          const result = await GatewayClient.executeApi({
+            scope,
+            schemaName,
+            pageCode: "approval_task_log_list",
+            apiCode: "approval_task_log_list.query",
+            params: { filters: { task_id: row.id }, page: 1, pageSize: 50 }
+          });
+          const data = result.data as { rows?: Array<Record<string, unknown>> };
+          detail.logs = data.rows ?? [];
+        } catch {
+          detail.logs = [];
+        }
+      }
+      setModal({ type: "detail", value: detail });
       return;
     }
     if (action.actionCode.endsWith(".edit")) {
-      setModal({ type: "edit", value: row });
+      setModal({ type: "edit", value: await hydrateEditValue(row) });
       return;
     }
     if (action.type === "open_page" || action.actionType === "open_page") {
@@ -812,7 +885,8 @@ export function GenericPageRenderer({
   if (dsl.layout === "enrollment") {
     const byKeys = (keys: string[]) => visibleModalFields(enrollmentFields).filter((field) => keys.includes(field.key));
 
-    function r2(v: number) { return Math.round(v * 100) / 100; }
+    function r2(v: number) { return Math.round((v + Number.EPSILON) * 100) / 100; }
+    function floor2(v: number) { return Math.floor((v + Number.EPSILON) * 100) / 100; }
 
     function updateCpField(productId: string, field: string, rawValue: unknown) {
       const cpKey = `cp_${productId}`;
@@ -854,7 +928,7 @@ export function GenericPageRenderer({
             <GenericFormRenderer
               scope={scope}
               schemaName={schemaName}
-              fields={byKeys(["student_id"])}
+              fields={byKeys(["student_ids"])}
               value={enrollmentValueWithDefaults}
               onChange={(next) => setEnrollmentValue(next)}
               presentation={presentationWithDictionaries}
@@ -967,8 +1041,8 @@ export function GenericPageRenderer({
                         const existing = (merged[cpKey] ?? {}) as Record<string, unknown>;
                         const share = idx === contractProducts.length - 1
                           ? r2(remaining)
-                          : totalProductAmount > 0 ? r2(totalPromotion * (cp.totalAmount / totalProductAmount)) : 0;
-                        remaining -= share;
+                          : totalProductAmount > 0 ? floor2(totalPromotion * (cp.totalAmount / totalProductAmount)) : 0;
+                        remaining = r2(remaining - share);
                         merged[cpKey] = { ...existing, promotion_amount: r2(share) };
                       });
                       setEnrollmentValue(merged);
@@ -1147,6 +1221,9 @@ export function GenericPageRenderer({
           rowActions={tableDsl.rowActions}
           onAction={onRowAction}
           presentation={presentationWithDictionaries}
+          selectable={Boolean(tableDsl.selectable)}
+          selectedRowIds={selectedRowIds}
+          onSelectionChange={setSelectedRowIds}
         />
       </div>
 
@@ -1172,7 +1249,22 @@ export function GenericPageRenderer({
           <span className="ml-2">共 {total.toLocaleString()} 条</span>
         </div>
       </div>
-      {modal && (
+      {modal && dsl.pageCode === "approval_task_list" && modal.type === "detail" ? (
+        <ApprovalTaskDetail
+          value={modal.value}
+          onClose={() => setModal(null)}
+          onApprove={async () => {
+            await GatewayClient.executeApi({ scope, schemaName, pageCode: dsl.pageCode, apiCode: "approvalTask.approve", params: { id: modal.value.id } });
+            setModal(null);
+            await load(filters, page);
+          }}
+          onReject={async () => {
+            await GatewayClient.executeApi({ scope, schemaName, pageCode: dsl.pageCode, apiCode: "approvalTask.reject", params: { id: modal.value.id } });
+            setModal(null);
+            await load(filters, page);
+          }}
+        />
+      ) : modal && (
         <ModalRenderer
           scope={scope}
           schemaName={schemaName}
