@@ -1,11 +1,69 @@
 import { pool, withClient } from "../db/pool.js";
-import { seedSystemDictionaries, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { dictionaryItemId, seedSystemDictionaries, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 import { migrate } from "../db/migrator.js";
 import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, enhanceDictionaryFields, llmSeed, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap, standardImportConfigs } from "./data.js";
 import { env } from "../config/env.js";
 import { fillEmptySkillMd } from "../agent/skill-md.service.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+const seedDictionaryFields: Record<string, string> = {
+  organization_type: "organization_type",
+  status: "status",
+  pay_type: "pay_type",
+  staff_type: "staff_type",
+  student_status: "student_status",
+  source_type: "source_type",
+  channel_type: "channel_type",
+  stage: "lead_stage",
+  follow_type: "follow_type",
+  follow_result: "follow_result",
+  product_type: "product_type",
+  type: "promotion_type",
+  paid_status: "paid_status",
+  contract_type: "contract_type",
+  contract_status: "contract_status",
+  course_type: "course_type",
+  course_status: "course_status",
+  attendance_status: "attendance_status",
+  trial_status: "trial_status",
+  conversion_status: "conversion_status",
+  task_type: "task_type",
+  task_status: "task_status",
+  action_type: "lead_assignment_action_type",
+  cost_type: "cost_type",
+  charge_type: "charge_type",
+  charge_status: "charge_status",
+  funds_type: "funds_type",
+  pay_way_type: "pay_way_type",
+  change_type: "change_type",
+  account_type: "account_type",
+  refund_type: "refund_type",
+  service_type: "service_type",
+  binding_type: "binding_type",
+  authorized_status: "authorized_status",
+  publish_status: "publish_status",
+  subscribe_status: "subscribe_status",
+  goods_status: "goods_status",
+  activity_type: "activity_type",
+  group_status: "group_status",
+  member_status: "member_status",
+  order_status: "order_status",
+  payment_status: "payment_status",
+  receiver_scope: "receiver_scope",
+  send_status: "send_status",
+  performance_type: "performance_type"
+};
+
+function normalizeSeedDictionaryIds(row: Record<string, unknown>) {
+  for (const [field, dictCode] of Object.entries(seedDictionaryFields)) {
+    const value = row[field];
+    if (typeof value !== "string" || value.includes(".")) continue;
+    if (!SYSTEM_DICTIONARIES[dictCode]?.[value]) continue;
+    row[field] = dictionaryItemId(dictCode, value);
+  }
+  return row;
+}
 
 function id(prefix: string, code: string) {
   return `${prefix}_${code}`.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -32,7 +90,7 @@ function buildSkillDictionarySection(dsl: ReturnType<typeof pageDsl>) {
   if (!dictionaries.length) return "## 数据字典\n（本功能未识别到字典字段）";
   const lines = [
     "## 数据字典",
-    "AI 定制遇到下列字段时必须使用字典项的英文值（itemValue）作为入库/条件值；中文名仅用于展示。字典项 ID 使用 dictCode.itemValue 稳定标识。",
+    "AI 定制遇到下列字段时必须使用数据字典项 ID（格式为 dictCode.itemValue）作为入库/条件值；itemValue 仅用于识别字典项，中文名仅用于展示。",
     "",
     "| 字段 | 字段名 | 字典编码 | 字典项ID | 英文值(itemValue) | 中文名 |",
     "|------|--------|----------|----------|-------------------|--------|"
@@ -126,7 +184,17 @@ async function upsert(table: string, key: string, row: Record<string, unknown>) 
   );
 }
 
+async function cleanupTrialSchoolSeed() {
+  await pool.query(`drop schema if exists trial_school cascade`);
+  await pool.query(`delete from admin.tenant_manage where schema_name = 'trial_school' or id = 'tenant_trial'`);
+  await pool.query(`delete from admin.tenant_module_subscription where schema_name = 'trial_school' or tenant_id = 'tenant_trial'`);
+  await pool.query(`delete from admin.tenant_feature_subscription where schema_name = 'trial_school' or tenant_id = 'tenant_trial'`);
+  await pool.query(`delete from admin.tenant_agent_config where schema_name = 'trial_school'`);
+  await pool.query(`delete from admin.llm_config where schema_name = 'trial_school' or config_code = 'trial_school_llm'`);
+}
+
 async function seedAdmin() {
+  await cleanupTrialSchoolSeed();
   await upsert("admin.admin_user", "id", {
     id: "admin_001",
     name: "平台管理员",
@@ -188,17 +256,6 @@ async function seedAdmin() {
     enabled_features: JSON.stringify(pages.map((p) => p.feature)),
     agent_customization_enabled: true
   });
-  await upsert("admin.tenant_manage", "id", {
-    id: "tenant_trial",
-    schema_name: "trial_school",
-    name: "试用校区",
-    status: "ACTIVE",
-    expire_time: "2099-12-31T23:59:59Z",
-    owner_name: "试用负责人",
-    enabled_modules: JSON.stringify(["frontdesk", "recruit", "student", "education", "finance", "marketing", "report", "system"]),
-    enabled_features: JSON.stringify(["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "approval_task_list", "approval_task_log_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report", "wechat_account_binding", "wechat_menu_config", "wechat_student_fan", "mall_goods", "mall_activity", "mall_group_buy", "mall_group_member", "mall_order", "wechat_push_rule", "wechat_push_log", "recruit_channel_list", "lead_stage_list", "trial_lesson_list", "sales_task_list", "lead_assignment_history_list", "recruit_channel_cost_list", "sales_target_list", "coupon_template_list", "coupon_claim_list", "landing_page_list", "referral_reward_list"])
-  });
-
   for (const [module_code, module_name, module_group, description, sort_no, icon] of modules) {
     await upsert("admin.module_registry", "id", {
       id: id("mod", module_code),
@@ -261,29 +318,24 @@ async function seedAdmin() {
     });
   }
 
-  for (const tenant of ["demo_school", "trial_school"]) {
-    const tenantId = tenant === "demo_school" ? "tenant_demo" : "tenant_trial";
-    const tenantFeatures = tenant === "demo_school" ? pages : pages.filter((p) => ["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "approval_task_list", "approval_task_log_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report", "wechat_account_binding", "wechat_menu_config", "wechat_student_fan", "mall_goods", "mall_activity", "mall_group_buy", "mall_group_member", "mall_order", "wechat_push_rule", "wechat_push_log", "recruit_channel_list", "lead_stage_list", "trial_lesson_list", "sales_task_list", "lead_assignment_history_list", "recruit_channel_cost_list", "sales_target_list", "coupon_template_list", "coupon_claim_list", "landing_page_list", "referral_reward_list"].includes(p.feature));
-    for (const [module_code] of modules) {
-      const enabled = tenant === "demo_school" || ["frontdesk", "recruit", "student", "education", "finance", "marketing", "report", "system"].includes(module_code);
-      await upsert("admin.tenant_module_subscription", "id", {
-        id: id(`sub_${tenant}`, module_code),
-        tenant_id: tenantId,
-        schema_name: tenant,
-        module_code,
-        enabled
-      });
-    }
-    for (const page of tenantFeatures) {
-      await upsert("admin.tenant_feature_subscription", "id", {
-        id: id(`feat_${tenant}`, page.feature),
-        tenant_id: tenantId,
-        schema_name: tenant,
-        module_code: page.module,
-        feature_code: page.feature,
-        enabled: true
-      });
-    }
+  for (const [module_code] of modules) {
+    await upsert("admin.tenant_module_subscription", "id", {
+      id: id("sub_demo_school", module_code),
+      tenant_id: "tenant_demo",
+      schema_name: "demo_school",
+      module_code,
+      enabled: true
+    });
+  }
+  for (const page of pages) {
+    await upsert("admin.tenant_feature_subscription", "id", {
+      id: id("feat_demo_school", page.feature),
+      tenant_id: "tenant_demo",
+      schema_name: "demo_school",
+      module_code: page.module,
+      feature_code: page.feature,
+      enabled: true
+    });
   }
 
   for (const page of pages) {
@@ -594,6 +646,29 @@ function remapDefaultBusinessIds(rows: Array<[string, Record<string, unknown>[]]
   return idMap;
 }
 
+
+function validateDemoBusinessSeed(rows: Array<[string, Record<string, unknown>[]]>) {
+  const byTable = new Map(rows);
+  const contracts = byTable.get("contract") ?? [];
+  const contractProducts = byTable.get("contract_product") ?? [];
+  const moneyLogs = byTable.get("money_arrange_log") ?? [];
+  const performanceLogs = byTable.get("performance_arrange_log") ?? [];
+  const countByContract = new Map<string, number>();
+  for (const row of contractProducts) {
+    const contractId = String(row.contract_id ?? "");
+    countByContract.set(contractId, (countByContract.get(contractId) ?? 0) + 1);
+  }
+  for (const contract of contracts) {
+    const contractId = String(contract.id ?? "");
+    if ((countByContract.get(contractId) ?? 0) !== 2) {
+      throw new Error(`demo seed contract ${contractId} must initialize exactly 2 contract products`);
+    }
+  }
+  if (moneyLogs.length !== contractProducts.length || performanceLogs.length !== contractProducts.length) {
+    throw new Error("demo seed must keep contract products, fund allocations and performance allocations aligned");
+  }
+}
+
 async function seedTenantData() {
   const schema = "demo_school";
   const rows: Array<[string, Record<string, unknown>[]]> = [
@@ -650,12 +725,14 @@ async function seedTenantData() {
       { id: "promo_discount_9", name: "新生 9 折", type: "DISCOUNT", value: 9, status: "ACTIVE" }
     ]],
     ["contract", [
-      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "ONE_ON_ONE_COURSE", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 4000, paid_amount: 2000, promotion_amount: 300, contract_status: "ACTIVE" },
-      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "SMALL_CLASS", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 3000, paid_amount: 3000, promotion_amount: 0, contract_status: "ACTIVE" }
+      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "NEW_SIGN", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 7000, paid_amount: 3500, promotion_amount: 300, contract_status: "ACTIVE" },
+      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "RENEWAL", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 5880, paid_amount: 5880, promotion_amount: 0, contract_status: "ACTIVE" }
     ]],
     ["contract_product", [
-      { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 2, plan_real_amount: 4000, plan_promotion_amount: 300, paid_real_hour: 10, paid_promotion_hour: 2, paid_real_amount: 2000, paid_promotion_amount: 300, consumed_real_hour: 2, remaining_real_hour: 8, remaining_promotion_hour: 2, remaining_real_amount: 1600, remaining_promotion_amount: 300 },
-      { id: "cp_002", contract_id: "contract_002", product_id: "prod_002", plan_real_hour: 30, paid_real_hour: 30, paid_real_amount: 3000, consumed_real_hour: 3, remaining_real_hour: 27, remaining_real_amount: 2700 }
+      { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 1.14, plan_real_amount: 4000, plan_promotion_amount: 171.43, paid_real_hour: 10, paid_promotion_hour: 1.14, paid_real_amount: 2000, paid_promotion_amount: 171.43, consumed_real_hour: 1, remaining_real_hour: 9, remaining_promotion_hour: 1.14, remaining_real_amount: 1800, remaining_promotion_amount: 171.43 },
+      { id: "cp_002", contract_id: "contract_001", product_id: "prod_002", plan_real_hour: 30, plan_promotion_hour: 1.29, plan_real_amount: 3000, plan_promotion_amount: 128.57, paid_real_hour: 15, paid_promotion_hour: 1.29, paid_real_amount: 1500, paid_promotion_amount: 128.57, consumed_real_hour: 0, remaining_real_hour: 15, remaining_promotion_hour: 1.29, remaining_real_amount: 1500, remaining_promotion_amount: 128.57 },
+      { id: "cp_003", contract_id: "contract_002", product_id: "prod_002", plan_real_hour: 30, plan_real_amount: 3000, paid_real_hour: 30, paid_real_amount: 3000, consumed_real_hour: 3, remaining_real_hour: 27, remaining_real_amount: 2700 },
+      { id: "cp_004", contract_id: "contract_002", product_id: "prod_003", plan_real_hour: 24, plan_real_amount: 2880, paid_real_hour: 24, paid_real_amount: 2880, consumed_real_hour: 0, remaining_real_hour: 24, remaining_real_amount: 2880 }
     ]],
     ["mini_class", [{ id: "mc_001", name: "三年级语文小班", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", product_id: "prod_002", grade: "三年级", subject: "语文", capacity: 12, status: "ACTIVE" }]],
     ["one_on_n_group", [{ id: "ong_001", name: "英语一对三 A 组", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", grade: "三年级", subject: "英语", capacity: 3, status: "ACTIVE" }]],
@@ -665,7 +742,7 @@ async function seedTenantData() {
     ]],
     ["generic_course_student", [
       { id: "cs_001", course_id: "course_001", student_id: "stu_001", attendance_status: "PRESENT", contract_product_id: "cp_001" },
-      { id: "cs_002", course_id: "course_002", student_id: "stu_002", attendance_status: "PENDING", contract_product_id: "cp_002" }
+      { id: "cs_002", course_id: "course_002", student_id: "stu_002", attendance_status: "PENDING", contract_product_id: "cp_003" }
     ]],
     ["trial_lesson", [
       { id: "trial_001", student_id: "stu_004", course_title: "李小明数学试听课", trial_time: "2026-06-13T15:00:00+08:00", teacher_id: "user_002", sales_user_id: "user_004", trial_status: "SCHEDULED", conversion_status: "PENDING", remark: "体验一对一数学" }
@@ -679,16 +756,16 @@ async function seedTenantData() {
       { id: "assign_002", student_id: "stu_005", from_user_id: null, to_user_id: "user_004", action_type: "ASSIGN", reason: "转介绍线索分配", operator_id: "user_001" }
     ]],
     ["recruit_channel_cost", [
-      { id: "cost_001", channel_id: "channel_online", cost_date: "2026-06-01", cost_amount: 1200, cost_type: "推广费", remark: "六月落地页投放" },
-      { id: "cost_002", channel_id: "channel_referral", cost_date: "2026-06-03", cost_amount: 300, cost_type: "转介绍奖励", remark: "老带新礼品卡" }
+      { id: "cost_001", channel_id: "channel_online", cost_date: "2026-06-01", cost_amount: 1200, cost_type: "ONLINE_ADS", remark: "六月落地页投放" },
+      { id: "cost_002", channel_id: "channel_referral", cost_date: "2026-06-03", cost_amount: 300, cost_type: "OTHER", remark: "老带新礼品卡" }
     ]],
     ["sales_target", [
       { id: "target_202606_user004", owner_user_id: "user_004", target_month: "2026-06", target_leads: 20, target_trials: 8, target_contracts: 4, target_amount: 20000, status: "ACTIVE", remark: "顾问月度目标示例" }
     ]],
     ["account_charge_records", [{ id: "charge_001", course_id: "course_001", charge_type: "NORMAL", charge_hour: 1, charge_amount: 200, contract_product_id: "cp_001", organization_id: "org_001", student_id: "stu_001", charge_status: "CONFIRMED" }]],
     ["funds_change_history", [
-      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 2000, transaction_time: "2026-06-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
-      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 3000, transaction_time: "2026-06-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 3500, transaction_time: "2026-06-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 5880, transaction_time: "2026-06-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
       { id: "fund_003", student_id: "stu_001", transaction_amount: 500, transaction_time: "2026-06-10T09:00:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "PRE_STORE", organization_id: "org_001" }
     ]],
     ["pay_way_config", [
@@ -718,7 +795,7 @@ async function seedTenantData() {
       { id: "push_contract_paid", rule_name: "合同收款成功通知", business_event: "funds.created", template_id: "tmpl_contract_paid", receiver_scope: "student", status: "ACTIVE", rule_json: JSON.stringify({ triggerTables: ["funds_change_history"], eventTypes: ["合同", "收款"], url: "/wx/home/contracts" }) },
       { id: "push_charge_confirmed", rule_name: "课消扣费通知", business_event: "charge.confirmed", template_id: "tmpl_charge", receiver_scope: "student", status: "ACTIVE", rule_json: JSON.stringify({ triggerTables: ["account_charge_records"], eventTypes: ["扣费"] }) }
     ]],
-    ["wechat_push_log", [{ id: "push_log_001", rule_id: "push_contract_paid", business_event: "funds.created", business_id: "fund_001", student_id: "stu_001", openid: "openid_stu_001", template_id: "tmpl_contract_paid", send_status: "SUCCESS", payload_json: JSON.stringify({ amount: 2000 }) }]],
+    ["wechat_push_log", [{ id: "push_log_001", rule_id: "push_contract_paid", business_event: "funds.created", business_id: "fund_001", student_id: "stu_001", openid: "openid_stu_001", template_id: "tmpl_contract_paid", send_status: "SUCCESS", payload_json: JSON.stringify({ amount: 3500 }) }]],
     ["notice", [{ id: "notice_001", title: "六月教务安排", content: "请各校区完成课消核对。", status: "PUBLISHED" }]],
     ["product_grant", [
       { id: "pg_001", product_id: "prod_001", organization_id: "org_001" },
@@ -735,26 +812,33 @@ async function seedTenantData() {
       { id: "cph_001", contract_id: "contract_001", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 300 }
     ]],
     ["contract_product_promotion_history", [
-      { id: "cpph_001", contract_product_id: "cp_001", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 300 }
+      { id: "cpph_001", contract_product_id: "cp_001", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 171.43 },
+      { id: "cpph_002", contract_product_id: "cp_002", promotion_id: "promo_reduce_300", promotion_snapshot_json: JSON.stringify({ name: "报名立减 300", type: "REDUCE", value: 300 }), reduce_amount: 128.57 }
     ]],
     ["money_arrange_log", [
       { id: "arr_001", contract_product_id: "cp_001", arrange_real_hour: 10, arrange_real_amount: 2000, funds_change_history_id: "fund_001", organization_id: "org_001" },
-      { id: "arr_002", contract_product_id: "cp_002", arrange_real_hour: 30, arrange_real_amount: 3000, funds_change_history_id: "fund_002", organization_id: "org_001" }
+      { id: "arr_002", contract_product_id: "cp_002", arrange_real_hour: 15, arrange_real_amount: 1500, funds_change_history_id: "fund_001", organization_id: "org_001" },
+      { id: "arr_003", contract_product_id: "cp_003", arrange_real_hour: 30, arrange_real_amount: 3000, funds_change_history_id: "fund_002", organization_id: "org_001" },
+      { id: "arr_004", contract_product_id: "cp_004", arrange_real_hour: 24, arrange_real_amount: 2880, funds_change_history_id: "fund_002", organization_id: "org_001" }
     ]],
     ["promotion_arrange_log", [
-      { id: "promo_arr_001", contract_product_id: "cp_001", arrange_promotion_hour: 2, arrange_promotion_amount: 300, funds_change_history_id: "fund_001", organization_id: "org_001" }
+      { id: "promo_arr_001", contract_product_id: "cp_001", arrange_promotion_hour: 1.14, arrange_promotion_amount: 171.43, funds_change_history_id: "fund_001", organization_id: "org_001" },
+      { id: "promo_arr_002", contract_product_id: "cp_002", arrange_promotion_hour: 1.29, arrange_promotion_amount: 128.57, funds_change_history_id: "fund_001", organization_id: "org_001" }
     ]],
     ["performance_arrange_log", [
       { id: "perf_001", contract_product_id: "cp_001", funds_change_history_id: "fund_001", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 2000, personal_performance_user_id: "user_004", personal_performance_amount: 2000, organization_id: "org_001" },
-      { id: "perf_002", contract_product_id: "cp_002", funds_change_history_id: "fund_002", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 3000, personal_performance_user_id: "user_004", personal_performance_amount: 3000, organization_id: "org_001" }
+      { id: "perf_002", contract_product_id: "cp_002", funds_change_history_id: "fund_001", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 1500, personal_performance_user_id: "user_004", personal_performance_amount: 1500, organization_id: "org_001" },
+      { id: "perf_003", contract_product_id: "cp_003", funds_change_history_id: "fund_002", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 3000, personal_performance_user_id: "user_004", personal_performance_amount: 3000, organization_id: "org_001" },
+      { id: "perf_004", contract_product_id: "cp_004", funds_change_history_id: "fund_002", performance_type: "SALES", organization_performance_organization_id: "org_001", organization_performance_amount: 2880, personal_performance_user_id: "user_004", personal_performance_amount: 2880, organization_id: "org_001" }
     ]]
   ];
 
+  validateDemoBusinessSeed(rows);
   const businessIdMap = remapDefaultBusinessIds(rows);
 
   for (const [table, tableRows] of rows) {
     for (const row of tableRows) {
-      await upsert(`"${schema}".${table === "user" ? "\"user\"" : table}`, "id", row);
+      await upsert(`"${schema}".${table === "user" ? "\"user\"" : table}`, "id", normalizeSeedDictionaryIds(row));
     }
   }
 

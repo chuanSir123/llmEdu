@@ -5,7 +5,7 @@ import { withRedisLock } from "../redis-lock.service.js";
 
 type CommandDsl = {
   operation: "command";
-  command: "contract.create" | "funds.create" | "funds.delete" | "course.create" | "chargeRecord.create" | "refund.create"
+  command: "contract.create" | "contract.update" | "funds.create" | "funds.delete" | "course.create" | "chargeRecord.create" | "refund.create"
     | "contract.refund" | "contract.delete" | "refund.delete" | "course.delete" | "ledger.denyMutation"
     | "attendance.checkIn" | "attendance.cancel" | "leave.create" | "makeup.create" | "classStudent.transfer" | "class.changeStatus"
     | "miniClass.addStudent" | "miniClass.removeStudent" | "oneOnNGroup.addStudent" | "oneOnNGroup.removeStudent"
@@ -83,7 +83,7 @@ function commandLockKey(schemaName: string, command: string, params: Record<stri
 
 function shouldRedisLockCommand(command: string) {
   return [
-    "contract.create", "funds.create", "funds.delete", "refund.create", "contract.refund", "contract.delete", "refund.delete",
+    "contract.create", "contract.update", "funds.create", "funds.delete", "refund.create", "contract.refund", "contract.delete", "refund.delete",
     "course.create", "course.delete", "course.cancel", "course.student.save",
     "chargeRecord.create", "chargeRecord.reverse", "attendance.checkIn", "attendance.cancel",
     "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent",
@@ -113,6 +113,7 @@ async function loadRule(client: pg.PoolClient, schemaName: string, ruleCode: str
 function commandApprovalHint(command: CommandDsl["command"]) {
   const map: Partial<Record<CommandDsl["command"], { flowCode: string; businessType: string; event: string; pageCode: string; actionCode: string; require?: boolean }>> = {
     "contract.create": { flowCode: "contract_create_approval", businessType: "contract_create", event: "contract_create_submit", pageCode: "contract_list", actionCode: "contract_list.create" },
+    "contract.update": { flowCode: "contract_create_approval", businessType: "contract_create", event: "contract_create_submit", pageCode: "contract_list", actionCode: "contract_list.edit" },
     "funds.create": { flowCode: "funds_create_approval", businessType: "funds_create", event: "funds_create_submit", pageCode: "funds_history", actionCode: "funds_history.create" },
     "refund.create": { flowCode: "refund_create_approval", businessType: "refund_create", event: "refund_create_submit", pageCode: "refund_record", actionCode: "refund_record.create" },
     "course.create": { flowCode: "course_create_approval", businessType: "course_create", event: "course_create_submit", pageCode: "course_list", actionCode: "course_list.create" },
@@ -241,6 +242,8 @@ async function runCommandInTransaction(client: pg.PoolClient, schemaName: string
   const rule = await loadRule(client, schemaName, dsl.ruleCode);
   return dsl.command === "contract.create"
     ? await createContract(client, schemaName, params, rule)
+    : dsl.command === "contract.update"
+      ? await updateContract(client, schemaName, params, rule)
     : dsl.command === "funds.create"
       ? await createFunds(client, schemaName, params, rule)
       : dsl.command === "course.create"
@@ -454,6 +457,82 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
     }
   }
   return { contract, contractProducts: productRows };
+}
+
+async function reallocateContractFunds(client: pg.PoolClient, schemaName: string, contractId: string, rule: BusinessRule) {
+  const { rows: fundsRows } = await client.query(
+    `select * from ${table(schemaName, "funds_change_history")} where contract_id = $1 and deleted = false order by transaction_time asc, created_at asc`,
+    [contractId]
+  );
+  if (!fundsRows.length) return;
+  const fundIds = fundsRows.map((row) => row.id);
+  await client.query(`update ${table(schemaName, "money_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = any($1::text[]) and deleted = false`, [fundIds]);
+  await client.query(`update ${table(schemaName, "promotion_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = any($1::text[]) and deleted = false`, [fundIds]);
+  await client.query(`update ${table(schemaName, "performance_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = any($1::text[]) and deleted = false and coalesce((ext_json->>'reversalOf'),'') = ''`, [fundIds]);
+  await client.query(
+    `update ${table(schemaName, "contract_product")}
+     set paid_real_amount = 0, paid_real_hour = 0, paid_promotion_amount = 0, paid_promotion_hour = 0, updated_at = now()
+     where contract_id = $1 and deleted = false`,
+    [contractId]
+  );
+  for (const funds of fundsRows) {
+    await arrangePayment(client, schemaName, funds.id, contractId, num(funds.transaction_amount), rule);
+    await arrangePromotion(client, schemaName, funds.id, contractId, num(funds.transaction_amount));
+    await arrangePerformance(client, schemaName, funds.id, contractId, num(funds.transaction_amount));
+  }
+}
+
+async function updateContract(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule): Promise<Record<string, unknown>> {
+  const input = dataOf(params);
+  const contractId = str(params.id, str(input.id));
+  if (!contractId) throw new Error("缺少合同 ID");
+  const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [contractId]);
+  if (!contract) throw new Error("合同不存在或已删除");
+  const { rows: currentProducts } = await client.query(`select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false order by created_at asc`, [contractId]);
+  const currentProductIds = currentProducts.map((row) => String(row.product_id));
+  const nextProductIds = Array.isArray(input.product_ids) ? input.product_ids.map((value) => String(value)).filter(Boolean) : currentProductIds;
+  const productsChanged = currentProductIds.length !== nextProductIds.length || currentProductIds.some((id) => !nextProductIds.includes(id)) || nextProductIds.some((id) => !currentProductIds.includes(id));
+  if (productsChanged) {
+    const currentCpIds = currentProducts.map((row) => String(row.id));
+    const { rows: lockedRows } = await client.query(
+      `select 'charge' as source, id from ${table(schemaName, "account_charge_records")} where contract_product_id = any($1::text[]) and deleted = false
+       union all
+       select 'refund' as source, id from ${table(schemaName, "refund_record")} where contract_product_id = any($1::text[]) and deleted = false`,
+      [currentCpIds]
+    );
+    if (lockedRows.length) throw new Error("合同产品已发生扣费或退费，不允许修改报读课程");
+  }
+  const productsById = new Map<string, Record<string, unknown>>();
+  for (const productId of nextProductIds) {
+    const product = await one(client, `select * from ${table(schemaName, "product")} where id = $1 and deleted = false`, [productId]);
+    if (!product) throw new Error(`产品不存在: ${productId}`);
+    productsById.set(productId, product);
+  }
+  const totalAmount = nextProductIds.reduce((sum, productId) => sum + num(productsById.get(productId)?.total_amount), 0);
+  const promotionAmount = Math.min(num(input.promotion_amount, num(contract.promotion_amount)), totalAmount);
+  const payable = Math.max(totalAmount - promotionAmount, 0);
+  const paidAmount = num(contract.paid_amount);
+  const paidStatus = paidAmount <= 0 ? "UNPAID" : paidAmount >= payable ? "PAID" : "PART_PAID";
+  const updated = await one(client,
+    `update ${table(schemaName, "contract")}
+     set student_id = $2, contract_type = $3, organization_id = $4, sign_staff_id = $5, sign_time = $6, total_amount = $7, promotion_amount = $8, paid_status = $9, updated_at = now()
+     where id = $1 returning *`,
+    [contractId, str(input.student_id, str(contract.student_id)), str(input.contract_type, str(contract.contract_type)), str(input.organization_id, str(contract.organization_id)), str(input.sign_staff_id, str(contract.sign_staff_id)), str(input.sign_time, str(contract.sign_time)), totalAmount || num(contract.total_amount), promotionAmount, paidStatus]
+  );
+  if (productsChanged) {
+    await client.query(`update ${table(schemaName, "contract_product")} set deleted = true, updated_at = now() where contract_id = $1 and deleted = false`, [contractId]);
+    for (const productId of nextProductIds) {
+      const product = productsById.get(productId)!;
+      await client.query(
+        `insert into ${table(schemaName, "contract_product")}
+          (id, contract_id, product_id, plan_real_hour, plan_promotion_hour, plan_real_amount, plan_promotion_amount, remaining_real_hour, remaining_promotion_hour, remaining_real_amount, remaining_promotion_amount, ext_json)
+         values ($1,$2,$3,$4,0,$5,0,$4,0,$5,0,$6)`,
+        [await nextTextId(client, schemaName, "contract_product"), contractId, productId, num(product.default_course_hour), num(product.total_amount), JSON.stringify({ ruleCode: "contract_update_rule", replacedByContractUpdate: true })]
+      );
+    }
+    await reallocateContractFunds(client, schemaName, contractId, rule);
+  }
+  return { contract: updated, productsChanged };
 }
 
 async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId: string, contractId: string, amount: number, rule: BusinessRule) {
