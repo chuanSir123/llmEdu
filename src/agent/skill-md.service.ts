@@ -144,7 +144,7 @@ function formatSkillDictionarySection(pageDsl: PageDslJson | null): string[] {
   const dictionaries = collectPageDictionaries(pageDsl);
   const lines: string[] = [];
   lines.push("## 数据字典");
-  lines.push("AI 定制遇到下列字段时必须使用字典项的英文值（itemValue）作为入库/条件值；中文名仅用于展示。字典项 ID 使用 dictCode.itemValue 稳定标识；租户自定义字典项以运行时 dictionary.options 为准。");
+  lines.push("AI 定制遇到下列字段时必须使用数据字典项 ID（格式为 dictCode.itemValue）作为入库/条件值；itemValue 仅用于识别字典项，中文名仅用于展示；租户自定义字典项以运行时 dictionary.options 返回的 value 为准。");
   lines.push("");
   if (!dictionaries.length) {
     lines.push("（本功能未识别到字典字段）");
