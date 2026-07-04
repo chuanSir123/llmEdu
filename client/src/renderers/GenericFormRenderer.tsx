@@ -153,6 +153,26 @@ export function GenericFormRenderer({
     return option.value === text || (Boolean(itemValue) && itemValue === text);
   };
 
+  const formatInputValue = (field: FieldDsl, raw: unknown) => {
+    if (raw === undefined || raw === null || raw === "") return "";
+    const text = String(raw);
+    if (field.type === "date") return text.slice(0, 10);
+    if (field.type === "datetime") {
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) return text.slice(0, 16);
+      const date = new Date(text);
+      if (!Number.isNaN(date.getTime())) {
+        const offsetMs = date.getTimezoneOffset() * 60000;
+        return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+      }
+    }
+    return text;
+  };
+
+  const parseInputValue = (field: FieldDsl, raw: string) => {
+    if (field.type === "number") return raw === "" ? "" : Number(raw);
+    return raw;
+  };
+
   const selectedLabel = (field: FieldDsl, options?: Record<string, string>) => {
     const raw = value[field.key];
     const selectedValues = normalizeSelectedValues(raw);
@@ -259,7 +279,7 @@ export function GenericFormRenderer({
               <textarea
                 className={`${token.input} min-h-[96px] w-full min-w-0 resize-y py-2 leading-5`}
                 rows={field.rows ?? 4}
-                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : String(value[field.key] ?? "")}
+                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 onChange={(event) => onChange({ ...value, [field.key]: event.target.value })}
               />
@@ -335,10 +355,10 @@ export function GenericFormRenderer({
               <input
                 className={`${token.input} w-full min-w-0 ${isReadonly ? "bg-[#f5f7fa] text-[#8b95a7] cursor-default" : ""}`}
                 type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "number" ? "number" : "text"}
-                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : String(value[field.key] ?? "")}
+                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}
-                onChange={(event) => onChange({ ...value, [field.key]: event.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value })}
+                onChange={(event) => onChange({ ...value, [field.key]: parseInputValue(field, event.target.value) })}
               />
             )}
           </label>
