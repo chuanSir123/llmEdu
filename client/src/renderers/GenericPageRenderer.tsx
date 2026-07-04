@@ -138,10 +138,15 @@ export function GenericPageRenderer({
       const ids: Record<string, string> = {};
       const meta: Record<string, Record<string, unknown>> = {};
       for (const row of data.rows ?? []) {
-        const itemValue = String(row.itemValue ?? row.item_value ?? row.value ?? "");
-        labels[itemValue] = String(row.label ?? row.item_label ?? itemValue);
-        ids[itemValue] = String(row.value ?? "");
-        meta[itemValue] = row.metadata ?? row.metadata_json ?? {};
+        const itemValue = String(row.itemValue ?? row.item_value ?? "");
+        const optionId = String(row.value ?? "");
+        const label = String(row.label ?? row.item_label ?? itemValue ?? optionId);
+        if (itemValue) labels[itemValue] = label;
+        if (optionId) labels[optionId] = label;
+        if (itemValue) ids[itemValue] = optionId;
+        if (optionId) ids[optionId] = optionId;
+        if (itemValue) meta[itemValue] = row.metadata ?? row.metadata_json ?? {};
+        if (optionId) meta[optionId] = row.metadata ?? row.metadata_json ?? {};
       }
       return [dictCode, { labels, ids, meta }] as const;
     }))
