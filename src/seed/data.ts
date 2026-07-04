@@ -3429,6 +3429,13 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
       ruleCode: command.ruleCode
     };
   }
+  if (page.page === "contract_list" && apiType === "update") {
+    return {
+      operation: "command",
+      command: "contract.update",
+      ruleCode: "contract_create_rule"
+    };
+  }
   if (page.page === "contract_list" && apiType === "delete") {
     return {
       operation: "command",
