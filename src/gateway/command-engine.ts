@@ -435,15 +435,19 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
     );
   }
 
+  const rawPlanAmounts = productInputs.map(({ item, product }) => num(item.plan_real_amount ?? item.total_amount ?? product?.total_amount));
+  const planRealAmountShares = rawPlanAmounts.reduce((sum, value) => sum + value, 0) > 0
+    ? allocateProportionally(totalAmount, rawPlanAmounts)
+    : rawPlanAmounts.map(roundMoney);
   const allocationMode = str(rule.promotionAllocation, "proportional");
   const promotionShares = allocationMode === "first_product"
     ? productInputs.map((_, index) => index === 0 ? roundMoney(promotionAmount) : 0)
-    : allocateProportionally(promotionAmount, productInputs.map(({ item, product }) => num(item.plan_real_amount ?? item.total_amount ?? product?.total_amount)));
+    : allocateProportionally(promotionAmount, planRealAmountShares);
   const productRows = [];
   for (let index = 0; index < productInputs.length; index += 1) {
     const { item, product, productId } = productInputs[index];
     const planRealHour = num(item.plan_real_hour ?? item.default_course_hour ?? product?.default_course_hour);
-    const planRealAmount = num(item.plan_real_amount ?? item.total_amount ?? product?.total_amount);
+    const planRealAmount = planRealAmountShares[index];
     const planPromotionAmount = num(item.plan_promotion_amount) > 0 ? roundMoney(num(item.plan_promotion_amount)) : promotionShares[index];
     const cpId = str(item.id, await nextTextId(client, schemaName, "contract_product"));
     const cp = await one(client,
@@ -543,7 +547,9 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
   }
   promotionAmount = Math.min(Math.max(promotionAmount, 0), totalAmount);
   const allocationMode = str(rule.promotionAllocation, "proportional");
-  const scaledPlanAmounts = rawPlanRows.map((item) => roundMoney(item.planRealAmount * amountScale));
+  const scaledPlanAmounts = rawTotalAmount > 0 && inputTotalAmount > 0
+    ? allocateProportionally(totalAmount, rawPlanRows.map((item) => item.planRealAmount))
+    : rawPlanRows.map((item) => roundMoney(item.planRealAmount * amountScale));
   const promotionShares = allocationMode === "first_product"
     ? rawPlanRows.map((_, index) => index === 0 ? roundMoney(promotionAmount) : 0)
     : allocateProportionally(promotionAmount, scaledPlanAmounts);
@@ -624,15 +630,17 @@ async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId
     `select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false order by ${orderBy}`,
     [contractId]
   );
-  let remaining = amount;
+  let remaining = roundMoney(amount);
   const totalRemaining = rows.reduce((sum, row) => sum + num(row.remaining_real_amount), 0);
+  const proportionalShares = isProportionalMode && totalRemaining > 0
+    ? allocateProportionally(Math.min(amount, totalRemaining), rows.map((row) => num(row.remaining_real_amount)))
+    : [];
   for (let index = 0; index < rows.length && remaining > 0; index += 1) {
     const cp = rows[index];
     const cpRemaining = num(cp.remaining_real_amount);
-    const arrangeAmount =
-      isProportionalMode && totalRemaining > 0 && index < rows.length - 1
-        ? Math.min(cpRemaining, floorMoney(amount * (cpRemaining / totalRemaining)))
-        : Math.min(cpRemaining, remaining);
+    const arrangeAmount = isProportionalMode && totalRemaining > 0
+      ? Math.min(cpRemaining, proportionalShares[index] ?? 0)
+      : Math.min(cpRemaining, remaining);
     if (arrangeAmount <= 0) continue;
     const hourRatio = num(cp.plan_real_amount) > 0 ? num(cp.plan_real_hour) / num(cp.plan_real_amount) : 0;
     const arrangeHour = Math.round(arrangeAmount * hourRatio * 100) / 100;
