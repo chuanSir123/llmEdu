@@ -465,6 +465,7 @@ async function reallocateContractFunds(client: pg.PoolClient, schemaName: string
     [contractId]
   );
   if (!fundsRows.length) return;
+  const fundsRule = await loadRule(client, schemaName, "funds_create_rule").catch(() => rule);
   const fundIds = fundsRows.map((row) => row.id);
   await client.query(`update ${table(schemaName, "money_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = any($1::text[]) and deleted = false`, [fundIds]);
   await client.query(`update ${table(schemaName, "promotion_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = any($1::text[]) and deleted = false`, [fundIds]);
@@ -476,7 +477,7 @@ async function reallocateContractFunds(client: pg.PoolClient, schemaName: string
     [contractId]
   );
   for (const funds of fundsRows) {
-    await arrangePayment(client, schemaName, funds.id, contractId, num(funds.transaction_amount), rule);
+    await arrangePayment(client, schemaName, funds.id, contractId, num(funds.transaction_amount), fundsRule);
     await arrangePromotion(client, schemaName, funds.id, contractId, num(funds.transaction_amount));
     await arrangePerformance(client, schemaName, funds.id, contractId, num(funds.transaction_amount));
   }
@@ -490,9 +491,70 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
   if (!contract) throw new Error("合同不存在或已删除");
   const { rows: currentProducts } = await client.query(`select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false order by created_at asc`, [contractId]);
   const currentProductIds = currentProducts.map((row) => String(row.product_id));
-  const nextProductIds = Array.isArray(input.product_ids) ? input.product_ids.map((value) => String(value)).filter(Boolean) : currentProductIds;
-  const productsChanged = currentProductIds.length !== nextProductIds.length || currentProductIds.some((id) => !nextProductIds.includes(id)) || nextProductIds.some((id) => !currentProductIds.includes(id));
-  if (productsChanged) {
+  const productInputs = Array.isArray(input.contract_products) ? (input.contract_products as Record<string, unknown>[]) : [];
+  const requestedProductIds = productInputs.length
+    ? productInputs.map((item) => str(item.product_id)).filter(Boolean)
+    : Array.isArray(input.product_ids)
+      ? input.product_ids.map((value) => String(value)).filter(Boolean)
+      : currentProductIds;
+  if (!requestedProductIds.length) throw new Error("合同至少需要一个报读课程");
+  const productsChanged = currentProductIds.length !== requestedProductIds.length || currentProductIds.some((id) => !requestedProductIds.includes(id)) || requestedProductIds.some((id) => !currentProductIds.includes(id));
+
+  const productsById = new Map<string, Record<string, unknown>>();
+  for (const productId of requestedProductIds) {
+    const product = await one(client, `select * from ${table(schemaName, "product")} where id = $1 and deleted = false`, [productId]);
+    if (!product) throw new Error(`产品不存在: ${productId}`);
+    productsById.set(productId, product);
+  }
+
+  const rawPlanRows = requestedProductIds.map((productId, index) => {
+    const product = productsById.get(productId)!;
+    const item = productInputs.find((value) => str(value.product_id) === productId) ?? {};
+    return {
+      productId,
+      product,
+      planRealHour: num(item.plan_real_hour ?? product.default_course_hour),
+      planRealAmount: num(item.plan_real_amount ?? item.total_amount ?? product.total_amount),
+      planPromotionHour: num(item.plan_promotion_hour),
+      index
+    };
+  });
+  const rawTotalAmount = rawPlanRows.reduce((sum, item) => sum + item.planRealAmount, 0);
+  const inputTotalAmount = num(input.total_amount);
+  const totalAmount = inputTotalAmount > 0 ? inputTotalAmount : rawTotalAmount;
+  const amountScale = rawTotalAmount > 0 && inputTotalAmount > 0 ? inputTotalAmount / rawTotalAmount : 1;
+
+  const hasPromotionIdInput = Object.prototype.hasOwnProperty.call(input, "promotion_id");
+  const promotionId = str(input.promotion_id);
+  const promotion = promotionId ? await one(client, `select * from ${table(schemaName, "promotion")} where id = $1 and deleted = false and status = 'ACTIVE'`, [promotionId]) : undefined;
+  let promotionAmount = Object.prototype.hasOwnProperty.call(input, "promotion_amount") ? num(input.promotion_amount) : num(contract.promotion_amount);
+  if (!Object.prototype.hasOwnProperty.call(input, "promotion_amount") && hasPromotionIdInput) {
+    const promotionType = str(promotion?.type);
+    const promotionValue = num(promotion?.value);
+    promotionAmount = promotionType === "DISCOUNT" ? roundMoney(totalAmount * Math.max(10 - promotionValue, 0) / 10) : promotionValue;
+  }
+  promotionAmount = Math.min(Math.max(promotionAmount, 0), totalAmount);
+  const allocationMode = str(rule.promotionAllocation, "proportional");
+  let remainingPromotion = promotionAmount;
+  const nextPlanRows = rawPlanRows.map((item, index) => {
+    const planRealAmount = roundMoney(item.planRealAmount * amountScale);
+    const planRealHour = item.planRealHour;
+    const planPromotionAmount = allocationMode === "first_product"
+      ? index === 0 ? promotionAmount : 0
+      : index === rawPlanRows.length - 1
+        ? roundMoney(remainingPromotion)
+        : totalAmount > 0 ? roundMoney(promotionAmount * (planRealAmount / totalAmount)) : 0;
+    remainingPromotion -= planPromotionAmount;
+    return { ...item, planRealHour, planRealAmount, planPromotionAmount };
+  });
+
+  const currentPlanKey = currentProducts.map((row) => [row.product_id, roundMoney(num(row.plan_real_hour)), roundMoney(num(row.plan_real_amount)), roundMoney(num(row.plan_promotion_amount))].join(":"));
+  const nextPlanKey = nextPlanRows.map((row) => [row.productId, roundMoney(row.planRealHour), roundMoney(row.planRealAmount), roundMoney(row.planPromotionAmount)].join(":"));
+  const planChanged = productsChanged || currentPlanKey.length !== nextPlanKey.length || currentPlanKey.some((value, index) => value !== nextPlanKey[index]);
+  const promotionChanged = roundMoney(num(contract.promotion_amount)) !== roundMoney(promotionAmount) || hasPromotionIdInput;
+  const reallocationRequired = planChanged || promotionChanged;
+
+  if (reallocationRequired) {
     const currentCpIds = currentProducts.map((row) => String(row.id));
     const { rows: lockedRows } = await client.query(
       `select 'charge' as source, id from ${table(schemaName, "account_charge_records")} where contract_product_id = any($1::text[]) and deleted = false
@@ -500,45 +562,58 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
        select 'refund' as source, id from ${table(schemaName, "refund_record")} where contract_product_id = any($1::text[]) and deleted = false`,
       [currentCpIds]
     );
-    if (lockedRows.length) throw new Error("合同产品已发生扣费或退费，不允许修改报读课程");
+    if (lockedRows.length) throw new Error("合同产品、单价或优惠已发生扣费/退费引用，不允许修改");
   }
-  const productsById = new Map<string, Record<string, unknown>>();
-  for (const productId of nextProductIds) {
-    const product = await one(client, `select * from ${table(schemaName, "product")} where id = $1 and deleted = false`, [productId]);
-    if (!product) throw new Error(`产品不存在: ${productId}`);
-    productsById.set(productId, product);
-  }
-  const totalAmount = nextProductIds.reduce((sum, productId) => sum + num(productsById.get(productId)?.total_amount), 0);
-  const promotionAmount = Math.min(num(input.promotion_amount, num(contract.promotion_amount)), totalAmount);
+
   const payable = Math.max(totalAmount - promotionAmount, 0);
   const paidAmount = num(contract.paid_amount);
   const paidStatus = paidAmount <= 0 ? "UNPAID" : paidAmount >= payable ? "PAID" : "PART_PAID";
   const updated = await one(client,
     `update ${table(schemaName, "contract")}
-     set student_id = $2, contract_type = $3, organization_id = $4, sign_staff_id = $5, sign_time = $6, total_amount = $7, promotion_amount = $8, paid_status = $9, updated_at = now()
+     set student_id = $2, contract_type = $3, organization_id = $4, sign_staff_id = $5, sign_time = $6, total_amount = $7, promotion_amount = $8, paid_status = $9, ext_json = coalesce(ext_json,'{}'::jsonb) || $10::jsonb, updated_at = now()
      where id = $1 returning *`,
-    [contractId, str(input.student_id, str(contract.student_id)), str(input.contract_type, str(contract.contract_type)), str(input.organization_id, str(contract.organization_id)), str(input.sign_staff_id, str(contract.sign_staff_id)), str(input.sign_time, str(contract.sign_time)), totalAmount || num(contract.total_amount), promotionAmount, paidStatus]
+    [contractId, str(input.student_id, str(contract.student_id)), str(input.contract_type, str(contract.contract_type)), str(input.organization_id, str(contract.organization_id)), str(input.sign_staff_id, str(contract.sign_staff_id)), str(input.sign_time, str(contract.sign_time)), totalAmount || num(contract.total_amount), promotionAmount, paidStatus, JSON.stringify({ ruleCode: "contract_update_rule", promotionId: promotionId || null })]
   );
-  if (productsChanged) {
+
+  if (reallocationRequired) {
     await client.query(`update ${table(schemaName, "contract_product")} set deleted = true, updated_at = now() where contract_id = $1 and deleted = false`, [contractId]);
-    for (const productId of nextProductIds) {
-      const product = productsById.get(productId)!;
+    await client.query(`update ${table(schemaName, "contract_product_promotion_history")} set deleted = true, updated_at = now() where contract_product_id = any($1::text[]) and deleted = false`, [currentProducts.map((row) => String(row.id))]);
+    await client.query(`update ${table(schemaName, "contract_promotion_history")} set deleted = true, updated_at = now() where contract_id = $1 and deleted = false`, [contractId]);
+    if (promotionAmount > 0 || promotion) {
+      await client.query(
+        `insert into ${table(schemaName, "contract_promotion_history")}
+          (id, contract_id, promotion_id, promotion_snapshot_json, reduce_amount, discount_value)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [await nextTextId(client, schemaName, "contract_promotion_history"), contractId, promotionId || null, JSON.stringify(promotion ?? { manualPromotionAmount: promotionAmount }), promotionAmount, num(promotion?.value)]
+      );
+    }
+    for (const plan of nextPlanRows) {
+      const cpId = await nextTextId(client, schemaName, "contract_product");
       await client.query(
         `insert into ${table(schemaName, "contract_product")}
           (id, contract_id, product_id, plan_real_hour, plan_promotion_hour, plan_real_amount, plan_promotion_amount, remaining_real_hour, remaining_promotion_hour, remaining_real_amount, remaining_promotion_amount, ext_json)
-         values ($1,$2,$3,$4,0,$5,0,$4,0,$5,0,$6)`,
-        [await nextTextId(client, schemaName, "contract_product"), contractId, productId, num(product.default_course_hour), num(product.total_amount), JSON.stringify({ ruleCode: "contract_update_rule", replacedByContractUpdate: true })]
+         values ($1,$2,$3,$4,$5,$6,$7,$4,$5,$6,$7,$8)`,
+        [cpId, contractId, plan.productId, plan.planRealHour, plan.planPromotionHour, plan.planRealAmount, plan.planPromotionAmount, JSON.stringify({ ruleCode: "contract_update_rule", replacedByContractUpdate: true })]
       );
+      if (plan.planPromotionAmount > 0) {
+        await client.query(
+          `insert into ${table(schemaName, "contract_product_promotion_history")}
+            (id, contract_product_id, promotion_id, promotion_snapshot_json, reduce_amount)
+           values ($1,$2,$3,$4,$5)`,
+          [await nextTextId(client, schemaName, "contract_product_promotion_history"), cpId, promotionId || null, JSON.stringify(promotion ?? { allocationMode }), plan.planPromotionAmount]
+        );
+      }
     }
     await reallocateContractFunds(client, schemaName, contractId, rule);
   }
-  return { contract: updated, productsChanged };
+  return { contract: updated, productsChanged, planChanged, promotionChanged, reallocated: reallocationRequired };
 }
 
 async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId: string, contractId: string, amount: number, rule: BusinessRule) {
   if (!contractId || amount <= 0) return;
   const mode = str(rule.fundsAllocation, "oldest_first");
-  const orderBy = mode === "proportional" ? "created_at asc" : "created_at asc";
+  const isProportionalMode = ["proportional", "byCpPaidRatio", "byCpRemainingAmount"].includes(mode);
+  const orderBy = "created_at asc";
   const { rows } = await client.query(
     `select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false order by ${orderBy}`,
     [contractId]
@@ -549,7 +624,7 @@ async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId
     const cp = rows[index];
     const cpRemaining = num(cp.remaining_real_amount);
     const arrangeAmount =
-      mode === "proportional" && totalRemaining > 0 && index < rows.length - 1
+      isProportionalMode && totalRemaining > 0 && index < rows.length - 1
         ? Math.min(cpRemaining, Math.round((amount * (cpRemaining / totalRemaining)) * 100) / 100)
         : Math.min(cpRemaining, remaining);
     if (arrangeAmount <= 0) continue;
