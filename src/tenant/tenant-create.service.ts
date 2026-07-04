@@ -85,6 +85,44 @@ async function insertTenantSubscriptions(
   }
 }
 
+const BUSINESS_DATA_TABLES = [
+  "student",
+  "student_followup",
+  "lead_stage_record",
+  "recruit_channel",
+  "trial_lesson",
+  "sales_task",
+  "lead_assignment_history",
+  "recruit_channel_cost",
+  "sales_target",
+  "contract",
+  "contract_product",
+  "generic_course",
+  "generic_course_student",
+  "account_charge_records",
+  "funds_change_history",
+  "refund_record",
+  "student_ele_account",
+  "student_ele_account_record",
+  "mall_order",
+  "wechat_push_log",
+  "money_arrange_log",
+  "promotion_arrange_log",
+  "performance_arrange_log",
+] as const;
+
+async function assertNoBusinessDataInitialized(client: import("pg").PoolClient, schemaName: string) {
+  const schema = qIdent(schemaName);
+  const initializedTables: string[] = [];
+  for (const tableName of BUSINESS_DATA_TABLES) {
+    const { rows } = await client.query(`select count(*)::int as count from ${schema}.${qIdent(tableName)} where deleted = false`);
+    if (Number(rows[0]?.count ?? 0) > 0) initializedTables.push(tableName);
+  }
+  if (initializedTables.length) {
+    throw httpError(500, `新增机构不应初始化业务数据，请检查表: ${initializedTables.join(", ")}`);
+  }
+}
+
 async function loadPageActionCodes(client: import("pg").PoolClient, pageCode: string) {
   const { rows } = await client.query(
     `select action_code from admin.action_dsl
@@ -278,6 +316,7 @@ export async function createTenantWithModules(input: {
       pageCodes: unique(catalog.features.map((feature) => feature.pageCode)),
       operatorId: input.operatorId,
     });
+    await assertNoBusinessDataInitialized(client, schemaName);
 
     await client.query(
       `update admin.tenant_manage set status = 'ACTIVE', updated_at = now() where id = $1`,
