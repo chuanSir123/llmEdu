@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { env } from "../config/env.js";
-import { SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { dictionaryItemId, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
@@ -33,6 +33,7 @@ type Field = {
   maxRangeDays?: number;
   defaultRange?: "current_month";
   field?: string;
+  dictCode?: string;
 };
 
 type PageSeed = {
@@ -83,8 +84,10 @@ const pageSubtitles: Record<string, string> = {
 function dictionaryToneMap(dictCode: string) {
   return Object.fromEntries(
     Object.entries(SYSTEM_DICTIONARIES[dictCode] ?? {})
-      .map(([itemValue, item]) => [itemValue, String(item.metadata?.tone ?? "")])
-      .filter(([, tone]) => Boolean(tone))
+      .flatMap(([itemValue, item]) => {
+        const tone = String(item.metadata?.tone ?? "");
+        return tone ? [[itemValue, tone], [dictionaryItemId(dictCode, itemValue), tone]] : [];
+      })
   );
 }
 
@@ -97,7 +100,7 @@ const statusMap = Object.fromEntries(
 const valueLabels = Object.fromEntries(
   Object.entries(SYSTEM_DICTIONARIES).map(([dictCode, items]) => [
     dictCode,
-    Object.fromEntries(Object.entries(items).map(([itemValue, item]) => [itemValue, item.label]))
+    Object.fromEntries(Object.entries(items).flatMap(([itemValue, item]) => [[itemValue, item.label], [dictionaryItemId(dictCode, itemValue), item.label]]))
   ])
 ) as Record<string, Record<string, string>>;
 
@@ -115,8 +118,8 @@ const dictionaryFieldAliases: Record<string, string> = {
   businessType: "business_type",
   business_type: "business_type"
 };
-function dictCodeForField(field: { key: string }) {
-  return dictionaryFieldAliases[field.key] ?? (dictionaryFieldKeys.has(field.key) ? field.key : undefined);
+function dictCodeForField(field: { key: string; dictCode?: string }) {
+  return field.dictCode ?? dictionaryFieldAliases[field.key] ?? (dictionaryFieldKeys.has(field.key) ? field.key : undefined);
 }
 
 
@@ -125,7 +128,7 @@ function dictionaryOption(dictCode: string) {
 }
 
 function dictionaryDefault(dictCode: string, itemValue: unknown) {
-  return { dictCode, itemValue };
+  return dictionaryItemId(dictCode, itemValue);
 }
 
 function normalizeDictionaryDefault(fieldKey: string, rawValue: unknown) {
@@ -144,7 +147,7 @@ export function enhanceDictionaryFields(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   const obj = { ...(value as Record<string, unknown>) };
   const key = typeof obj.key === "string" ? obj.key : "";
-  const dictCode = key ? dictCodeForField({ key }) : undefined;
+  const dictCode = typeof obj.dictCode === "string" ? obj.dictCode : key ? dictCodeForField({ key }) : undefined;
   if (dictCode) {
     obj.dictCode = obj.dictCode ?? dictCode;
     obj.optionSource = obj.optionSource ?? dictionaryOption(dictCode);
@@ -323,7 +326,7 @@ const channelCostFields = [
   { key: "channel_id", label: "招生渠道", type: "text", hidden: true },
   { key: "cost_date", label: "投放日期", type: "date", required: true },
   { key: "cost_amount", label: "投放成本", type: "number", required: true },
-  { key: "cost_type", label: "成本类型", type: "text" },
+  { key: "cost_type", label: "成本类型", type: "text", defaultValue: "ONLINE_ADS" },
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
 
@@ -774,6 +777,8 @@ export const pages: PageSeed[] = [
     group: "合同收费",
     fields: [
       { key: "contract_no", label: "合同编号" },
+      { key: "contract_id", label: "合同ID", hidden: true, filter: true },
+      { key: "product_id", label: "产品ID", hidden: true },
       { key: "product_name", label: "产品" },
       { key: "remaining_real_hour", label: "剩余课时" },
       { key: "remaining_real_amount", label: "剩余金额" },
@@ -800,6 +805,7 @@ export const pages: PageSeed[] = [
       { key: "student_name", label: "学员" },
       { key: "student_id", label: "学员ID", hidden: true },
       { key: "organization_id", label: "校区ID", hidden: true },
+      { key: "sign_staff_id", label: "签约人ID", hidden: true },
       { key: "organization_name", label: "校区" },
       { key: "paid_status", label: "付款状态", filter: true },
       { key: "contract_type", label: "合同类型" },
@@ -885,7 +891,7 @@ export const pages: PageSeed[] = [
     group: "产品优惠",
     fields: [
       { key: "name", label: "优惠名称", filter: true },
-      { key: "type", label: "优惠类型" },
+      { key: "type", label: "优惠类型", dictCode: "promotion_type" },
       { key: "value", label: "优惠值" },
       { key: "status", label: "状态", filter: true }
     ]
@@ -1226,7 +1232,7 @@ export const pages: PageSeed[] = [
     page: "coupon_template_list",
     name: "优惠券模板",
     table: "coupon_template",
-    group: "营销增长",
+    group: "营销工具",
     fields: [
       { key: "coupon_name", label: "券名称", filter: true },
       { key: "coupon_type", label: "券类型", filter: true },
@@ -1244,7 +1250,7 @@ export const pages: PageSeed[] = [
     page: "coupon_claim_list",
     name: "优惠券领取",
     table: "coupon_claim",
-    group: "营销增长",
+    group: "营销工具",
     fields: [
       { key: "coupon_template_id", label: "优惠券模板", filter: true },
       { key: "student_id", label: "领取学员", filter: true },
@@ -1261,7 +1267,7 @@ export const pages: PageSeed[] = [
     page: "landing_page_list",
     name: "活动落地页",
     table: "marketing_landing_page",
-    group: "营销增长",
+    group: "活动获客",
     fields: [
       { key: "page_title", label: "页面标题", filter: true },
       { key: "campaign_id", label: "关联活动" },
@@ -1278,7 +1284,7 @@ export const pages: PageSeed[] = [
     page: "referral_reward_list",
     name: "转介绍奖励",
     table: "referral_reward",
-    group: "营销增长",
+    group: "活动获客",
     fields: [
       { key: "referrer_student_id", label: "推荐人", filter: true },
       { key: "referred_student_id", label: "被推荐人", filter: true },
@@ -1450,7 +1456,7 @@ export const pages: PageSeed[] = [
     name: "新生报名",
     table: "student",
     softDelete: true,
-    group: "招生",
+    group: "报名转化",
     fields: [
       { key: "name", label: "学员姓名", filter: true },
       { key: "contact", label: "联系电话" },
@@ -1466,7 +1472,7 @@ export const pages: PageSeed[] = [
     page: "recruit_channel_list",
     name: "招生渠道",
     table: "recruit_channel",
-    group: "招生CRM",
+    group: "渠道投放",
     fields: [
       { key: "channel_name", label: "渠道名称", filter: true },
       { key: "channel_type", label: "渠道类型", filter: true },
@@ -1484,10 +1490,10 @@ export const pages: PageSeed[] = [
     page: "lead_stage_list",
     name: "招生漏斗",
     table: "lead_stage_record",
-    group: "招生CRM",
+    group: "线索管理",
     fields: [
       { key: "student_id", label: "意向学员", filter: true },
-      { key: "stage", label: "当前阶段", filter: true },
+      { key: "stage", label: "当前阶段", filter: true, dictCode: "lead_stage" },
       { key: "owner_user_id", label: "顾问" },
       { key: "channel_id", label: "来源渠道" },
       { key: "next_action", label: "下一步动作" },
@@ -1502,7 +1508,7 @@ export const pages: PageSeed[] = [
     page: "trial_lesson_list",
     name: "试听邀约",
     table: "trial_lesson",
-    group: "招生CRM",
+    group: "试听转化",
     fields: [
       { key: "student_id", label: "试听学员", filter: true },
       { key: "course_id", label: "生成课次" },
@@ -1521,7 +1527,7 @@ export const pages: PageSeed[] = [
     page: "sales_task_list",
     name: "销售任务",
     table: "sales_task",
-    group: "招生CRM",
+    group: "销售管理",
     fields: [
       { key: "task_title", label: "任务标题", filter: true },
       { key: "student_id", label: "关联学员" },
@@ -1540,13 +1546,13 @@ export const pages: PageSeed[] = [
     page: "lead_assignment_history_list",
     name: "意向学员分配历史",
     table: "lead_assignment_history",
-    group: "招生CRM",
+    group: "线索管理",
     softDelete: false,
     fields: [
       { key: "student_id", label: "意向学员", filter: true },
       { key: "from_user_id", label: "原负责人" },
       { key: "to_user_id", label: "新负责人" },
-      { key: "action_type", label: "分配动作", filter: true },
+      { key: "action_type", label: "分配动作", filter: true, dictCode: "lead_assignment_action_type" },
       { key: "reason", label: "原因" },
       { key: "operator_id", label: "操作人" },
       { key: "created_at", label: "操作时间", type: "datetime" }
@@ -1558,7 +1564,7 @@ export const pages: PageSeed[] = [
     page: "recruit_channel_cost_list",
     name: "渠道成本",
     table: "recruit_channel_cost",
-    group: "招生CRM",
+    group: "渠道投放",
     fields: [
       { key: "channel_id", label: "招生渠道", filter: true },
       { key: "cost_date", label: "投放日期", type: "date", filter: true },
@@ -1573,7 +1579,7 @@ export const pages: PageSeed[] = [
     page: "sales_target_list",
     name: "销售目标",
     table: "sales_target",
-    group: "招生CRM",
+    group: "销售管理",
     fields: [
       { key: "owner_user_id", label: "顾问", filter: true },
       { key: "target_month", label: "目标月份", filter: true },
@@ -1590,7 +1596,7 @@ export const pages: PageSeed[] = [
     page: "charge_record",
     name: "扣费记录",
     table: "account_charge_records",
-    group: "财务流水",
+    group: "课消扣费",
     fields: [
       { key: "student_id", label: "学员" },
       { key: "charge_type", label: "扣费类型" },
@@ -2210,7 +2216,7 @@ export const modalDslSeeds: Array<{ actionCode: string; actionName: string; page
     { key: "total_amount", label: "总价", type: "number" }, { key: "status", label: "状态", type: "text" }
   ] } },
   { actionCode: "promotion_add_modal", actionName: "新增优惠弹窗", pageCode: "promotion_list", module: "finance", feature: "promotion_list", dsl: { modalCode: "promotion_add_modal", modalName: "新增优惠", size: "small", columns: 2, labelAlign: "left", submitApiCode: "promotion_list.create", fields: [
-    { key: "name", label: "优惠名称", type: "text", required: true }, { key: "type", label: "优惠类型", type: "text" },
+    { key: "name", label: "优惠名称", type: "text", required: true }, { key: "type", label: "优惠类型", type: "text", dictCode: "promotion_type" },
     { key: "value", label: "优惠值", type: "number" }, { key: "status", label: "状态", type: "text" }
   ] } },
   { actionCode: "role_permission_modal", actionName: "角色权限弹窗", pageCode: "role_list", module: "system", feature: "role_list", dsl: { modalCode: "role_permission_modal", modalName: "角色权限", size: "large", columns: 1, labelAlign: "left", submitApiCode: "role.permission.save", fields: [
@@ -3421,6 +3427,13 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
       operation: "command",
       command: command.command,
       ruleCode: command.ruleCode
+    };
+  }
+  if (page.page === "contract_list" && apiType === "update") {
+    return {
+      operation: "command",
+      command: "contract.update",
+      ruleCode: "contract_create_rule"
     };
   }
   if (page.page === "contract_list" && apiType === "delete") {

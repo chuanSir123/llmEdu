@@ -2,7 +2,7 @@ import { pool, withClient } from "./pool.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const tenantSchemas = ["demo_school", "trial_school"];
+const tenantSchemas = ["demo_school"];
 
 async function exec(sql: string) {
   await pool.query(sql);

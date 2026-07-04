@@ -1,11 +1,69 @@
 import { pool, withClient } from "../db/pool.js";
-import { seedSystemDictionaries, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { dictionaryItemId, seedSystemDictionaries, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 import { migrate } from "../db/migrator.js";
 import { adminModules, adminPages, adminPasswordHash, apiDsl, actionDslSeeds, approvalFlows, businessRules, extraPages, enhanceDictionaryFields, llmSeed, modalDslSeeds, modules, optionApiDslSeeds, pageDsl, pages, passwordHash, printTemplates, skillContentMap, standardImportConfigs } from "./data.js";
 import { env } from "../config/env.js";
 import { fillEmptySkillMd } from "../agent/skill-md.service.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+const seedDictionaryFields: Record<string, string> = {
+  organization_type: "organization_type",
+  status: "status",
+  pay_type: "pay_type",
+  staff_type: "staff_type",
+  student_status: "student_status",
+  source_type: "source_type",
+  channel_type: "channel_type",
+  stage: "lead_stage",
+  follow_type: "follow_type",
+  follow_result: "follow_result",
+  product_type: "product_type",
+  type: "promotion_type",
+  paid_status: "paid_status",
+  contract_type: "contract_type",
+  contract_status: "contract_status",
+  course_type: "course_type",
+  course_status: "course_status",
+  attendance_status: "attendance_status",
+  trial_status: "trial_status",
+  conversion_status: "conversion_status",
+  task_type: "task_type",
+  task_status: "task_status",
+  action_type: "lead_assignment_action_type",
+  cost_type: "cost_type",
+  charge_type: "charge_type",
+  charge_status: "charge_status",
+  funds_type: "funds_type",
+  pay_way_type: "pay_way_type",
+  change_type: "change_type",
+  account_type: "account_type",
+  refund_type: "refund_type",
+  service_type: "service_type",
+  binding_type: "binding_type",
+  authorized_status: "authorized_status",
+  publish_status: "publish_status",
+  subscribe_status: "subscribe_status",
+  goods_status: "goods_status",
+  activity_type: "activity_type",
+  group_status: "group_status",
+  member_status: "member_status",
+  order_status: "order_status",
+  payment_status: "payment_status",
+  receiver_scope: "receiver_scope",
+  send_status: "send_status",
+  performance_type: "performance_type"
+};
+
+function normalizeSeedDictionaryIds(row: Record<string, unknown>) {
+  for (const [field, dictCode] of Object.entries(seedDictionaryFields)) {
+    const value = row[field];
+    if (typeof value !== "string" || value.includes(".")) continue;
+    if (!SYSTEM_DICTIONARIES[dictCode]?.[value]) continue;
+    row[field] = dictionaryItemId(dictCode, value);
+  }
+  return row;
+}
 
 function id(prefix: string, code: string) {
   return `${prefix}_${code}`.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -32,7 +90,7 @@ function buildSkillDictionarySection(dsl: ReturnType<typeof pageDsl>) {
   if (!dictionaries.length) return "## 数据字典\n（本功能未识别到字典字段）";
   const lines = [
     "## 数据字典",
-    "AI 定制遇到下列字段时必须使用字典项的英文值（itemValue）作为入库/条件值；中文名仅用于展示。字典项 ID 使用 dictCode.itemValue 稳定标识。",
+    "AI 定制遇到下列字段时必须使用数据字典项 ID（格式为 dictCode.itemValue）作为入库/条件值；itemValue 仅用于识别字典项，中文名仅用于展示。",
     "",
     "| 字段 | 字段名 | 字典编码 | 字典项ID | 英文值(itemValue) | 中文名 |",
     "|------|--------|----------|----------|-------------------|--------|"
@@ -126,7 +184,17 @@ async function upsert(table: string, key: string, row: Record<string, unknown>) 
   );
 }
 
+async function cleanupTrialSchoolSeed() {
+  await pool.query(`drop schema if exists trial_school cascade`);
+  await pool.query(`delete from admin.tenant_manage where schema_name = 'trial_school' or id = 'tenant_trial'`);
+  await pool.query(`delete from admin.tenant_module_subscription where schema_name = 'trial_school' or tenant_id = 'tenant_trial'`);
+  await pool.query(`delete from admin.tenant_feature_subscription where schema_name = 'trial_school' or tenant_id = 'tenant_trial'`);
+  await pool.query(`delete from admin.tenant_agent_config where schema_name = 'trial_school'`);
+  await pool.query(`delete from admin.llm_config where schema_name = 'trial_school' or config_code = 'trial_school_llm'`);
+}
+
 async function seedAdmin() {
+  await cleanupTrialSchoolSeed();
   await upsert("admin.admin_user", "id", {
     id: "admin_001",
     name: "平台管理员",
@@ -188,17 +256,6 @@ async function seedAdmin() {
     enabled_features: JSON.stringify(pages.map((p) => p.feature)),
     agent_customization_enabled: true
   });
-  await upsert("admin.tenant_manage", "id", {
-    id: "tenant_trial",
-    schema_name: "trial_school",
-    name: "试用校区",
-    status: "ACTIVE",
-    expire_time: "2099-12-31T23:59:59Z",
-    owner_name: "试用负责人",
-    enabled_modules: JSON.stringify(["frontdesk", "recruit", "student", "education", "finance", "marketing", "report", "system"]),
-    enabled_features: JSON.stringify(["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "approval_task_list", "approval_task_log_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report", "wechat_account_binding", "wechat_menu_config", "wechat_student_fan", "mall_goods", "mall_activity", "mall_group_buy", "mall_group_member", "mall_order", "wechat_push_rule", "wechat_push_log", "recruit_channel_list", "lead_stage_list", "trial_lesson_list", "sales_task_list", "lead_assignment_history_list", "recruit_channel_cost_list", "sales_target_list", "coupon_template_list", "coupon_claim_list", "landing_page_list", "referral_reward_list"])
-  });
-
   for (const [module_code, module_name, module_group, description, sort_no, icon] of modules) {
     await upsert("admin.module_registry", "id", {
       id: id("mod", module_code),
@@ -261,29 +318,24 @@ async function seedAdmin() {
     });
   }
 
-  for (const tenant of ["demo_school", "trial_school"]) {
-    const tenantId = tenant === "demo_school" ? "tenant_demo" : "tenant_trial";
-    const tenantFeatures = tenant === "demo_school" ? pages : pages.filter((p) => ["frontdesk_home", "student_list", "course_list", "contract_list", "funds_history", "product_list", "role_list", "user_list", "approval_flow_list", "approval_task_list", "approval_task_log_list", "business_rule_list", "money_arrange_list", "promotion_arrange_list", "performance_arrange_list", "finance_report", "course_report", "wechat_account_binding", "wechat_menu_config", "wechat_student_fan", "mall_goods", "mall_activity", "mall_group_buy", "mall_group_member", "mall_order", "wechat_push_rule", "wechat_push_log", "recruit_channel_list", "lead_stage_list", "trial_lesson_list", "sales_task_list", "lead_assignment_history_list", "recruit_channel_cost_list", "sales_target_list", "coupon_template_list", "coupon_claim_list", "landing_page_list", "referral_reward_list"].includes(p.feature));
-    for (const [module_code] of modules) {
-      const enabled = tenant === "demo_school" || ["frontdesk", "recruit", "student", "education", "finance", "marketing", "report", "system"].includes(module_code);
-      await upsert("admin.tenant_module_subscription", "id", {
-        id: id(`sub_${tenant}`, module_code),
-        tenant_id: tenantId,
-        schema_name: tenant,
-        module_code,
-        enabled
-      });
-    }
-    for (const page of tenantFeatures) {
-      await upsert("admin.tenant_feature_subscription", "id", {
-        id: id(`feat_${tenant}`, page.feature),
-        tenant_id: tenantId,
-        schema_name: tenant,
-        module_code: page.module,
-        feature_code: page.feature,
-        enabled: true
-      });
-    }
+  for (const [module_code] of modules) {
+    await upsert("admin.tenant_module_subscription", "id", {
+      id: id("sub_demo_school", module_code),
+      tenant_id: "tenant_demo",
+      schema_name: "demo_school",
+      module_code,
+      enabled: true
+    });
+  }
+  for (const page of pages) {
+    await upsert("admin.tenant_feature_subscription", "id", {
+      id: id("feat_demo_school", page.feature),
+      tenant_id: "tenant_demo",
+      schema_name: "demo_school",
+      module_code: page.module,
+      feature_code: page.feature,
+      enabled: true
+    });
   }
 
   for (const page of pages) {
@@ -650,8 +702,8 @@ async function seedTenantData() {
       { id: "promo_discount_9", name: "新生 9 折", type: "DISCOUNT", value: 9, status: "ACTIVE" }
     ]],
     ["contract", [
-      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "ONE_ON_ONE_COURSE", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 4000, paid_amount: 2000, promotion_amount: 300, contract_status: "ACTIVE" },
-      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "SMALL_CLASS", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 3000, paid_amount: 3000, promotion_amount: 0, contract_status: "ACTIVE" }
+      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "NEW_SIGN", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 4000, paid_amount: 2000, promotion_amount: 300, contract_status: "ACTIVE" },
+      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "RENEWAL", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 3000, paid_amount: 3000, promotion_amount: 0, contract_status: "ACTIVE" }
     ]],
     ["contract_product", [
       { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 2, plan_real_amount: 4000, plan_promotion_amount: 300, paid_real_hour: 10, paid_promotion_hour: 2, paid_real_amount: 2000, paid_promotion_amount: 300, consumed_real_hour: 2, remaining_real_hour: 8, remaining_promotion_hour: 2, remaining_real_amount: 1600, remaining_promotion_amount: 300 },
@@ -679,8 +731,8 @@ async function seedTenantData() {
       { id: "assign_002", student_id: "stu_005", from_user_id: null, to_user_id: "user_004", action_type: "ASSIGN", reason: "转介绍线索分配", operator_id: "user_001" }
     ]],
     ["recruit_channel_cost", [
-      { id: "cost_001", channel_id: "channel_online", cost_date: "2026-06-01", cost_amount: 1200, cost_type: "推广费", remark: "六月落地页投放" },
-      { id: "cost_002", channel_id: "channel_referral", cost_date: "2026-06-03", cost_amount: 300, cost_type: "转介绍奖励", remark: "老带新礼品卡" }
+      { id: "cost_001", channel_id: "channel_online", cost_date: "2026-06-01", cost_amount: 1200, cost_type: "ONLINE_ADS", remark: "六月落地页投放" },
+      { id: "cost_002", channel_id: "channel_referral", cost_date: "2026-06-03", cost_amount: 300, cost_type: "OTHER", remark: "老带新礼品卡" }
     ]],
     ["sales_target", [
       { id: "target_202606_user004", owner_user_id: "user_004", target_month: "2026-06", target_leads: 20, target_trials: 8, target_contracts: 4, target_amount: 20000, status: "ACTIVE", remark: "顾问月度目标示例" }
@@ -754,7 +806,7 @@ async function seedTenantData() {
 
   for (const [table, tableRows] of rows) {
     for (const row of tableRows) {
-      await upsert(`"${schema}".${table === "user" ? "\"user\"" : table}`, "id", row);
+      await upsert(`"${schema}".${table === "user" ? "\"user\"" : table}`, "id", normalizeSeedDictionaryIds(row));
     }
   }
 
