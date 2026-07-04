@@ -22,7 +22,7 @@ export async function adminLogin(app: FastifyInstance, contact: string, password
 export async function tenantLogin(app: FastifyInstance, schemaName: string, contact: string, password: string) {
   const schema = await resolveTenantSchema(schemaName);
   const { rows } = await pool.query(
-    `select id, name, psw from "${schema}"."user" where contact = $1 and status = 'ACTIVE' and deleted = false`,
+    `select id, name, psw from "${schema}"."user" where contact = $1 and status in ('ACTIVE', 'status.ACTIVE') and deleted = false`,
     [contact]
   );
   const user = rows[0];

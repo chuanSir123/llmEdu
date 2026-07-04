@@ -262,6 +262,25 @@ function nextDay(value: unknown) {
   return date.toISOString().slice(0, 10);
 }
 
+function statusCompatValues(field: string, value: unknown) {
+  const text = String(value ?? "");
+  return field === "status" && (text === "ACTIVE" || text === "status.ACTIVE") ? ["ACTIVE", "status.ACTIVE"] : undefined;
+}
+
+function appendEqFilter(where: string[], values: unknown[], expr: string, field: string, value: unknown, op = "=") {
+  const compatValues = op === "=" ? statusCompatValues(field, value) : undefined;
+  if (compatValues) {
+    const placeholders = compatValues.map((item) => {
+      values.push(item);
+      return `$${values.length}`;
+    });
+    where.push(`${expr} in (${placeholders.join(", ")})`);
+    return;
+  }
+  values.push(value);
+  where.push(`${expr} ${op} $${values.length}`);
+}
+
 function appendDynamicFilters(where: string[], values: unknown[], filterDsl: FilterDsl[] | undefined, params: Record<string, unknown>, tableColumns: Set<string>) {
   const inputFilters = (params.filters ?? {}) as Record<string, unknown>;
   for (const raw of filterDsl ?? []) {
@@ -314,9 +333,8 @@ function appendDynamicFilters(where: string[], values: unknown[], filterDsl: Fil
       where.push(`${expr} in (${placeholders.join(", ")})`);
       continue;
     }
-    values.push(value);
     const sqlOp = op === "gt" ? ">" : op === "gte" ? ">=" : op === "lt" ? "<" : op === "lte" ? "<=" : "=";
-    where.push(`${expr} ${sqlOp} $${values.length}`);
+    appendEqFilter(where, values, expr, field, value, sqlOp);
   }
 }
 
@@ -424,10 +442,17 @@ function buildWhereClause(where: WhereCondition[], params: Record<string, unknow
     if (cond.ignoreEmpty && (val === undefined || val === null || val === "")) continue;
 
     switch (cond.op) {
-      case "eq":
-        values.push(val);
-        fragments.push(`${expr} = $${idx++}`);
+      case "eq": {
+        const compatValues = statusCompatValues(field, val);
+        if (compatValues) {
+          const placeholders = compatValues.map((item) => { values.push(item); return `$${idx++}`; });
+          fragments.push(`${expr} in (${placeholders.join(", ")})`);
+        } else {
+          values.push(val);
+          fragments.push(`${expr} = $${idx++}`);
+        }
         break;
+      }
       case "ilike":
         values.push(`%${val}%`);
         fragments.push(`cast(${expr} as text) ilike $${idx++}`);
@@ -481,9 +506,8 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     for (const fixed of dsl.fixedFilters ?? []) {
       const val = fixed.valueFromParam ? params[fixed.valueFromParam] : fixed.value;
       if (val === undefined || val === null) continue;
-      values.push(val);
       const op = fixed.op === "ne" ? "<>" : "=";
-      where.push(`${fieldExpr(fixed.field, tableColumns)} ${op} $${values.length}`);
+      appendEqFilter(where, values, fieldExpr(fixed.field, tableColumns), fixed.field, val, op);
     }
     appendDynamicFilters(where, values, dsl.filters, params, tableColumns);
     if (dsl.where && dsl.where.length > 0) {

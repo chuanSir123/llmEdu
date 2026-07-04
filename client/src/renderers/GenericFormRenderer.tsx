@@ -148,7 +148,9 @@ export function GenericFormRenderer({
 
   const optionMatchesRaw = (option: { value: string; row: Record<string, unknown> }, raw: unknown) => {
     const text = String(raw ?? "");
-    return option.value === text || String(option.row.itemValue ?? option.row.item_value ?? "") === text;
+    if (!text) return false;
+    const itemValue = String(option.row.itemValue ?? option.row.item_value ?? "");
+    return option.value === text || (Boolean(itemValue) && itemValue === text);
   };
 
   const selectedLabel = (field: FieldDsl, options?: Record<string, string>) => {
