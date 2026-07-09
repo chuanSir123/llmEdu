@@ -13,7 +13,11 @@ import {
   findPageFieldConflictErrors,
   buildRepairUserPrompt,
   validateBusinessEventRuleCycles,
+  errorFingerprint,
 } from "./steps/validation-repair.step.js";
+import { resolveExistingFeatureCode } from "./steps/intent-classification.step.js";
+import { makeGetTableColumnsTool, makeGetDslContentTool, makeValidateDraftTool } from "./agent-tools.js";
+import { completeDisplayDiffs } from "./diff-completion.js";
 import { collectBusinessEventRelationsForFeature, extractSkillMdMetadata, formatSkillSummaryFromMd, generateSkillMd, hasStandardSkillMdMetadata } from "./skill-md.service.js";
 import { summarizeActionDsl, summarizeApiDsl, summarizePageDsl } from "./steps/context-injection.step.js";
 import { defaultTenantAgentPolicy } from "./tenant-policy.service.js";
@@ -21,6 +25,7 @@ import type { DslDiff } from "./types.js";
 import { validateEduDomainGuardrails } from "./validators/edu-domain.validator.js";
 import { classifyHarnessError, classifyFeedback, needsContextRefresh, HarnessErrorCode } from "./harness-errors.js";
 import { EDU_RULES } from "./rules/edu-rules.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 type TestCase = {
   name: string;
@@ -31,6 +36,73 @@ const policy = defaultTenantAgentPolicy();
 const emptyContext = { skillMdContent: "", tableColumns: {}, relevantDslCodes: ["contract_list"], dslSummary: { pages: [], apis: [], actions: [] }, tokenEstimate: 0 };
 
 const tests: TestCase[] = [
+  {
+    name: "error fingerprint is order-insensitive and detects change",
+    run: () => {
+      const a = errorFingerprint(["字段不存在: a", "缺少 fieldDef"]);
+      const b = errorFingerprint(["缺少 fieldDef", "字段不存在: a", "字段不存在: a"]);
+      const c = errorFingerprint(["缺少 fieldDef"]);
+      expectEqual(a === b, true, "same errors in different order should share fingerprint");
+      expectEqual(a === c, false, "different error sets must differ");
+    },
+  },
+  {
+    name: "execution policy defaults are positive budgets",
+    run: () => {
+      const { maxPlanAttempts, maxRepairRounds, repairTimeoutMs, maxToolCallsPerRepair } = policy.executionPolicy;
+      expectEqual(maxPlanAttempts >= 1, true, "maxPlanAttempts must be >= 1");
+      expectEqual(maxRepairRounds >= 3, true, "maxRepairRounds should not shrink below legacy 3");
+      expectEqual(repairTimeoutMs >= 30000, true, "repairTimeoutMs should not shrink below legacy 30s");
+      expectEqual(maxToolCallsPerRepair >= 1, true, "maxToolCallsPerRepair must be >= 1");
+    },
+  },
+  {
+    name: "agent self-check tools reject invalid arguments without touching db",
+    run: async () => {
+      const tableTool = makeGetTableColumnsTool(TEMPLATE_SCHEMA);
+      const emptyResult = JSON.parse(await tableTool.execute({ tables: [] }));
+      expectEqual(typeof emptyResult.error, "string", "empty tables should return an error message");
+      const badNameResult = JSON.parse(await tableTool.execute({ tables: ["DROP TABLE x;"] }));
+      expectEqual(typeof badNameResult.error, "string", "illegal table names should be rejected");
+      const dslTool = makeGetDslContentTool(TEMPLATE_SCHEMA);
+      const badTypeResult = JSON.parse(await dslTool.execute({ targetType: "not_a_type", targetCode: "student_list" }));
+      expectEqual(typeof badTypeResult.error, "string", "unknown targetType should be rejected");
+      const validateTool = makeValidateDraftTool(async () => ({ valid: true, errors: [] }));
+      const emptyDraft = JSON.parse(await validateTool.execute({ diffs: [] }));
+      expectEqual(emptyDraft.valid, false, "empty draft should not validate");
+    },
+  },
+  {
+    name: "completes missing modal field when model only allows api fields (qq_number case)",
+    run: async () => {
+      const apiOnlyDiffs: DslDiff[] = ["detail", "create", "update"].map((suffix) => ({
+        targetType: "api_dsl",
+        targetCode: `student_list.${suffix}`,
+        op: "add_allowed_field",
+        field: "qq_number",
+        fieldDef: { field: "qq_number", label: "QQ号" },
+      } as DslDiff));
+      const completions = await completeDisplayDiffs(apiOnlyDiffs, TEMPLATE_SCHEMA);
+      expectEqual(completions.length, 1, "api-only field addition must synthesize one page modal field");
+      expectEqual(completions[0]?.targetType, "page_dsl", "completion must target page_dsl");
+      expectEqual(completions[0]?.targetCode, "student_list", "completion must target the page");
+      expectEqual(completions[0]?.op, "add_modal_field", "completion op must be add_modal_field");
+      expectEqual(completions[0]?.fieldDef?.label, "QQ号", "completion should reuse label from sibling diffs");
+
+      // 同批已有显示位变更时不重复补
+      const withDisplay = await completeDisplayDiffs([
+        ...apiOnlyDiffs,
+        { targetType: "page_dsl", targetCode: "student_list", op: "add_modal_field", field: "qq_number", fieldDef: { key: "qq_number", label: "QQ号" } } as DslDiff,
+      ], TEMPLATE_SCHEMA);
+      expectEqual(withDisplay.length, 0, "must not duplicate when display diff already present");
+
+      // 页面表单已有的字段不补（name 是 student_list 模板表单既有字段）
+      const existingField = await completeDisplayDiffs([
+        { targetType: "api_dsl", targetCode: "student_list.update", op: "add_allowed_field", field: "name", fieldDef: { field: "name" } } as DslDiff,
+      ], TEMPLATE_SCHEMA);
+      expectEqual(existingField.length, 0, "existing modal fields must not be re-added");
+    },
+  },
   {
     name: "parses tool call diffs when model returns a JSON string",
     run: () => {
@@ -210,7 +282,7 @@ const tests: TestCase[] = [
         ],
         { featureCode: "student_list", action: "modify", reason: "字段去重回归" },
         emptyContext,
-        "demo_school",
+        TEMPLATE_SCHEMA,
         "给学员列表补充已有字段并新增打印模板",
       );
       expectEqual(validation.error, undefined, `unexpected validation error: ${validation.error}`);
@@ -291,7 +363,7 @@ const tests: TestCase[] = [
     run: async () => {
       const result = await executeDomainToolPlanning({
         userMessage: "新增一个到访记录功能，放在招生模块，记录校区、学员姓名、联系电话、到访时间、意向课程、跟进备注；需要列表、新增、编辑、详情和删除。",
-        schemaName: "demo_school",
+        schemaName: TEMPLATE_SCHEMA,
         intent: { featureCode: "lead_visit_record", action: "create", reason: "新增到访记录" },
         context: emptyContext,
         policy,
@@ -318,7 +390,7 @@ const tests: TestCase[] = [
       expectEqual(result.data[0]?.resourceDef?.pageCode, "lead_visit_record_list", "unexpected inferred page code");
       expectEqual(result.data[0]?.resourceDef?.moduleCode, "lead", "unexpected inferred module code");
 
-      const executed = await executeDiffs(result.data, "demo_school");
+      const executed = await executeDiffs(result.data, TEMPLATE_SCHEMA);
       const page = executed.find((item) => item.diff.targetType === "page_dsl" && item.diff.targetCode === "lead_visit_record_list")?.modifiedDslJson as Record<string, unknown> | undefined;
       if (!page) throw new Error("missing generated page dsl");
       const modal = isObject(page.modal) ? page.modal : {};
@@ -334,7 +406,7 @@ const tests: TestCase[] = [
     run: async () => {
       const result = await executeDomainToolPlanning({
         userMessage: "给合同列表加收款按钮",
-        schemaName: "demo_school",
+        schemaName: TEMPLATE_SCHEMA,
         intent: { featureCode: "contract_list", action: "modify", reason: "合同收款" },
         context: emptyContext,
         policy,
@@ -351,7 +423,7 @@ const tests: TestCase[] = [
     run: async () => {
       const result = await executeDomainToolPlanning({
         userMessage: "给合同列表增加审批流、导出、打印模板、数据权限和业务校验规则",
-        schemaName: "demo_school",
+        schemaName: TEMPLATE_SCHEMA,
         intent: { featureCode: "contract_list", action: "modify", reason: "合同定制" },
         context: emptyContext,
         policy,
@@ -394,12 +466,12 @@ const tests: TestCase[] = [
         result.data,
         { featureCode: "contract_list", action: "modify", reason: "合同定制" },
         emptyContext,
-        "demo_school",
+        TEMPLATE_SCHEMA,
         "给合同列表增加审批流、导出、打印模板、数据权限和业务校验规则",
       );
       expectEqual(validation.error, undefined, `unexpected validation error: ${validation.error}`);
 
-      const executed = await executeDiffs(result.data, "demo_school");
+      const executed = await executeDiffs(result.data, TEMPLATE_SCHEMA);
       const exportPage = executed.find((item) => item.diff.targetType === "page_dsl" && item.diff.targetCode === "contract_list" && item.diff.op === "add_toolbar")?.modifiedDslJson as Record<string, unknown> | undefined;
       const toolbar = Array.isArray(exportPage?.toolbar) ? exportPage.toolbar as Array<Record<string, unknown>> : [];
       const exportAction = toolbar.find((action) => action.actionCode === "contract_list.export");
@@ -505,7 +577,7 @@ const tests: TestCase[] = [
         "给合同列表增加一个合同收款按钮",
         { featureCode: "contract_list", action: "modify", reason: "合同列表收款动作" },
         { skillMdContent: "", tableColumns: {}, relevantDslCodes: ["contract_list"], dslSummary: { pages: [], apis: [], actions: [] }, tokenEstimate: 0 },
-        "demo_school",
+        TEMPLATE_SCHEMA,
         async () => ({
           summary: "识别到新增业务动作",
           capabilities: [{ type: "add_workflow_action", label: "新增业务动作", risk: "medium", requiresConfirmation: false, params: { actionFamily: "payment" } }],
@@ -524,7 +596,7 @@ const tests: TestCase[] = [
         "新增收款排行报表，按校区统计收款金额，页面字段包含排名、校区、收款金额，并且有时间范围筛选。",
         { featureCode: "school_collection_ranking_report", action: "create", reason: "新增报表", relatedFeatureCodes: ["funds_history"] },
         emptyContext,
-        "demo_school",
+        TEMPLATE_SCHEMA,
         async () => ({
           summary: "新增收款排行报表。",
           capabilities: [
@@ -550,7 +622,7 @@ const tests: TestCase[] = [
         "新增一个到访记录功能，放在招生模块，记录校区、学员姓名、联系电话、到访时间、意向课程、跟进备注；需要列表、新增、编辑、详情和删除。",
         { featureCode: "lead_visit_record_list", action: "create", reason: "新增 CRUD 功能" },
         emptyContext,
-        "demo_school",
+        TEMPLATE_SCHEMA,
         async () => ({
           summary: "新建到访记录表和管理页面。",
           capabilities: [
@@ -583,7 +655,7 @@ const tests: TestCase[] = [
         "帮我在报表新增收款报表，统计每个校区的收款金额，按校区分组，页面字段有校区、金额",
         { featureCode: "payment_report", action: "create", reason: "新增收款统计报表" },
         emptyContext,
-        "demo_school",
+        TEMPLATE_SCHEMA,
         async () => ({
           summary: "识别到新增报表/统计",
           capabilities: [{ type: "add_report", label: "新增报表/统计", risk: "medium", requiresConfirmation: false, params: {} }],
@@ -604,7 +676,7 @@ const tests: TestCase[] = [
         "请基于以下多轮对话理解完整需求，最后一条用户消息是对前文需求的补充或确认，不要丢失前文目标。\n\n## 历史对话\n用户：帮我在报表新增收款报表，统计每个校区的收款金额，按校区分组，页面字段有校区、金额\n助手：为了避免生成错误配置，请先确认报表口径：统计维度、指标、时间范围和是否需要图表展示。\n\n## 当前用户消息\n统计维度是校区，指标含校区和金额，时间范围由筛选觉得，不需要图标展示",
         { featureCode: "payment_report", action: "create", reason: "新增收款统计报表" },
         emptyContext,
-        "demo_school",
+        TEMPLATE_SCHEMA,
         async () => ({
           summary: "识别到已确认的新增报表/统计",
           capabilities: [{ type: "add_report", label: "新增报表/统计", risk: "medium", requiresConfirmation: false, params: {} }],
@@ -623,7 +695,7 @@ const tests: TestCase[] = [
         "帮我改一下",
         { featureCode: "student_list", action: "modify", reason: "用户表达不完整" },
         emptyContext,
-        "demo_school",
+        TEMPLATE_SCHEMA,
         async () => {
           throw new Error("llm unavailable");
         },
@@ -640,7 +712,7 @@ const tests: TestCase[] = [
         "不是修改页面，是新增一个报表统计页面",
         { featureCode: "collection_report", action: "create", reason: "新增收款统计报表", relatedFeatureCodes: ["funds_history"] },
         { ...emptyContext, tokenEstimate: 5000 },
-        "demo_school",
+        TEMPLATE_SCHEMA,
         async () => ({
           summary: "新增一个按校区分组的收款金额统计报表。",
           capabilities: [{ type: "add_report", label: "新增报表/统计", risk: "medium", requiresConfirmation: false, params: {} }],
@@ -1278,7 +1350,7 @@ const tests: TestCase[] = [
           },
         },
       ];
-      const result = await executeDiffs(diffs, "demo_school");
+      const result = await executeDiffs(diffs, TEMPLATE_SCHEMA);
       const snapshot = result[0]?.modifiedDslJson;
       if (!isObject(snapshot)) throw new Error("missing permission policy snapshot");
       expectEqual(snapshot.resourceType, "permission_policy", "unexpected resourceType");
@@ -1301,7 +1373,7 @@ const tests: TestCase[] = [
             apiCode: "charge_record.create",
           },
         },
-      ], "demo_school");
+      ], TEMPLATE_SCHEMA);
       const snapshot = result[0]?.modifiedDslJson;
       if (!isObject(snapshot)) throw new Error("missing page snapshot");
       const table = isObject(snapshot.table) ? snapshot.table : {};
@@ -1361,6 +1433,57 @@ const tests: TestCase[] = [
         expectEqual(seen.has(rule.code), false, `duplicate rule code ${rule.code}`);
         seen.add(rule.code);
       }
+    },
+  },
+  {
+    name: "resolveExistingFeatureCode maps detail codes to existing list features",
+    run: () => {
+      const existing = ["student_list", "contract_list", "course_list", "organization_list"];
+      // student_detail 不在列表，应归一到 student_list
+      const detail = resolveExistingFeatureCode("student_detail", existing);
+      expectEqual(detail.matched, true, "student_detail should resolve to existing feature");
+      expectEqual(detail.featureCode, "student_list", "student_detail should map to student_list");
+      // 已存在编码保持不变
+      const direct = resolveExistingFeatureCode("contract_list", existing);
+      expectEqual(direct.matched, true, "existing code should match");
+      expectEqual(direct.featureCode, "contract_list", "existing code should be unchanged");
+      // 完全编造的编码无法归一时保留原值且不 matched
+      const invented = resolveExistingFeatureCode("totally_invented_xyz", existing);
+      expectEqual(invented.matched, false, "invented code should not match");
+      expectEqual(invented.featureCode, "totally_invented_xyz", "invented code should be preserved for validator to reject");
+      // 唯一前缀匹配：lead 列表不存在但只有一个以 lead_ 开头的也应归一（这里测试无匹配分支）
+      const singlePrefix = resolveExistingFeatureCode("lead_detail", ["lead_list"]);
+      expectEqual(singlePrefix.matched, true, "lead_detail should resolve via suffix to lead_list");
+      expectEqual(singlePrefix.featureCode, "lead_list", "lead_detail should map to lead_list");
+    },
+  },
+  {
+    name: "validate rejects diffs targeting non-existent pages/apis/tables (detail-code case)",
+    run: async () => {
+      // 模型给"学员详情"加 QQ 字段时编造的典型错误：用不存在的详情页编码与详情表
+      // student_profile 在模板机构中既不是页面也不是物理表，应被确定性兜底拦截
+      const badDiffs: DslDiff[] = [
+        { targetType: "page_dsl", targetCode: "student_profile", op: "add_column", field: "qq_number", fieldDef: { key: "qq_number", label: "QQ号", type: "text" } },
+        { targetType: "db_schema", targetCode: "student_profile", op: "add_field", resourceDef: { tableName: "student_profile", fields: [{ key: "qq_number", label: "QQ号", type: "text" }] } },
+      ];
+      const result = await executeValidationRepair(badDiffs, { featureCode: "student_profile", action: "modify", reason: "", relatedFeatureCodes: [] }, emptyContext, TEMPLATE_SCHEMA, "给学员详情新增QQ号字段");
+      expectEqual(Boolean(result.error), true, "should fail validation for non-existent targets");
+      const err = result.error ?? "";
+      expectIncludes([err], "页面不存在");
+      expectIncludes([err], "物理表不存在");
+    },
+  },
+  {
+    name: "validate accepts add_field to a real existing table",
+    run: async () => {
+      // student 是模板机构真实存在的物理表，加一个新字段应通过表存在性检查
+      const goodDiffs: DslDiff[] = [
+        { targetType: "db_schema", targetCode: "student", op: "add_field", resourceDef: { tableName: "student", fields: [{ key: "qq_number_extra", label: "QQ号", type: "text" }] } },
+      ];
+      const result = await executeValidationRepair(goodDiffs, { featureCode: "student_list", action: "modify", reason: "", relatedFeatureCodes: [] }, emptyContext, TEMPLATE_SCHEMA, "给学员加QQ号");
+      // 可能因其他关联校验（回显缺失等）失败，但绝不能因"物理表不存在: student"失败
+      const err = result.error ?? "";
+      expectEqual(err.includes("物理表不存在: student"), false, "real table student must not be flagged as missing");
     },
   },
 ];

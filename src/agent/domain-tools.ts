@@ -2,6 +2,8 @@ import { callWithToolCalling } from "./llm.service.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
 import type { ContextResult, DslDiff, HarnessStepResult, IntentResult, TenantAgentPolicy } from "./types.js";
 import { SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { SYSTEM_FIELD_SET } from "../common/dsl-constants.js";
+import { inferDslFieldType } from "../common/field-type.js";
 
 export type ToolInvocation = {
   toolName: string;
@@ -15,7 +17,7 @@ type FieldDef = {
   required?: boolean;
 };
 
-const SYSTEM_FIELD_KEYS = new Set(["id", "created_at", "updated_at", "deleted", "deleted_at"]);
+const SYSTEM_FIELD_KEYS = SYSTEM_FIELD_SET;
 const dictDefault = (dictCode: string, itemValue: unknown) => ({ dictCode, itemValue });
 
 const SELECT_DOMAIN_TOOLS_TOOL = {
@@ -121,6 +123,7 @@ async function selectLlmTools(input: {
     "常规教务规则：排课冲突必须包含老师冲突和学员冲突；业绩规则使用 performanceAllocation=byCpPaidRatio/oneToOneFirst/classCourseFirst，productPriority=none/oneToOneFirst/classCourseFirst/oneOnNFirst；资金分配使用 fundsAllocation=byCpRemainingAmount/byCpPaidRatio/oldestContractFirst/manual；优惠分配使用 promotionAllocation=byCpAmountRatio/byCpHourRatio/oneToOneFirst/classCourseFirst/manual。",
     "工具边界：用户要新增按钮、行操作、弹窗流程、调用业务命令时，不要选择 add_ext_field_to_page；必须选择对应 workflow 工具。排课/约课/课程时间老师校区课时 => add_course_scheduling_workflow；课消/扣费/确认扣费 => add_charge_workflow；合同收款/补缴/付款确认 => add_contract_payment_workflow；退费/申请退费 => add_refund_workflow；跟进/新增跟进 => add_followup_workflow。",
     "新增完整业务功能、独立页面、完整 CRUD 或新数据表时，优先选择 create_custom_feature；即使 tableName/pageCode 不能完全确定，也要给出 featureCode、featureName、moduleName 和 fields，后续工程会推断缺省编码。",
+    "目标必须真实存在：pageCode/tableName/featureCode 必须来自已注入的 skillMd/tableColumns/dslSummary。详情类需求（如“给学员详情加字段”）的 pageCode 用对应列表功能（如 student_list），不要用 student_detail 这种详情页编码；add_ext_field_to_page/add_physical_filter_field 的目标页面必须是真实存在的列表功能页。不要为了加一个扩展字段编造或假设不存在的表（如 student_detail），应加到当前功能对应的事实表（如 student）。",
     "如果选择工具，必须填写足够参数；字段 key/tableName/pageCode/featureCode 使用小写下划线编码；不要只输出解释，必须通过工具调用或 JSON 返回 invocations。",
   ].join("\n");
   const user = JSON.stringify({
@@ -270,17 +273,7 @@ function fields(args: Record<string, unknown>): FieldDef[] {
     .filter((field) => /^[a-z][a-z0-9_]{0,62}$/.test(field.key));
 }
 
-function normalizeFieldType(key: string, label: string, rawType: string) {
-  const text = `${key} ${label}`.toLowerCase();
-  if (/(phone|mobile|tel|手机号|电话|联系电话)/.test(text)) return "text";
-  if (/(amount|fee|price|balance|tuition|payment|refund|arrears|金额|费用|学费|余额|欠费|收款|退款)/.test(text)) return "number";
-  if (/(birthday|birth_date|生日)/.test(text)) return "date";
-  if (/(datetime|timestamp|visit_time|time|时间)/.test(text)) return "datetime";
-  if (/(date|日期)/.test(text)) return "date";
-  if (/(count|hours|课时|次数|数量)/.test(text)) return "number";
-  if (/^(varchar|char|string|bigint|int|integer|uuid)$/.test(rawType.toLowerCase())) return "text";
-  return rawType || "text";
-}
+const normalizeFieldType = inferDslFieldType;
 
 function pageFieldDef(field: FieldDef, extra: Record<string, unknown> = {}): Record<string, unknown> {
   const meta = inferForeignKeyMeta(field.key);

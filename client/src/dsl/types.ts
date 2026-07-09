@@ -87,6 +87,8 @@ export type ActionDsl = {
   mapRowToValue?: Record<string, string>;
   mapSelectedToValue?: Record<string, string>;
   requiresSelection?: boolean;
+  /** 未选中数据时的提示文案，DSL 可按业务定制（默认"请先选择数据"） */
+  requiresSelectionMessage?: string;
   modalSize?: "default" | "large" | "fullscreen";
   afterSuccess?: Array<{ type: "toast" | "redirect" | "refreshPage"; message?: string; to?: string }>;
   visibleWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | Record<string, unknown> | Array<Record<string, unknown>> | undefined>;

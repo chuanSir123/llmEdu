@@ -28,12 +28,24 @@ export function getToken() {
 
 export function getStoredUser(): LoginResult["user"] | null {
   const raw = localStorage.getItem(USER_KEY);
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(USER_KEY);
+    return null;
+  }
 }
 
 export function getStoredPermissions(): LoginResult["permissions"] | null {
   const raw = localStorage.getItem(PERM_KEY);
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(PERM_KEY);
+    return null;
+  }
 }
 
 export function getStoredManagementOrganizationId() {
@@ -187,7 +199,7 @@ export const GatewayClient = {
       `/api/tenant/agent/chat/session?schemaName=${encodeURIComponent(schemaName)}${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ""}`
     ),
   getCustomizationRecordDetail: (id: string) =>
-    request<{ record: { id: string; schemaName: string; sessionId: string; recordType?: string; userPrompt?: string; changeSummary: string; skillMd: string; chatTimeline: Array<{ role: string; content: string; dslDiff?: unknown; progressEvents?: unknown; timestamp: string }> } | null }>(`/api/admin/tenant/customization-records/${id}`),
+    request<{ record: { id: string; schemaName: string; sessionId: string; recordType?: string; userPrompt?: string; changeSummary: string; skillMd: string; chatTimeline: Array<{ role: string; content: string; dslDiff?: unknown; progressEvents?: unknown; timestamp: string }> } | null }>(`/api/tenant/customization-records/${id}`),
   tenantConfig: () =>
     request<{ agentCustomizationEnabled: boolean }>("/api/tenant/config"),
   getHarnessLog: (sessionId: string) =>

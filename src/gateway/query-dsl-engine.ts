@@ -3,7 +3,7 @@ import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
 import { getOrganizationScope } from "../permission/permission.service.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
-import { normalizeDictionaryInputValues } from "../dictionary.service.js";
+import { dictionaryCompatValues, normalizeDictionaryInputValues } from "../dictionary.service.js";
 
 const FIELD = /^[a-z][a-z0-9_]{0,62}$/;
 
@@ -64,6 +64,18 @@ type ApiDsl = {
 };
 
 const tableColumnsCache = new Map<string, Set<string>>();
+
+/** Clear the cached column list for a specific table so subsequent queries re-read from information_schema. */
+export function invalidateTableColumnsCache(schemaName: string, table?: string) {
+  if (table) {
+    tableColumnsCache.delete(`${schemaName}.${table}`);
+  } else {
+    const prefix = `${schemaName}.`;
+    for (const key of tableColumnsCache.keys()) {
+      if (key.startsWith(prefix)) tableColumnsCache.delete(key);
+    }
+  }
+}
 
 export function assertField(field: string) {
   if (!FIELD.test(field)) throw Object.assign(new Error(`Unsafe field: ${field}`), { statusCode: 400 });
@@ -262,10 +274,8 @@ function nextDay(value: unknown) {
   return date.toISOString().slice(0, 10);
 }
 
-function statusCompatValues(field: string, value: unknown) {
-  const text = String(value ?? "");
-  return field === "status" && (text === "ACTIVE" || text === "status.ACTIVE") ? ["ACTIVE", "status.ACTIVE"] : undefined;
-}
+// 字典值双格式兼容统一走 dictionary.service（历史数据可能存 ACTIVE 或 status.ACTIVE 两种形态）
+const statusCompatValues = dictionaryCompatValues;
 
 function appendEqFilter(where: string[], values: unknown[], expr: string, field: string, value: unknown, op = "=") {
   const compatValues = op === "=" ? statusCompatValues(field, value) : undefined;
@@ -494,7 +504,10 @@ function buildWhereClause(where: WhereCondition[], params: Record<string, unknow
 }
 
 export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Record<string, unknown>, user?: SessionUser) {
-  const effectiveSchema = dsl.schema ?? schemaName;
+  // 预览测试库 (_test) 忽略 DSL 中携带的 schema 字段，防止 AI 生成的 DSL
+  // 包含 schema:demo_school 导致操作写到了正式库而非预览库
+  const dslSchema = schemaName.endsWith("_test") ? undefined : dsl.schema;
+  const effectiveSchema = dslSchema ?? schemaName;
   const table = tableExpr(effectiveSchema, dsl.table);
   const tableColumns = await getTableColumns(effectiveSchema, dsl.table);
   if (dsl.operation === "query") {

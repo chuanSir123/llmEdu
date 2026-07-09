@@ -11,6 +11,8 @@ import { assignLead, claimLead, createLeadStudent, createStudentFollowup, create
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
 import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, systemDictionaryLabel, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
+import { isCoreBusinessRule } from "../common/dsl-constants.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -34,8 +36,10 @@ export async function loadApiDsl(scope: "admin" | "tenant", apiCode: string, sch
      from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
-     order by case when schema_scope = $2 then 0 else 1 end
+         or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and $2 = 'tenant'))
+     order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0
+                    when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1
+                    else 2 end
      limit 1`,
     [apiCode, scope, schemaName ?? null]
   );
@@ -67,14 +71,6 @@ function safeCode(value: unknown, label: string) {
   return text;
 }
 
-const CORE_BUSINESS_RULE_CODES = new Set([
-  "funds_create_rule",
-  "charge_create_rule",
-  "refund_create_rule",
-  "contract_refund_rule",
-  "course_create_rule",
-  "course_time_validation_rule"
-]);
 
 function businessRuleCategoryLabel(category: string) {
   return SYSTEM_DICTIONARIES.business_rule_category?.[category]?.label ?? category;
@@ -84,16 +80,19 @@ function businessRuleTypeLabel(type: string) {
   return SYSTEM_DICTIONARIES.business_type?.[type]?.label ?? type;
 }
 
-function moduleLabel(moduleCode: string) {
-  const labels: Record<string, string> = {
-    recruit: "招生",
-    student: "学员",
-    education: "教务",
-    finance: "财务",
-    system: "系统设置",
-    ai_customization: "AI 定制",
-  };
-  return labels[moduleCode] ?? moduleCode;
+// 模块中文名以 module_registry 为准（租户可定制模块），带短 TTL 缓存；查不到回落模块编码
+let moduleLabelCache: { labels: Record<string, string>; expiresAt: number } | null = null;
+
+async function loadModuleLabels(): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (moduleLabelCache && moduleLabelCache.expiresAt > now) return moduleLabelCache.labels;
+  const { rows } = await pool.query(
+    `select module_code, module_name from admin.module_registry where deleted = false`
+  );
+  const labels: Record<string, string> = {};
+  for (const row of rows) labels[String(row.module_code)] = String(row.module_name ?? row.module_code);
+  moduleLabelCache = { labels, expiresAt: now + 60_000 };
+  return labels;
 }
 
 function approvalRoleLabel(role: string) {
@@ -126,7 +125,7 @@ async function listPermissionConfig(schemaName: string, roleId: string) {
      left join admin.module_registry m
        on m.module_code = f.module_code and m.status = 'ACTIVE' and m.deleted = false
      where p.status = 'active' and p.deleted = false
-       and ((p.schema_scope = 'tenant' and p.schema_name = $1) or p.schema_scope = 'tenant' and schema_name = 'demo_school')
+       and ((p.schema_scope = 'tenant' and p.schema_name = $1) or p.schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}')
      order by case when p.schema_scope = 'tenant' then 0 else 1 end, module_sort, feature_sort, p.page_name`,
     [schemaName]
   );
@@ -139,8 +138,8 @@ async function listPermissionConfig(schemaName: string, roleId: string) {
     `select action_code, action_name, action_type, page_code, dsl_json, schema_scope
      from admin.action_dsl
      where status = 'active' and deleted = false and action_type <> 'modal'
-       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end, action_code`,
+       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end, action_code`,
     [schemaName]
   );
   const actionsByPage = new Map<string, Map<string, Record<string, unknown>>>();
@@ -201,14 +200,16 @@ async function queryApprovalFlows(schemaName: string, params: Record<string, unk
      limit $${values.length - 1} offset $${values.length}`,
     values
   );
+  const moduleLabels = await loadModuleLabels();
   const mapped = rows.map((row) => {
     const config = asObject(row.config_json);
     const steps = Array.isArray(config.steps) ? config.steps as Array<Record<string, unknown>> : [];
+    const moduleCode = String(row.module_code ?? "");
     return {
       ...row,
       business_type: config.businessType ?? config.business_type ?? "",
       business_type_label: businessRuleTypeLabel(String(config.businessType ?? config.business_type ?? "")),
-      module_label: moduleLabel(String(row.module_code ?? "")),
+      module_label: moduleLabels[moduleCode] ?? moduleCode,
       steps_summary: steps.map((step) => `${step.stepName ?? step.stepCode ?? ""}:${approvalRoleLabel(String(step.assigneeRole ?? ""))}`).join(" / "),
       config_json: config,
     };
@@ -279,7 +280,7 @@ async function queryApprovalTasks(schemaName: string, params: Record<string, unk
 async function queryBusinessRules(schemaName: string, params: Record<string, unknown>) {
   const filters = asObject(params.filters);
   const values: unknown[] = [schemaName];
-  const where = [`status = 'active'`, "deleted = false", `((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))`];
+  const where = [`status = 'active'`, "deleted = false", `((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`];
   if (filters.rule_name) { values.push(`%${filters.rule_name}%`); where.push(`rule_name ilike $${values.length}`); }
   const page = Math.max(Number(params.page ?? 1), 1);
   const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
@@ -295,7 +296,7 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
   return {
     rows: rows.map(({ __total, ...row }) => ({
       ...row,
-      source_label: row.schema_name === "demo_school" ? "模板机构" : "租户自定义",
+      source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
       rule_json: asObject(row.rule_json),
       category_label: businessRuleCategoryLabel(String(asObject(row.rule_json).category ?? "")),
       business_type_label: businessRuleTypeLabel(String(asObject(row.rule_json).businessType ?? "")),
@@ -309,15 +310,18 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
 async function saveBusinessRule(schemaName: string, params: Record<string, unknown>) {
   const input = asObject(params.data ?? params);
   const ruleCode = input.rule_code || input.ruleCode ? safeCode(input.rule_code ?? input.ruleCode, "规则编码") : `custom_rule_${Date.now()}`;
-  if (CORE_BUSINESS_RULE_CODES.has(ruleCode)) throw Object.assign(new Error(`核心业务规则不可修改: ${ruleCode}`), { statusCode: 403 });
   const ruleName = String(input.rule_name ?? input.ruleName ?? ruleCode);
   const ruleJson = { ...parseJsonObject(input.rule_json), ruleCode, ruleName };
   const { rows } = await pool.query(
-    `select id from admin.business_rule
+    `select id, rule_json from admin.business_rule
      where schema_scope = 'tenant' and schema_name = $1 and rule_code = $2 and deleted = false
      limit 1`,
     [schemaName, ruleCode]
   );
+  // 核心规则判定优先读已有规则的 coreRule/locked 元数据，内置清单兜底
+  if (isCoreBusinessRule(ruleCode, asObject(rows[0]?.rule_json))) {
+    throw Object.assign(new Error(`核心业务规则不可修改: ${ruleCode}`), { statusCode: 403 });
+  }
   const id = String(rows[0]?.id ?? randomUUID());
   await pool.query(
     `insert into admin.business_rule(id, schema_scope, schema_name, rule_code, rule_name, rule_json, status, deleted)
@@ -379,7 +383,7 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
   if (apiCode === "business_rule_list.delete") {
     const { rows } = await pool.query(`select rule_code, rule_json from admin.business_rule where id = $1 and schema_scope = 'tenant' and schema_name = $2 and deleted = false limit 1`, [params.id, schemaName]);
     const row = rows[0];
-    if (row && (CORE_BUSINESS_RULE_CODES.has(String(row.rule_code)) || asObject(row.rule_json).coreRule === true)) throw Object.assign(new Error(`核心业务规则不可删除: ${row.rule_code}`), { statusCode: 403 });
+    if (row && isCoreBusinessRule(String(row.rule_code), asObject(row.rule_json))) throw Object.assign(new Error(`核心业务规则不可删除: ${row.rule_code}`), { statusCode: 403 });
     await pool.query(`update admin.business_rule set deleted = true, updated_at = now() where id = $1 and schema_scope = 'tenant' and schema_name = $2`, [params.id, schemaName]);
     return { deleted: true, id: params.id };
   }
@@ -489,10 +493,12 @@ async function handleTenantVersionApi(apiCode: string, schemaName: string, param
 
     case "dsl_version.rollback":
       if (!versionId) throw Object.assign(new Error("缺少版本ID"), { statusCode: 400 });
+      if (schemaName.endsWith("_test")) throw Object.assign(new Error("预览环境不允许回滚操作，请回到正式租户环境操作"), { statusCode: 403 });
       return tenantRollbackVersion({ schemaName, versionId, userId });
 
     case "dsl_version.rollback_preview":
       if (!versionId) throw Object.assign(new Error("缺少版本ID"), { statusCode: 400 });
+      if (schemaName.endsWith("_test")) throw Object.assign(new Error("预览环境不允许回滚操作，请回到正式租户环境操作"), { statusCode: 403 });
       return rollbackTestSchemaDsl(schemaName, versionId);
 
     case "dsl_version.reject":

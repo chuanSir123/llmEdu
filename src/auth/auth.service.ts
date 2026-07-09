@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
 import { pool } from "../db/pool.js";
 import { resolveTenantSchema } from "../db/schema-resolver.js";
+import { dictionaryCompatValues } from "../dictionary.service.js";
 import { visiblePageCodes, visibleActionCodes, getDataPermissionScope, fieldPermissions } from "../permission/permission.service.js";
 import type { SessionUser } from "../types.js";
 
@@ -21,9 +22,10 @@ export async function adminLogin(app: FastifyInstance, contact: string, password
 
 export async function tenantLogin(app: FastifyInstance, schemaName: string, contact: string, password: string) {
   const schema = await resolveTenantSchema(schemaName);
+  const activeValues = dictionaryCompatValues("status", "ACTIVE") ?? ["ACTIVE"];
   const { rows } = await pool.query(
-    `select id, name, psw from "${schema}"."user" where contact = $1 and status in ('ACTIVE', 'status.ACTIVE') and deleted = false`,
-    [contact]
+    `select id, name, psw from "${schema}"."user" where contact = $1 and status = any($2) and deleted = false`,
+    [contact, activeValues]
   );
   const user = rows[0];
   if (!user || !(await bcrypt.compare(password, user.psw))) {

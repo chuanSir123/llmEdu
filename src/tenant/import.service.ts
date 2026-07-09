@@ -7,6 +7,7 @@ import type { SessionUser } from "../types.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
 import { pool } from "../db/pool.js";
 import { qIdent } from "../db/schema-resolver.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 type ImportField = {
   key: string;
@@ -110,8 +111,8 @@ async function loadPageDslForImport(schemaName: string, pageCode: string) {
     `select dsl_json
      from admin.page_dsl
      where page_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end
      limit 1`,
     [pageCode, schemaName]
   );
@@ -123,8 +124,8 @@ async function loadApiDslForImport(schemaName: string, apiCode: string) {
     `select dsl_json
      from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end
      limit 1`,
     [apiCode, schemaName]
   );
@@ -137,9 +138,9 @@ async function loadImportDslConfigs(schemaName: string, pageCode: string) {
     `select dsl_json
      from admin.import_dsl
      where status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
        and (dsl_json->>'pageCode' = $2 or import_code = $3)
-     order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
+     order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
     [schemaName, pageCode, `${pageCode}.import`]
   );
   return rows.map((row) => asObject(row.dsl_json));
@@ -331,22 +332,29 @@ function importResultRow(sourceRow: Record<string, unknown>, rowNumber: number, 
   return { 导入行号: rowNumber, ...sourceRow, 导入结果: result };
 }
 
-async function resolveNameToId(input: {
+/** 单次导入内的外键选项缓存：label → 候选值列表。key 为 apiCode+labelField+valueField+filters。 */
+export type ForeignOptionCache = {
+  options: Map<string, Map<string, unknown[]>>;
+  /** 已回源刷新过的 key：每个来源每次运行最多刷新一次，防止大量坏名称退化为逐行查询 */
+  refreshed: Set<string>;
+};
+
+export function createForeignOptionCache(): ForeignOptionCache {
+  return { options: new Map(), refreshed: new Set() };
+}
+
+async function loadForeignOptions(input: {
   schemaName: string;
-  field: ImportField;
-  rawValue: unknown;
-  strategy: "first" | "error";
-  context?: Record<string, unknown>;
+  source: NonNullable<ImportField["optionSource"]>;
   user?: SessionUser;
-}): Promise<ImportResolveResult> {
-  const source = input.field.optionSource;
-  if (!source || isEmpty(input.rawValue)) return { value: input.rawValue };
-  if (input.field.key === "contract_product_id") {
-    const resolved = await resolveContractProductByContext(input);
-    if (resolved) return resolved;
-  }
+  cache?: ForeignOptionCache;
+}): Promise<Map<string, unknown[]>> {
+  const { source } = input;
   const labelField = source.labelField ?? "name";
   const valueField = source.valueField ?? "id";
+  const cacheKey = `${source.apiCode}:${labelField}:${valueField}:${JSON.stringify(source.filters ?? {})}`;
+  const cached = input.cache?.options.get(cacheKey);
+  if (cached) return cached;
   const result = await executeGatewayApi(
     "tenant",
     input.schemaName,
@@ -354,12 +362,51 @@ async function resolveNameToId(input: {
     { filters: source.filters ?? {}, page: 1, pageSize: source.pageSize ?? 500 },
     input.user,
   ) as { rows?: Record<string, unknown>[] };
-  const rows = (result.rows ?? []).filter((row) => String(row[labelField] ?? "").trim() === String(input.rawValue).trim());
-  if (rows.length === 0) return { value: undefined, error: `字段[${fieldHeader(input.field)}]未找到名称：${input.rawValue}` };
-  if (rows.length > 1 && input.strategy === "error") return { value: undefined, error: `字段[${fieldHeader(input.field)}]不唯一：${input.rawValue}` };
+  const byLabel = new Map<string, unknown[]>();
+  for (const row of result.rows ?? []) {
+    const label = String(row[labelField] ?? "").trim();
+    if (!label) continue;
+    const values = byLabel.get(label) ?? [];
+    values.push(row[valueField]);
+    byLabel.set(label, values);
+  }
+  input.cache?.options.set(cacheKey, byLabel);
+  return byLabel;
+}
+
+async function resolveNameToId(input: {
+  schemaName: string;
+  field: ImportField;
+  rawValue: unknown;
+  strategy: "first" | "error";
+  context?: Record<string, unknown>;
+  user?: SessionUser;
+  cache?: ForeignOptionCache;
+}): Promise<ImportResolveResult> {
+  const source = input.field.optionSource;
+  if (!source || isEmpty(input.rawValue)) return { value: input.rawValue };
+  if (input.field.key === "contract_product_id") {
+    const resolved = await resolveContractProductByContext(input);
+    if (resolved) return resolved;
+  }
+  // 每次导入只加载一次选项，逐行命中缓存（此前是每行每字段一次网关查询）
+  const byLabel = await loadForeignOptions({ schemaName: input.schemaName, source, user: input.user, cache: input.cache });
+  let values = byLabel.get(String(input.rawValue).trim()) ?? [];
+  if (values.length === 0 && input.cache) {
+    // 缓存未命中时回源刷新一次（每来源每次运行至多一次）：同一次运行中刚写入的记录仍可被解析
+    const labelKey = `${source.apiCode}:${source.labelField ?? "name"}:${source.valueField ?? "id"}:${JSON.stringify(source.filters ?? {})}`;
+    if (!input.cache.refreshed.has(labelKey)) {
+      input.cache.refreshed.add(labelKey);
+      input.cache.options.delete(labelKey);
+      const refreshed = await loadForeignOptions({ schemaName: input.schemaName, source, user: input.user, cache: input.cache });
+      values = refreshed.get(String(input.rawValue).trim()) ?? [];
+    }
+  }
+  if (values.length === 0) return { value: undefined, error: `字段[${fieldHeader(input.field)}]未找到名称：${input.rawValue}` };
+  if (values.length > 1 && input.strategy === "error") return { value: undefined, error: `字段[${fieldHeader(input.field)}]不唯一：${input.rawValue}` };
   return {
-    value: rows[0][valueField],
-    warning: rows.length > 1 ? `字段[${fieldHeader(input.field)}]不唯一，已取第一个：${input.rawValue}` : undefined,
+    value: values[0],
+    warning: values.length > 1 ? `字段[${fieldHeader(input.field)}]不唯一，已取第一个：${input.rawValue}` : undefined,
   };
 }
 
@@ -426,6 +473,7 @@ async function resolveMultiNameToIds(input: {
   strategy: "first" | "error";
   context?: Record<string, unknown>;
   user?: SessionUser;
+  cache?: ForeignOptionCache;
 }): Promise<ImportResolveResult> {
   const values = splitMultiValue(input.rawValue);
   const result: unknown[] = [];
@@ -438,6 +486,7 @@ async function resolveMultiNameToIds(input: {
       strategy: input.strategy,
       context: input.context,
       user: input.user,
+      cache: input.cache,
     });
     if (resolved.error) messages.push(resolved.error);
     if (resolved.warning) messages.push(resolved.warning);
@@ -491,10 +540,17 @@ export async function executeTenantImport(input: {
   validateOnly?: boolean;
   user?: SessionUser;
   sourceRows?: Record<string, unknown>[];
+  /**
+   * 纯校验模式下"将由前序导入生成"的外键名称集合（字段 key → 名称集合）。
+   * 多业务依赖导入（学员→合同→收款）时，后续 sheet 的外键名称在前序 sheet 尚未
+   * 落库前必然解析失败；命中该集合时降级为提示而非失败，消除校验误报。
+   */
+  pendingForeignNames?: Record<string, Set<string>>;
 }) {
   const buffer = input.sourceRows ? Buffer.alloc(0) : decodeBase64(input.contentBase64);
   const rows = input.sourceRows ?? parseWorkbook(input.fileName, buffer);
   const fields = input.fields.filter((field) => field.key && field.key !== "id").map(normalizeImportField);
+  const foreignCache = createForeignOptionCache();
   const resultRows: Record<string, unknown>[] = [];
   const failures: Array<{ row: number; message: string }> = [];
   let total = 0;
@@ -542,6 +598,7 @@ export async function executeTenantImport(input: {
           strategy: input.idResolutionStrategy,
           context: data,
           user: input.user,
+          cache: foreignCache,
         });
         if (resolved.error) messages.push(resolved.error);
         if (resolved.warning) messages.push(resolved.warning);
@@ -554,10 +611,16 @@ export async function executeTenantImport(input: {
           strategy: input.idResolutionStrategy,
           context: data,
           user: input.user,
+          cache: foreignCache,
         });
-        if (resolved.error) messages.push(resolved.error);
-        if (resolved.warning) messages.push(resolved.warning);
-        if (resolved.value !== undefined) data[field.key] = resolved.value;
+        if (resolved.error && input.validateOnly && input.pendingForeignNames?.[field.key]?.has(String(raw).trim())) {
+          // 依赖前序 sheet 的名称：正式导入时前序已落库，可正常解析
+          messages.push(`字段[${fieldHeader(field)}]名称"${String(raw).trim()}"将由前序导入生成，正式导入时自动解析`);
+        } else {
+          if (resolved.error) messages.push(resolved.error);
+          if (resolved.warning) messages.push(resolved.warning);
+          if (resolved.value !== undefined) data[field.key] = resolved.value;
+        }
       } else {
         const resolved = resolveEnumValue(field, raw);
         if (resolved.error) messages.push(resolved.error);

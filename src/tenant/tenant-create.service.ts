@@ -5,12 +5,13 @@ import { migrate } from "../db/migrator.js";
 import { initializeTenantVersion } from "../version/version.service.js";
 import { qIdent } from "../db/schema-resolver.js";
 import { seedDefaultWechatBinding } from "../marketing.service.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 function httpError(statusCode: number, message: string) {
   return Object.assign(new Error(message), { statusCode });
 }
 
-const TENANT_TEMPLATE_SCHEMA = "demo_school";
+const TENANT_TEMPLATE_SCHEMA = TEMPLATE_SCHEMA;
 const DEFAULT_OWNER_PASSWORD = "123456";
 
 function id(prefix: string, code: string) {
@@ -126,7 +127,7 @@ async function assertNoBusinessDataInitialized(client: import("pg").PoolClient, 
 async function loadPageActionCodes(client: import("pg").PoolClient, pageCode: string) {
   const { rows } = await client.query(
     `select action_code from admin.action_dsl
-     where schema_scope = 'tenant' and schema_name = 'demo_school' and page_code = $1 and status = 'active' and deleted = false`,
+     where schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and page_code = $1 and status = 'active' and deleted = false`,
     [pageCode]
   );
   return rows.map((row) => String(row.action_code));
@@ -234,10 +235,10 @@ export async function loadModuleSelectionTree() {
   );
 
   const { rows: demoModules } = await pool.query(
-    `select module_code from admin.tenant_module_subscription where schema_name = 'demo_school' and enabled = true and deleted = false`
+    `select module_code from admin.tenant_module_subscription where schema_name = '${TEMPLATE_SCHEMA}' and enabled = true and deleted = false`
   );
   const { rows: demoFeatures } = await pool.query(
-    `select feature_code from admin.tenant_feature_subscription where schema_name = 'demo_school' and enabled = true and deleted = false`
+    `select feature_code from admin.tenant_feature_subscription where schema_name = '${TEMPLATE_SCHEMA}' and enabled = true and deleted = false`
   );
 
   const demoModuleSet = new Set(demoModules.map((r: { module_code: string }) => r.module_code));

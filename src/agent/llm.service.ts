@@ -17,7 +17,8 @@ export function runWithLlmTraceContext<T>(context: LlmTraceContext, fn: () => Pr
 
 export async function loadLlmConfig(schemaName: string): Promise<LlmConfig> {
   const { rows } = await pool.query(
-    `select base_url, api_key, model, temperature, max_tokens, max_context_tokens, supports_tool_calling
+    `select base_url, api_key, model, temperature, max_tokens, max_context_tokens, supports_tool_calling,
+            request_timeout_ms, max_retries
      from admin.llm_config
      where status = 'ACTIVE' and deleted = false and (schema_name = $1 or schema_name is null)
      order by schema_name desc nulls last limit 1`,
@@ -37,6 +38,8 @@ export async function loadLlmConfig(schemaName: string): Promise<LlmConfig> {
     maxTokens: Number(row.max_tokens ?? 0),
     maxContextTokens: Number(row.max_context_tokens ?? 256000),
     supportsToolCalling: row.supports_tool_calling !== false,
+    requestTimeoutMs: Number(row.request_timeout_ms ?? 120000),
+    maxRetries: Number(row.max_retries ?? 3),
   };
 }
 
@@ -100,7 +103,7 @@ async function rawCall(
   tools?: Array<Record<string, unknown>>,
   onDelta?: (text: string) => void,
 ): Promise<RawCallResult> {
-  const maxRetries = 3;
+  const maxRetries = config.maxRetries;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const result = await rawCallOnce(schemaName, config, messages, tools, onDelta);
     if (!isRetry(result)) return result;
@@ -220,7 +223,7 @@ async function rawCallOnce(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
 
   console.log("[LLM] request: url=%s model=%s messages_count=%d has_tools=%s",
     `${config.baseUrl}/chat/completions`, config.model, messages.length, !!tools);

@@ -1,6 +1,7 @@
 import { pool } from "../db/pool.js";
 import { BUSINESS_API_EVENT_MAP, BUSINESS_COMMAND_EVENT_MAP } from "../gateway/business-event.service.js";
 import { SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 type PageDslJson = {
   title?: string;
@@ -342,14 +343,14 @@ export function generateSkillMd(input: {
 
 export async function syncSkillMd(schemaName: string, featureCode: string): Promise<void> {
   const { rows: pageRows } = await pool.query(
-    `select dsl_json from admin.page_dsl where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
+    `select dsl_json from admin.page_dsl where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
     [featureCode, schemaName]
   );
   const pageDsl = pageRows[0]?.dsl_json as PageDslJson | null ?? null;
   if (!pageDsl && pageRows.length === 0) return;
 
   const { rows: apiRows } = await pool.query(
-    `select api_code, api_type, dsl_json from admin.api_dsl where feature_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
+    `select api_code, api_type, dsl_json from admin.api_dsl where feature_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
     [featureCode, schemaName]
   );
   const apiDsls = apiRows.map((r: { api_code: string; api_type: string; dsl_json: unknown }) => ({
@@ -359,13 +360,13 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
   }));
 
   const { rows: actionRows } = await pool.query(
-    `select action_code, action_name, action_type, dsl_json from admin.action_dsl where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
+    `select action_code, action_name, action_type, dsl_json from admin.action_dsl where page_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
     [featureCode, schemaName]
   );
 
   const skillCode = `skill_${featureCode}`;
   const { rows: skillRows } = await pool.query(
-    `select skill_name, module_code, feature_code from admin.skill_registry where skill_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
+    `select skill_name, module_code, feature_code from admin.skill_registry where skill_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}') or schema_scope = 'admin') and status = 'active' and deleted = false order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
     [skillCode, schemaName]
   );
   const skillName = skillRows[0]?.skill_name ?? featureCode;
@@ -374,7 +375,7 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
 
   // 真实物理列：demo_school 用模板库 demo_school，真实租户用自己的 schema
   const tableColumns = await loadPhysicalTableColumns(
-    schemaName === "demo_school" ? "demo_school" : schemaName,
+    schemaName === TEMPLATE_SCHEMA ? TEMPLATE_SCHEMA : schemaName,
     collectPrimaryTables(apiDsls),
   );
   const businessEventRelations = await loadBusinessEventRelations(schemaName, featureCode);
@@ -396,11 +397,11 @@ export async function syncSkillMd(schemaName: string, featureCode: string): Prom
   });
 
   try {
-    if (schemaName === "demo_school") {
+    if (schemaName === TEMPLATE_SCHEMA) {
       // 默认基线：只更新共享的 demo_school 行
       await pool.query(
         `update admin.skill_registry set skill_md_content = $1, updated_at = now()
-         where skill_code = $2 and schema_scope = 'tenant' and schema_name = 'demo_school' and status = 'active' and deleted = false`,
+         where skill_code = $2 and schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and status = 'active' and deleted = false`,
         [content, skillCode]
       );
       return;

@@ -239,41 +239,49 @@ async function findPayOrderIndex(outTradeNo: string) {
 
 async function fulfillMallOrder(schemaName: string, client: { query: typeof pool.query }, order: Row, payData: Row) {
   const orderId = str(order.id);
-  if (String(order.fulfillment_status) === "SUCCESS" && order.contract_id && order.funds_change_history_id) {
-    return { orderId, idempotent: true, contractId: order.contract_id, fundsId: order.funds_change_history_id };
+  // Re-read the order with FOR UPDATE to get the latest committed state.
+  // This prevents stale-data issues when callers (e.g. reconcileMallOrder) pass a snapshot read outside the transaction.
+  const { rows: freshRows } = await client.query(`select * from ${table(schemaName, "mall_order")} where id = $1 and deleted = false for update`, [orderId]);
+  const freshOrder = freshRows[0] ?? order;
+  if (String(freshOrder.fulfillment_status) === "SUCCESS" && freshOrder.contract_id && freshOrder.funds_change_history_id) {
+    return { orderId, idempotent: true, contractId: freshOrder.contract_id, fundsId: freshOrder.funds_change_history_id };
   }
   try {
     await client.query(`update ${table(schemaName, "mall_order")} set fulfillment_status = 'PROCESSING', fulfillment_error = null, updated_at = now() where id = $1`, [orderId]);
-    const { rows: goodsRows } = await client.query(`select * from ${table(schemaName, "mall_goods")} where id = $1`, [order.goods_id]);
+    const { rows: goodsRows } = await client.query(`select * from ${table(schemaName, "mall_goods")} where id = $1`, [freshOrder.goods_id]);
     const goods = goodsRows[0] ?? {};
     const productId = str(goods.product_id, "");
     if (!productId) throw new Error("商城商品未绑定产品，无法生成合同");
-    let contractId = str(order.contract_id, "");
+    let contractId = str(freshOrder.contract_id, "");
     if (!contractId) {
+      // NOTE: executeCommandDsl runs in its own transaction, so if the caller's transaction
+      // rolls back after this point, the contract persists as an orphan. On retry, the
+      // fresh re-read above will have contract_id = null (rolled back), so a duplicate may be
+      // created. Mitigation: the fulfillment_status guard + redis lock on callers serializes retries.
       const contractResult = await executeCommandDsl(schemaName, { operation: "command", command: "contract.create", ruleCode: "contract_create_rule" } as never, {
         __approvalApproved: true,
         data: {
-          student_id: order.student_id,
+          student_id: freshOrder.student_id,
           product_id: productId,
-          total_amount: order.pay_amount,
+          total_amount: freshOrder.pay_amount,
           paid_amount: 0,
           contract_type: "MALL",
           sign_time: new Date().toISOString(),
-          contract_products: [{ product_id: productId, plan_real_amount: order.pay_amount, total_amount: order.pay_amount }],
+          contract_products: [{ product_id: productId, plan_real_amount: freshOrder.pay_amount, total_amount: freshOrder.pay_amount }],
         },
       }) as Row;
       const contract = jsonObject(contractResult.contract);
       contractId = str(contract.id, `contract_mall_${Date.now()}`);
       await client.query(`update ${table(schemaName, "mall_order")} set contract_id = $2, callback_payload = callback_payload || $3::jsonb, updated_at = now() where id = $1`, [orderId, contractId, JSON.stringify({ fulfillmentContractId: contractId })]);
     }
-    let fundsId = str(order.funds_change_history_id, "");
+    let fundsId = str(freshOrder.funds_change_history_id, "");
     if (!fundsId) {
       const fundsResult = await executeCommandDsl(schemaName, { operation: "command", command: "funds.create", ruleCode: "funds_create_rule" } as never, {
         __approvalApproved: true,
         data: {
           contract_id: contractId,
-          student_id: order.student_id,
-          transaction_amount: order.pay_amount,
+          student_id: freshOrder.student_id,
+          transaction_amount: freshOrder.pay_amount,
           transaction_time: new Date().toISOString(),
           pay_way_config_id: "pay_wechat",
           funds_type: "CONTRACT_PAY",
@@ -926,7 +934,7 @@ export async function createMallOrder(schemaName: string, params: Row) {
       }
       const orderId = randomUUID();
       const orderNo = `MO${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}${Math.floor(Math.random() * 1000).toString().padStart(3, "0")}`;
-      const originalAmount = num(params.pay_amount, Number(activity?.activity_price ?? goods.sale_price ?? 0) * quantity);
+      const originalAmount = Math.round(Number(activity?.activity_price ?? goods.sale_price ?? 0) * quantity * 100) / 100;
       const coupon = await reserveCouponForOrder(client, schemaName, {
         couponClaimId: str(params.coupon_claim_id ?? params.couponClaimId, ""),
         couponCode: str(params.coupon_code ?? params.couponCode, ""),
@@ -1029,18 +1037,17 @@ export async function retryMallOrderFulfillment(schemaName: string, params: Row)
 export async function reconcileMallOrder(schemaName: string, params: Row) {
   const orderId = str(params.order_id ?? params.orderId ?? params.id, "");
   if (!orderId) throw Object.assign(new Error("缺少订单ID"), { statusCode: 400 });
-  const { rows } = await pool.query(`select * from ${table(schemaName, "mall_order")} where id = $1 and deleted = false limit 1`, [orderId]);
-  const order = rows[0];
-  if (!order) throw Object.assign(new Error("订单不存在"), { statusCode: 404 });
-  const ext = jsonObject(order.ext_json);
-  const bindingId = str(params.binding_id ?? params.bindingId ?? ext.bindingId, "wx_bind_public");
-  const payConfig = await getPayConfig(schemaName, bindingId);
+  const ext_bindingId = str(params.binding_id ?? params.bindingId, "");
+  const payConfig = await getPayConfig(schemaName, ext_bindingId || "wx_bind_public");
   const query = await wechatPayRequest("GET", `/v3/pay/transactions/out-trade-no/${encodeURIComponent(orderId)}?mchid=${encodeURIComponent(str(payConfig.mchid))}`, undefined, payConfig);
   if (String(query.trade_state) === "SUCCESS") {
     return withClient(async (client) => {
       await client.query("begin");
       try {
-        const result = await fulfillMallOrder(schemaName, client, order, query);
+        const { rows: orderRows } = await client.query(`select * from ${table(schemaName, "mall_order")} where id = $1 and deleted = false for update`, [orderId]);
+        const freshOrder = orderRows[0];
+        if (!freshOrder) throw Object.assign(new Error("订单不存在"), { statusCode: 404 });
+        const result = await fulfillMallOrder(schemaName, client, freshOrder, query);
         await client.query("commit");
         return { reconciled: true, result, wechatPay: query };
       } catch (error) {

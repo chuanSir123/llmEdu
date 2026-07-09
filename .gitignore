@@ -11,3 +11,4 @@ coverage/
 *.log
 data/uploads/*
 !data/uploads/.gitkeep
+server_log.txt

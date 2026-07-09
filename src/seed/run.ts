@@ -6,6 +6,8 @@ import { env } from "../config/env.js";
 import { fillEmptySkillMd } from "../agent/skill-md.service.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
+import { CORE_BUSINESS_RULE_CODES } from "../common/dsl-constants.js";
 
 const seedDictionaryFields: Record<string, string> = {
   organization_type: "organization_type",
@@ -230,7 +232,7 @@ async function seedAdmin() {
   await upsert("admin.llm_config", "id", {
     id: "llm_demo_school",
     config_code: "demo_school_llm",
-    schema_name: "demo_school",
+    schema_name: TEMPLATE_SCHEMA,
     base_url: env.llm.baseUrl,
     api_key: env.llm.apiKey ?? "",
     model: env.llm.model,
@@ -241,7 +243,7 @@ async function seedAdmin() {
   });
   await upsert("admin.tenant_manage", "id", {
     id: "tenant_demo",
-    schema_name: "demo_school",
+    schema_name: TEMPLATE_SCHEMA,
     name: "小墨斗教育",
     status: "ACTIVE",
     student_limit: 1000,
@@ -322,7 +324,7 @@ async function seedAdmin() {
     await upsert("admin.tenant_module_subscription", "id", {
       id: id("sub_demo_school", module_code),
       tenant_id: "tenant_demo",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       module_code,
       enabled: true
     });
@@ -331,7 +333,7 @@ async function seedAdmin() {
     await upsert("admin.tenant_feature_subscription", "id", {
       id: id("feat_demo_school", page.feature),
       tenant_id: "tenant_demo",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       module_code: page.module,
       feature_code: page.feature,
       enabled: true
@@ -339,26 +341,25 @@ async function seedAdmin() {
   }
 
   for (const page of pages) {
-    await seedDsl("tenant", "demo_school", page);
+    await seedDsl("tenant", TEMPLATE_SCHEMA, page);
   }
 
   await upsert("admin.tenant_agent_config", "id", {
     id: "tac_demo",
-    schema_name: "demo_school",
+    schema_name: TEMPLATE_SCHEMA,
     agent_customization_enabled: true,
     preview_db_config: JSON.stringify({}),
     max_chat_rounds: 20
   });
 
-  const coreBusinessRuleCodes = new Set(["funds_create_rule", "charge_create_rule", "refund_create_rule", "contract_refund_rule", "course_create_rule", "course_time_validation_rule"]);
   for (const rule of businessRules) {
-    const ruleJson = coreBusinessRuleCodes.has(rule.rule_code)
+    const ruleJson = CORE_BUSINESS_RULE_CODES.has(rule.rule_code)
       ? { ...rule.rule_json, coreRule: true, locked: true, aiCustomizable: false }
       : rule.rule_json;
     await upsert("admin.business_rule", "id", {
       id: id("rule_demo", rule.rule_code),
       schema_scope: "tenant",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       rule_code: rule.rule_code,
       rule_name: rule.rule_name,
       rule_json: JSON.stringify(ruleJson),
@@ -369,7 +370,7 @@ async function seedAdmin() {
   await pool.query(
     `update admin.business_rule
      set deleted = true, updated_at = now()
-     where schema_scope = 'tenant' and schema_name = 'demo_school'
+     where schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'
        and deleted = false
        and not (rule_code = any($1::text[]))`,
     [businessRules.map((rule) => rule.rule_code)]
@@ -398,7 +399,7 @@ async function seedAdmin() {
     await upsert("admin.print_template", "id", {
       id: id("print_demo", template.template_code),
       schema_scope: "tenant",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       template_code: template.template_code,
       template_name: template.template_name,
       dsl_json: JSON.stringify(template.dsl_json),
@@ -410,7 +411,7 @@ async function seedAdmin() {
     await upsert("admin.import_dsl", "id", {
       id: id("import_demo", config.importCode),
       schema_scope: "tenant",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       import_code: config.importCode,
       import_name: config.importName,
       dsl_json: JSON.stringify(config.dsl),
@@ -426,7 +427,7 @@ async function seedAdmin() {
     await upsert("admin.page_dsl", "id", {
       id: id("page_demo", extra.pageCode),
       schema_scope: "tenant",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       module_code: extra.module,
       feature_code: extra.feature,
       page_code: extra.pageCode,
@@ -443,7 +444,7 @@ async function seedAdmin() {
     await upsert("admin.action_dsl", "id", {
       id: id("action_demo", action.actionCode),
       schema_scope: "tenant",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       module_code: action.module,
       feature_code: action.feature,
       page_code: action.pageCode,
@@ -460,7 +461,7 @@ async function seedAdmin() {
     await upsert("admin.action_dsl", "id", {
       id: id("modal_demo", modal.actionCode),
       schema_scope: "tenant",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       module_code: modal.module,
       feature_code: modal.feature,
       page_code: modal.pageCode,
@@ -477,7 +478,7 @@ async function seedAdmin() {
     await upsert("admin.api_dsl", "id", {
       id: id("api_demo", option.apiCode),
       schema_scope: "tenant",
-      schema_name: "demo_school",
+      schema_name: TEMPLATE_SCHEMA,
       module_code: option.module,
       feature_code: option.feature,
       api_code: option.apiCode,
@@ -536,7 +537,7 @@ async function ensureDemoSchoolDslVersions() {
   const items: Array<{ targetType: string; targetCode: string; snapshot: Record<string, unknown> }> = [];
   for (const source of sources) {
     const { rows } = await pool.query(
-      `select * from ${source.table} where schema_scope = 'tenant' and schema_name = 'demo_school' and status = 'active' and deleted = false`
+      `select * from ${source.table} where schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and status = 'active' and deleted = false`
     );
     for (const row of rows) {
       const snapshot = source.targetType === "skill"
@@ -549,12 +550,12 @@ async function ensureDemoSchoolDslVersions() {
   }
   await pool.query(
     `update admin.dsl_version set deleted = true, status = 'archived'
-     where schema_scope = 'tenant' and schema_name = 'demo_school' and target_type <> 'bundle' and deleted = false`
+     where schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and target_type <> 'bundle' and deleted = false`
   );
   await upsert("admin.dsl_version", "id", {
     id: id("ver_demo", "bundle_baseline"),
     schema_scope: "tenant",
-    schema_name: "demo_school",
+    schema_name: TEMPLATE_SCHEMA,
     target_type: "bundle",
     target_code: "baseline_demo_school",
     module_code: null,
@@ -670,7 +671,7 @@ function validateDemoBusinessSeed(rows: Array<[string, Record<string, unknown>[]
 }
 
 async function seedTenantData() {
-  const schema = "demo_school";
+  const schema = TEMPLATE_SCHEMA;
   const rows: Array<[string, Record<string, unknown>[]]> = [
     ["organization", [
       { id: "org_001", name: "小墨斗校区", organization_type: "HEAD", status: "ACTIVE" },
@@ -892,7 +893,7 @@ export async function seed() {
   await seedAdmin();
   await seedTenantData();
   try {
-    const count = await fillEmptySkillMd("demo_school");
+    const count = await fillEmptySkillMd(TEMPLATE_SCHEMA);
     console.log(`SKILL.md auto-generated: ${count} records filled`);
   } catch (err) {
     console.warn("SKILL.md auto-generation failed (non-blocking):", err instanceof Error ? err.message : err);

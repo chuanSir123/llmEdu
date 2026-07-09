@@ -11,6 +11,7 @@ export const env = {
   host: process.env.HOST ?? "127.0.0.1",
   port: Number(process.env.PORT ?? 3000),
   nodeEnv: process.env.NODE_ENV ?? "development",
+  templateSchema: process.env.TEMPLATE_SCHEMA ?? "demo_school",
   autoSeed: process.env.AUTO_SEED === "true" || (process.env.AUTO_SEED !== "false" && process.env.NODE_ENV !== "production"),
   llm: {
     baseUrl: process.env.LLM_BASE_URL ?? "",

@@ -3,6 +3,7 @@ import { callWithToolCalling } from "../llm.service.js";
 import { CLASSIFY_INTENT_TOOL, INTENT_SYSTEM_PROMPT_STATIC, INTENT_FEATURES_TEMPLATE, FALLBACK_INTENT_PROMPT } from "../prompts.js";
 import { formatSkillSummaryFromMd } from "../skill-md.service.js";
 import type { IntentResult, SkillSummary, HarnessStepResult } from "../types.js";
+import { TEMPLATE_SCHEMA } from "../../common/template-schema.js";
 
 export async function executeIntentClassification(
   userMessage: string,
@@ -57,6 +58,7 @@ export async function executeIntentClassification(
     } else {
       intent = parseTextIntent(result.content ?? "", summaries);
     }
+    intent = normalizeIntentAgainstExistingFeatures(intent, summaries);
 
     return {
       stepName: "intent_classification",
@@ -83,7 +85,7 @@ async function loadSkillSummaries(schemaName: string): Promise<SkillSummary[]> {
   const { rows } = await pool.query(
     `select skill_code, skill_name, feature_code, skill_md_content
      from admin.skill_registry
-     where (schema_scope = 'tenant' and schema_name = $1 or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+     where (schema_scope = 'tenant' and schema_name = $1 or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
        and status = 'active' and deleted = false
      order by module_code, feature_code`,
     [schemaName]
@@ -121,6 +123,51 @@ function parseTextIntent(content: string, summaries: SkillSummary[]): IntentResu
 function normalizeRelatedFeatureCodes(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map((item) => String(item).replace(/^skill_/, "").trim()).filter(Boolean))].slice(0, 5);
+}
+
+/**
+ * 把模型可能编造的功能编码归一到系统中真实存在的功能：
+ * "学员详情/详情页"不是独立功能，属于对应列表功能（student_detail → student_list）。
+ * 无法归一时保留原值，由校验层的目标存在性检查兜底报错。
+ */
+export function resolveExistingFeatureCode(
+  featureCode: string,
+  existingCodes: string[],
+): { featureCode: string; matched: boolean } {
+  if (!featureCode) return { featureCode, matched: false };
+  const codes = new Set(existingCodes);
+  if (codes.has(featureCode)) return { featureCode, matched: true };
+  const base = featureCode.replace(/_(detail|page|view|form|modal|edit|info)$/, "");
+  for (const candidate of [`${base}_list`, base, `${featureCode}_list`]) {
+    if (candidate && candidate !== featureCode && codes.has(candidate)) {
+      return { featureCode: candidate, matched: true };
+    }
+  }
+  const prefixMatches = existingCodes.filter((code) => code === base || code.startsWith(`${base}_`));
+  if (prefixMatches.length === 1) return { featureCode: prefixMatches[0], matched: true };
+  return { featureCode, matched: false };
+}
+
+function normalizeIntentAgainstExistingFeatures(intent: IntentResult, summaries: SkillSummary[]): IntentResult {
+  const existingCodes = summaries.map((s) => s.skill_code.replace(/^skill_/, "")).filter(Boolean);
+  let next = intent;
+  if (next.action === "modify" && next.featureCode) {
+    const resolved = resolveExistingFeatureCode(next.featureCode, existingCodes);
+    if (resolved.matched && resolved.featureCode !== next.featureCode) {
+      next = {
+        ...next,
+        featureCode: resolved.featureCode,
+        reason: `${next.reason}（编码 ${intent.featureCode} 不在功能列表中，已归一到现有功能 ${resolved.featureCode}）`.trim(),
+      };
+    }
+  }
+  if (next.relatedFeatureCodes && next.relatedFeatureCodes.length > 0) {
+    next = {
+      ...next,
+      relatedFeatureCodes: [...new Set(next.relatedFeatureCodes.map((code) => resolveExistingFeatureCode(code, existingCodes).featureCode))],
+    };
+  }
+  return next;
 }
 
 function emptyIntent(reason: string): IntentResult {

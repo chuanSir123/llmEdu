@@ -2,6 +2,7 @@ import { pool } from "../db/pool.js";
 import { executeGatewayApi } from "./api-executor.js";
 import { visibleActionCodes } from "../permission/permission.service.js";
 import type { SessionUser } from "../types.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 type ActionDslRow = {
   actionCode: string;
@@ -39,8 +40,10 @@ async function loadActionDsl(scope: "admin" | "tenant", actionCode: string, sche
     `select dsl_json from admin.action_dsl
      where action_code = $1 and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
-     order by case when schema_scope = $2 then 0 else 1 end
+         or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and $2 = 'tenant'))
+     order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0
+                    when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1
+                    else 2 end
      limit 1`,
     [actionCode, scope, schemaName ?? null]
   );
@@ -53,8 +56,10 @@ async function loadModalDsl(scope: "admin" | "tenant", modalCode: string, schema
     `select dsl_json from admin.action_dsl
      where action_code = $1 and action_type = 'modal' and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
-     order by case when schema_scope = $2 then 0 else 1 end
+         or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and $2 = 'tenant'))
+     order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0
+                    when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1
+                    else 2 end
      limit 1`,
     [modalCode, scope, schemaName ?? null]
   );

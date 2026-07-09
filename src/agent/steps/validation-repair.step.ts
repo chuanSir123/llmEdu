@@ -12,11 +12,12 @@ import { executeDiffs } from "../diff-executor.js";
 import { validateApiDslAgainstSchema } from "../../db/dsl-validator.js";
 import { BUSINESS_COMMAND_EVENT_MAP, KNOWN_BUSINESS_COMMANDS } from "../../gateway/business-event.service.js";
 import { SYSTEM_DICTIONARIES } from "../../dictionary.service.js";
+import { TEMPLATE_SCHEMA } from "../../common/template-schema.js";
+import { CORE_BUSINESS_RULE_CODES } from "../../common/dsl-constants.js";
+import { makeGetTableColumnsTool, makeGetDslContentTool, makeValidateDraftTool, runToolLoop } from "../agent-tools.js";
+import { completeDisplayDiffs } from "../diff-completion.js";
 
 const FIELD_RE = /^[a-z][a-z0-9_]{0,62}$/;
-const MAX_RETRIES = 3;
-const CORE_BUSINESS_RULE_CODES = new Set(["funds_create_rule", "charge_create_rule", "refund_create_rule", "contract_refund_rule", "course_create_rule", "course_time_validation_rule"]);
-const REPAIR_TIMEOUT_MS = 30000;
 
 export type ExistingPageActions = {
   toolbar: Set<string>;
@@ -42,26 +43,39 @@ export async function executeValidationRepair(
 ): Promise<HarnessStepResult<DslDiff[]>> {
   const start = Date.now();
   const inputSummary = `diffs_count=${diffs.length}`;
+  const policy = await loadTenantAgentPolicy(schemaName);
+  const { maxRepairRounds, repairTimeoutMs, maxToolCallsPerRepair } = policy.executionPolicy;
+  const deadlineAt = start + repairTimeoutMs;
 
   let currentDiffs = diffs;
   let lastErrors: string[] = [];
+  let prevErrorFingerprint = "";
+  let repairRoundsUsed = 0;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRepairRounds; attempt++) {
     const validation = await validate(currentDiffs, schemaName);
     if (validation.valid) {
       const summary = summarizeDiffs(validation.normalizedDiffs);
       return {
         stepName: "validation_repair",
         input_summary: inputSummary,
-        output_summary: `校验通过：${summary}`,
+        output_summary: `校验通过：${summary}（修复 ${repairRoundsUsed} 轮）`,
         duration_ms: Date.now() - start,
         data: validation.normalizedDiffs,
       };
     }
     lastErrors = validation.errors;
 
-    if (attempt >= MAX_RETRIES) break;
-    if (Date.now() - start > REPAIR_TIMEOUT_MS) {
+    // 卡死检测：上一轮修复后错误完全没变，说明模型没有收敛，继续烧轮次只是浪费 token
+    const fingerprint = errorFingerprint(validation.errors);
+    if (repairRoundsUsed > 0 && fingerprint === prevErrorFingerprint) {
+      lastErrors = [...validation.errors, "修复未收敛（连续两轮错误相同），提前终止"];
+      break;
+    }
+    prevErrorFingerprint = fingerprint;
+
+    if (attempt >= maxRepairRounds) break;
+    if (Date.now() > deadlineAt) {
       lastErrors.push("修正超时");
       break;
     }
@@ -72,7 +86,11 @@ export async function executeValidationRepair(
       continue;
     }
 
-    const repaired = await repair(currentDiffs, lastErrors, intent, context, schemaName, originalPrompt);
+    repairRoundsUsed += 1;
+    const repaired = await repair(currentDiffs, lastErrors, intent, context, schemaName, originalPrompt, {
+      maxToolCalls: maxToolCallsPerRepair,
+      deadlineAt,
+    });
     if (repaired.length > 0) {
       currentDiffs = repaired;
     }
@@ -81,11 +99,16 @@ export async function executeValidationRepair(
   return {
     stepName: "validation_repair",
     input_summary: inputSummary,
-    output_summary: `failed after ${MAX_RETRIES} repairs: ${lastErrors.join("; ")}`.substring(0, 500),
+    output_summary: `failed after ${repairRoundsUsed} repairs: ${lastErrors.join("; ")}`.substring(0, 500),
     duration_ms: Date.now() - start,
     data: currentDiffs,
     error: `校验失败: ${lastErrors.join("; ")}`,
   };
+}
+
+/** 错误集合指纹：排序去重后拼接，用于判断两轮之间是否有任何进展 */
+export function errorFingerprint(errors: string[]): string {
+  return [...new Set(errors.map((item) => item.trim()))].sort().join("\n");
 }
 
 async function deterministicPreRepair(diffs: DslDiff[], schemaName: string) {
@@ -142,11 +165,22 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
       .map((diff) => `${diff.targetCode}:${String(diff.fieldDef?.key ?? diff.field ?? "")}`)
   );
   const physicalFieldAdds = collectPhysicalFieldAdds(normalizedDiffs);
+  // 本批由 create_table / add_field 新建的物理表集合（豁免目标存在性检查）
+  const tableCreatedInBatch = collectTableCreatedInBatch(normalizedDiffs);
+  // 本批首次出现的页面/接口编码（豁免对应存在性检查，因为是本轮 create_feature / 伴生 create 产生的）
+  const pageCodesIntroducedInBatch = collectPageCodesIntroducedInBatch(normalizedDiffs);
+  const apiCodesIntroducedInBatch = collectApiCodesIntroducedInBatch(normalizedDiffs);
   const businessRuleResources: Array<{ targetCode: string; resource: Record<string, unknown> }> = [];
   const seenResourceWrites = new Set<string>();
   const toolbarWrites = new Map<string, string>();
   const existingPageActionCache = new Map<string, Promise<ExistingPageActions>>();
   const existingApiShapeCache = new Map<string, Promise<ExistingApiShape>>();
+  const pageExistsCache = new Map<string, Promise<boolean>>();
+  const apiExistsCache = new Map<string, Promise<boolean>>();
+  const tableExistsCache = new Map<string, Promise<boolean>>();
+  const similarPageCache = new Map<string, Promise<string[]>>();
+  const similarApiCache = new Map<string, Promise<string[]>>();
+  const similarTableCache = new Map<string, Promise<string[]>>();
   const getExistingPageActions = (pageCode: string) => {
     if (!existingPageActionCache.has(pageCode)) {
       existingPageActionCache.set(pageCode, loadExistingPageActions(schemaName, pageCode));
@@ -169,10 +203,57 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
     }
     return existingApiShapeCache.get(apiCode)!;
   };
+  const pageExists = (pageCode: string) => {
+    if (!pageExistsCache.has(pageCode)) {
+      pageExistsCache.set(pageCode, pageCodeExists(schemaName, pageCode));
+    }
+    return pageExistsCache.get(pageCode)!;
+  };
+  const apiExists = (apiCode: string) => {
+    if (!apiExistsCache.has(apiCode)) {
+      apiExistsCache.set(apiCode, apiCodeExists(schemaName, apiCode));
+    }
+    return apiExistsCache.get(apiCode)!;
+  };
+  const tableExists = (tableName: string) => {
+    if (!tableExistsCache.has(tableName)) {
+      tableExistsCache.set(tableName, physicalTableExists(schemaName, tableName));
+    }
+    return tableExistsCache.get(tableName)!;
+  };
+  const similarPageCodes = (pageCode: string) => {
+    if (!similarPageCache.has(pageCode)) {
+      similarPageCache.set(pageCode, findSimilarPageCodes(schemaName, pageCode));
+    }
+    return similarPageCache.get(pageCode)!;
+  };
+  const similarApiCodes = (apiCode: string) => {
+    if (!similarApiCache.has(apiCode)) {
+      similarApiCache.set(apiCode, findSimilarApiCodes(schemaName, apiCode));
+    }
+    return similarApiCache.get(apiCode)!;
+  };
+  const similarTableNames = (tableName: string) => {
+    if (!similarTableCache.has(tableName)) {
+      similarTableCache.set(tableName, findSimilarTableNames(schemaName, tableName));
+    }
+    return similarTableCache.get(tableName)!;
+  };
 
   for (const diff of normalizedDiffs) {
     if (!VALID_TARGET_TYPES.has(diff.targetType)) errors.push(`invalid targetType: ${diff.targetType}`);
     if (!VALID_OPS.has(diff.op)) errors.push(`invalid op: ${diff.op}`);
+    errors.push(...await validateTargetExists(diff, schemaName, {
+      tableCreatedInBatch,
+      pageCodesIntroducedInBatch,
+      apiCodesIntroducedInBatch,
+      pageExists,
+      apiExists,
+      tableExists,
+      similarPageCodes,
+      similarApiCodes,
+      similarTableNames,
+    }));
     if (["modify", "create_table", "create_import", "create_report", "create_feature", "create_approval_flow", "create_print_template", "create_business_rule", "create_dictionary_item", "create_business_event_listener"].includes(diff.op)) {
       const resourceKey = `${diff.targetType}:${diff.targetCode}:${diff.op}`;
       if (seenResourceWrites.has(resourceKey)) {
@@ -584,8 +665,8 @@ async function loadExistingPageActions(schemaName: string, pageCode: string): Pr
   const { rows } = await pool.query(
     `select dsl_json from admin.page_dsl
      where page_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
     [pageCode, schemaName]
   );
   const dsl = rows[0]?.dsl_json;
@@ -627,7 +708,7 @@ async function collectExistingActionModalFields(schemaName: string, pageCode: st
      WHERE page_code = $1
        AND action_type = 'open_modal'
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = '${TEMPLATE_SCHEMA}'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [pageCode, schemaName]
   );
@@ -643,7 +724,7 @@ async function collectExistingActionModalFields(schemaName: string, pageCode: st
     `SELECT dsl_json FROM admin.action_dsl
      WHERE action_code = ANY($1)
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = '${TEMPLATE_SCHEMA}'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [[...modalCodes], schemaName]
   );
@@ -677,8 +758,8 @@ async function loadExistingApiShape(schemaName: string, apiCode: string): Promis
   const { rows } = await pool.query(
     `select dsl_json from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
     [apiCode, schemaName]
   );
   const dsl = rows[0]?.dsl_json;
@@ -881,8 +962,8 @@ async function resolveApiTable(apiCode: string, schemaName: string, diffs: DslDi
   const { rows } = await pool.query(
     `select dsl_json from admin.api_dsl
      where api_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
     [apiCode, schemaName]
   );
   const dsl = rows[0]?.dsl_json as Record<string, unknown> | undefined;
@@ -898,6 +979,193 @@ async function physicalColumnExists(schemaName: string, tableName: string, field
   return rows.length > 0;
 }
 
+async function pageCodeExists(schemaName: string, pageCode: string): Promise<boolean> {
+  if (!FIELD_RE.test(pageCode)) return false;
+  const { rows } = await pool.query(
+    `select 1 from admin.page_dsl
+     where page_code = $1 and status = 'active' and deleted = false
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     limit 1`,
+    [pageCode, schemaName]
+  );
+  return rows.length > 0;
+}
+
+async function apiCodeExists(schemaName: string, apiCode: string): Promise<boolean> {
+  if (!FIELD_RE.test(apiCode.replace(/\./g, "_"))) return false;
+  const { rows } = await pool.query(
+    `select 1 from admin.api_dsl
+     where api_code = $1 and status = 'active' and deleted = false
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     limit 1`,
+    [apiCode, schemaName]
+  );
+  return rows.length > 0;
+}
+
+async function physicalTableExists(schemaName: string, tableName: string): Promise<boolean> {
+  if (!FIELD_RE.test(tableName)) return false;
+  const { rows } = await pool.query(
+    `select 1 from information_schema.tables where table_schema = $1 and table_name = $2 limit 1`,
+    [schemaName, tableName]
+  );
+  return rows.length > 0;
+}
+
+const SIMILAR_SUFFIXES = /_(detail|page|view|form|modal|edit|info|record|list)$/i;
+
+/** 推断详情/记录类编码归属的列表功能（student_detail → student_list） */
+function inferListCounterpart(code: string): string {
+  if (!code) return "";
+  if (code.endsWith("_detail") || code.endsWith("_page") || code.endsWith("_view")) {
+    const base = code.replace(/_(detail|page|view)$/, "");
+    return base ? `${base}_list` : "";
+  }
+  if (SIMILAR_SUFFIXES.test(code)) return code.replace(SIMILAR_SUFFIXES, "");
+  return "";
+}
+
+async function findSimilarPageCodes(schemaName: string, pageCode: string): Promise<string[]> {
+  const counterpart = inferListCounterpart(pageCode);
+  if (counterpart && counterpart !== pageCode && (await pageCodeExists(schemaName, counterpart))) {
+    return [counterpart];
+  }
+  const base = counterpart || pageCode.replace(SIMILAR_SUFFIXES, "");
+  const { rows } = await pool.query(
+    `select page_code from admin.page_dsl
+     where page_code like $1 and page_code <> $2 and status = 'active' and deleted = false
+       and ((schema_scope = 'tenant' and schema_name = $3) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by page_code limit 5`,
+    [`${base}%`, pageCode, schemaName]
+  ).catch(() => ({ rows: [] as Array<{ page_code: string }> }));
+  return (rows as Array<{ page_code: string }>).map((row) => String(row.page_code)).filter(Boolean);
+}
+
+async function findSimilarApiCodes(schemaName: string, apiCode: string): Promise<string[]> {
+  const basePage = apiCode.split(".")[0] ?? "";
+  const counterpart = inferListCounterpart(basePage);
+  if (counterpart && counterpart !== basePage) {
+    const suffix = apiCode.slice(basePage.length);
+    const candidate = `${counterpart}${suffix}`;
+    if (await apiCodeExists(schemaName, candidate)) return [candidate];
+  }
+  return [];
+}
+
+async function findSimilarTableNames(schemaName: string, tableName: string): Promise<string[]> {
+  const counterpart = inferListCounterpart(tableName);
+  if (counterpart && counterpart !== tableName && (await physicalTableExists(schemaName, counterpart))) {
+    return [counterpart];
+  }
+  const base = counterpart || tableName.replace(SIMILAR_SUFFIXES, "");
+  const { rows } = await pool.query(
+    `select table_name from information_schema.tables
+     where table_schema = $1 and table_name like $2 and table_name <> $3
+     order by table_name limit 5`,
+    [schemaName, `${base}%`, tableName]
+  ).catch(() => ({ rows: [] as Array<{ table_name: string }> }));
+  return (rows as Array<{ table_name: string }>).map((row) => String(row.table_name)).filter(Boolean);
+}
+
+function collectTableCreatedInBatch(diffs: DslDiff[]): Set<string> {
+  const result = new Set<string>();
+  for (const diff of diffs) {
+    if (diff.targetType !== "db_schema") continue;
+    if (diff.op === "create_table") {
+      const tableName = String(diff.resourceDef?.tableName ?? diff.targetCode ?? "");
+      if (tableName && FIELD_RE.test(tableName)) result.add(tableName);
+    }
+  }
+  return result;
+}
+
+function collectPageCodesIntroducedInBatch(diffs: DslDiff[]): Set<string> {
+  const result = new Set<string>();
+  for (const diff of diffs) {
+    if (diff.targetType === "page_dsl" && diff.op === "modify" && diff.modifiedDslJson && typeof diff.modifiedDslJson === "object" && !Array.isArray(diff.modifiedDslJson)) {
+      const pageCode = String((diff.modifiedDslJson as Record<string, unknown>).pageCode ?? diff.targetCode ?? "");
+      if (pageCode && FIELD_RE.test(pageCode)) result.add(pageCode);
+    }
+    if (diff.targetType === "feature_registry" && diff.op === "create_feature") {
+      const pageCode = String(diff.resourceDef?.pageCode ?? "");
+      if (pageCode && FIELD_RE.test(pageCode)) result.add(pageCode);
+    }
+  }
+  return result;
+}
+
+function collectApiCodesIntroducedInBatch(diffs: DslDiff[]): Set<string> {
+  const result = new Set<string>();
+  for (const diff of diffs) {
+    if (diff.targetType === "api_dsl" && diff.op === "modify" && diff.modifiedDslJson && typeof diff.modifiedDslJson === "object" && !Array.isArray(diff.modifiedDslJson)) {
+      const apiCode = String((diff.modifiedDslJson as Record<string, unknown>).apiCode ?? diff.targetCode ?? "");
+      if (apiCode && FIELD_RE.test(apiCode.replace(/\./g, "_"))) result.add(apiCode);
+    }
+  }
+  return result;
+}
+
+type TargetExistsContext = {
+  tableCreatedInBatch: Set<string>;
+  pageCodesIntroducedInBatch: Set<string>;
+  apiCodesIntroducedInBatch: Set<string>;
+  pageExists: (pageCode: string) => Promise<boolean>;
+  apiExists: (apiCode: string) => Promise<boolean>;
+  tableExists: (tableName: string) => Promise<boolean>;
+  similarPageCodes: (pageCode: string) => Promise<string[]>;
+  similarApiCodes: (apiCode: string) => Promise<string[]>;
+  similarTableNames: (tableName: string) => Promise<string[]>;
+};
+
+/**
+ * 目标存在性确定性兜底：增量 op 的 targetCode（页面/接口）与 db_schema add_field 的物理表
+ * 必须在真实库中已存在，或本轮本批创建。详情类编码（student_detail）会被引导到对应列表功能。
+ */
+async function validateTargetExists(
+  diff: DslDiff,
+  _schemaName: string,
+  ctx: TargetExistsContext,
+): Promise<string[]> {
+  const errors: string[] = [];
+  const INCREMENTAL_PAGE_OPS = new Set(["add_column", "remove_column", "reorder_columns", "change_column", "add_filter", "remove_filter", "add_toolbar", "add_row_action", "add_modal_field", "remove_modal_field"]);
+  const INCREMENTAL_API_OPS = new Set(["add_select_field", "remove_select_field", "add_allowed_field", "add_join", "add_where", "add_sort", "add_action"]);
+
+  if (diff.targetType === "page_dsl" && INCREMENTAL_PAGE_OPS.has(diff.op)) {
+    const pageCode = diff.targetCode;
+    if (pageCode && !ctx.pageCodesIntroducedInBatch.has(pageCode) && !(await ctx.pageExists(pageCode))) {
+      const suggestions = await ctx.similarPageCodes(pageCode);
+      const hint = suggestions.length > 0
+        ? `；相似已存在页面：${suggestions.join("、")}（详情/记录类需求应使用对应列表功能编码，如 student_detail → student_list）`
+        : "（详情类需求应使用对应列表功能编码，如 student_detail → student_list）";
+      errors.push(`页面不存在: ${pageCode}，增量变更的目标页面必须是已存在页面${hint}`);
+    }
+  }
+
+  if (diff.targetType === "api_dsl" && INCREMENTAL_API_OPS.has(diff.op)) {
+    const apiCode = diff.targetCode;
+    if (apiCode && !ctx.apiCodesIntroducedInBatch.has(apiCode) && !(await ctx.apiExists(apiCode))) {
+      const suggestions = await ctx.similarApiCodes(apiCode);
+      const hint = suggestions.length > 0
+        ? `；相似已存在接口：${suggestions.join("、")}`
+        : "（详情/记录类接口应使用对应列表功能，如 student_detail.detail → student_list.detail）";
+      errors.push(`接口不存在: ${apiCode}，增量变更的目标接口必须是已存在接口${hint}`);
+    }
+  }
+
+  if (diff.targetType === "db_schema" && diff.op === "add_field") {
+    const tableName = String(diff.resourceDef?.tableName ?? diff.targetCode ?? "");
+    if (tableName && !ctx.tableCreatedInBatch.has(tableName) && !(await ctx.tableExists(tableName))) {
+      const suggestions = await ctx.similarTableNames(tableName);
+      const hint = suggestions.length > 0
+        ? `；相似已存在表：${suggestions.join("、")}（应给真实事实表加字段，不要假设详情表）`
+        : "（应给当前功能对应的事实表加字段，不要假设 student_detail 这类不存在的表）";
+      errors.push(`物理表不存在: ${tableName}，db_schema add_field 的目标表必须真实存在${hint}`);
+    }
+  }
+
+  return errors;
+}
+
 async function loadPhysicalColumns(schemaName: string, tableName: string) {
   if (!FIELD_RE.test(tableName)) return [];
   const { rows } = await pool.query(
@@ -908,10 +1176,13 @@ async function loadPhysicalColumns(schemaName: string, tableName: string) {
 }
 
 async function normalizeRelatedDiffs(diffs: DslDiff[], schemaName: string): Promise<DslDiff[]> {
-  const expanded: DslDiff[] = [...diffs];
+  // 与 diff-executor.expandRelatedDiffs 保持一致：先做反向显示补全，
+  // 校验阶段看到的 diff 集合与执行阶段一致，避免"校验通过但字段不显示"
+  const sourceDiffs = [...diffs, ...(await completeDisplayDiffs(diffs, schemaName))];
+  const expanded: DslDiff[] = [...sourceDiffs];
   const hasDiff = (targetType: DslDiff["targetType"], targetCode: string, op: DslDiff["op"], field?: string) =>
     expanded.some((diff) => diff.targetType === targetType && diff.targetCode === targetCode && diff.op === op && (!field || String(diff.fieldDef?.field ?? diff.fieldDef?.key ?? diff.field ?? "") === field));
-  for (const diff of diffs) {
+  for (const diff of sourceDiffs) {
     if (diff.targetType !== "page_dsl") continue;
     const field = String(diff.fieldDef?.key ?? diff.field ?? "");
     if (!field) continue;
@@ -950,7 +1221,7 @@ async function discoverPageModalCodes(pageCode: string, schemaName: string): Pro
      WHERE page_code = $1
        AND action_type = 'open_modal'
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = '${TEMPLATE_SCHEMA}'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [pageCode, schemaName]
   );
@@ -997,29 +1268,54 @@ async function repair(
   context: ContextResult,
   schemaName: string,
   originalPrompt: string,
+  budget: { maxToolCalls: number; deadlineAt: number },
 ): Promise<DslDiff[]> {
   const repairContext = buildRepairContext(originalDiffs, errors, intent, context);
   const repairPrompt = buildRepairUserPrompt(errors, originalPrompt, repairContext);
+  const messages = [
+    {
+      role: "system",
+      content: [
+        "你是一个 DSL 修正助手。请根据校验错误信息修正上一次的输出。",
+        "字段不存在时，不要编造同义字段或切到无关表；必须只使用真实表名、真实字段名。",
+        "报表修正时先确定业务事实表，再从事实表选择 dimensions/metrics/filters；名称展示用 *_id 的 displayKey/外键展示能力，不要把 name 字段强行写入事实表。",
+        "最后一条用户消息会包含 PROBLEMATIC_DIFFS、SKILL_MD_CONTEXT、TABLE_COLUMNS 和 DSL_SUMMARY。",
+        "如果上下文不足以确认表结构或当前 DSL 内容，先调用 get_table_columns / get_dsl_content 查询真实状态；",
+        "提交前可以调用 validate_draft_diffs 自查草稿；确认无误后调用 plan_changes 提交最终 diffs。",
+      ].join("\n"),
+    },
+    { role: "assistant", content: JSON.stringify({ diffs: originalDiffs }) },
+    { role: "user", content: repairPrompt },
+  ];
 
+  // 工具循环模式（参考 Claude Code）：模型可查真实表结构、读当前 DSL、干跑校验自查，再提交
   try {
-    const result = await callWithToolCalling({
+    const loop = await runToolLoop({
       schemaName,
-      messages: [
-        {
-          role: "system",
-          content: [
-            "你是一个 DSL 修正助手。请根据校验错误信息修正上一次的输出。",
-            "字段不存在时，不要编造同义字段或切到无关表；必须只使用已提供的 SKILL.md 和数据库表结构中的真实表名、真实字段名。",
-            "报表修正时先确定业务事实表，再从事实表选择 dimensions/metrics/filters；名称展示用 *_id 的 displayKey/外键展示能力，不要把 name 字段强行写入事实表。",
-            "最后一条用户消息会包含 PROBLEMATIC_DIFFS、SKILL_MD_CONTEXT、TABLE_COLUMNS 和 DSL_SUMMARY；这些是本次修正的唯一可信上下文。",
-          ].join("\n"),
-        },
-        { role: "assistant", content: JSON.stringify({ diffs: originalDiffs }) },
-        { role: "user", content: repairPrompt },
+      messages,
+      tools: [
+        makeGetTableColumnsTool(schemaName),
+        makeGetDslContentTool(schemaName),
+        makeValidateDraftTool(async (draft) => {
+          const result = await validate(draft as DslDiff[], schemaName);
+          return { valid: result.valid, errors: result.errors };
+        }),
       ],
-      tools: [PLAN_CHANGES_TOOL],
+      finalTool: PLAN_CHANGES_TOOL,
+      maxToolCalls: budget.maxToolCalls,
+      deadlineAt: budget.deadlineAt,
     });
+    if (loop.finalArguments) {
+      const diffs = parsePlanDiffsFromToolArguments(loop.finalArguments);
+      if (diffs.length > 0) return diffs;
+    }
+  } catch {
+    // tool loop failed, fall back to single-shot repair below
+  }
 
+  // 单次生成兜底（模型不支持多轮工具调用或循环异常时仍可修复）
+  try {
+    const result = await callWithToolCalling({ schemaName, messages, tools: [PLAN_CHANGES_TOOL] });
     if (result.type === "tool_call" && result.functionCall) {
       const diffs = parsePlanDiffsFromToolArguments(result.functionCall.arguments);
       if (diffs.length > 0) return diffs;

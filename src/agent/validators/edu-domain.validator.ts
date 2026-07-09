@@ -1,15 +1,10 @@
 import type { DslDiff, TenantAgentPolicy } from "../types.js";
-
-const SYSTEM_FIELDS = new Set(["id", "created_at", "updated_at", "deleted", "deleted_at"]);
-const PHONE_HINTS = ["phone", "mobile", "tel", "手机号", "电话", "联系电话"];
-const MONEY_HINTS = ["amount", "fee", "price", "balance", "tuition", "payment", "refund", "arrears", "金额", "费用", "学费", "余额", "欠费", "收款", "退款"];
-const DATE_HINTS = ["date", "birthday", "birth_date", "日期", "生日"];
-const TIME_HINTS = ["time", "上课时间", "时间"];
-const COUNT_HINTS = ["count", "hours", "课时", "次数", "数量"];
+import { SYSTEM_FIELD_SET as SYSTEM_FIELDS, SAFE_DATA_PERMISSION_SET } from "../../common/dsl-constants.js";
+import { PHONE_HINTS, MONEY_HINTS, DATE_HINTS, TIME_HINTS, COUNT_HINTS } from "../../common/field-type.js";
 const OVERWRITE_STRATEGIES = new Set(["upsert", "overwrite", "replace", "merge"]);
 const FIELD_RE = /^[a-z][a-z0-9_]{0,62}$/;
 const ROLE_CODE_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
-const SAFE_DATA_PERMISSIONS = new Set(["self_only", "own_courses", "own_students", "own_organization", "organization_or_sub"]);
+const SAFE_DATA_PERMISSIONS = SAFE_DATA_PERMISSION_SET;
 const ALL_DATA_PERMISSION = "all";
 const PAGE_PERMISSIONS = new Set(["read", "all", "none"]);
 const FIELD_PERMISSIONS = new Set(["visible", "readonly", "hidden"]);

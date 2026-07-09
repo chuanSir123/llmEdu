@@ -1,8 +1,9 @@
 import { pool, withClient } from "./pool.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
-const tenantSchemas = ["demo_school"];
+const tenantSchemas = [TEMPLATE_SCHEMA];
 
 async function exec(sql: string) {
   await pool.query(sql);
@@ -894,15 +895,24 @@ export async function migrate() {
 
   await exec(`ALTER TABLE IF EXISTS admin.llm_config ADD COLUMN IF NOT EXISTS schema_name text`);
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_config_schema_code ON admin.llm_config(schema_name, config_code) WHERE schema_name IS NOT NULL`);
+  // LLM 请求超时/重试可按租户配置，替代代码里写死的 120s / 3 次
+  await exec(`ALTER TABLE IF EXISTS admin.llm_config ADD COLUMN IF NOT EXISTS request_timeout_ms int`);
+  await exec(`ALTER TABLE IF EXISTS admin.llm_config ADD COLUMN IF NOT EXISTS max_retries int`);
+
+  // AI 定制迭代预算按租户可配（外层方案轮次/内层修复轮次/修复超时/单轮工具调用数）
+  await exec(`ALTER TABLE IF EXISTS admin.tenant_agent_config ADD COLUMN IF NOT EXISTS execution_policy jsonb not null default '{}'`);
 
   // 去掉 api_key 加密：迁移到明文列，方便直接改库调试
   await exec(`ALTER TABLE IF EXISTS admin.llm_config ADD COLUMN IF NOT EXISTS api_key text`);
-  await exec(`
-    UPDATE admin.llm_config
-    SET api_key = convert_from(decode(api_key_cipher, 'base64'), 'UTF8')
-    WHERE (api_key IS NULL OR api_key = '')
-      AND coalesce(api_key_cipher, '') <> ''
-  `).catch(() => undefined);
+  const cipherExists = await pool.query(`SELECT 1 FROM information_schema.columns WHERE table_schema = 'admin' AND table_name = 'llm_config' AND column_name = 'api_key_cipher'`);
+  if (cipherExists.rowCount && cipherExists.rowCount > 0) {
+    await exec(`
+      UPDATE admin.llm_config
+      SET api_key = convert_from(decode(api_key_cipher, 'base64'), 'UTF8')
+      WHERE (api_key IS NULL OR api_key = '')
+        AND coalesce(api_key_cipher, '') <> ''
+    `);
+  }
   await exec(`ALTER TABLE IF EXISTS admin.llm_config DROP COLUMN IF EXISTS api_key_cipher`);
   await exec(`ALTER TABLE IF EXISTS admin.llm_config DROP COLUMN IF EXISTS api_key_masked`);
 

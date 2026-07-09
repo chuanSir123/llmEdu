@@ -10,19 +10,26 @@ export type HarnessRiskAssessment = {
   errors: string[];
 };
 
+const MEDIUM_RISK_TARGET_TYPES = new Set<string>(["import_dsl", "report_dsl"]);
+
 export function evaluateHarnessRisk(diffs: DslDiff[], policy: TenantAgentPolicy): HarnessRiskAssessment {
   const highRiskDiffs = diffs.flatMap((diff) => {
     const reason = highRiskReason(diff);
     return reason ? [{ targetCode: diff.targetCode, reason }] : [];
   });
   const hasHighRisk = highRiskDiffs.length > 0;
-  const hasMediumRisk = diffs.some((diff) => ["import_dsl", "report_dsl"].includes(diff.targetType));
-  const requiresManualReview = false;
-  const requiresConfirmation = false;
+  const hasMediumRisk = diffs.some((diff) => MEDIUM_RISK_TARGET_TYPES.has(diff.targetType));
+  const level: HarnessRiskLevel = hasHighRisk ? "high" : hasMediumRisk ? "medium" : "low";
+  // 由租户策略驱动：requireAdminReview / riskPolicy=manual 时高风险变更需要平台审核；
+  // riskPolicy=confirm 时非低风险变更需要用户确认。默认 auto 策略保持原有全自动行为。
+  const requiresManualReview =
+    hasHighRisk && (policy.publishPolicy.requireAdminReview || policy.riskPolicy === "manual");
+  const requiresConfirmation =
+    level !== "low" && (policy.riskPolicy === "confirm" || policy.riskPolicy === "manual");
   const errors: string[] = [];
 
   return {
-    level: hasHighRisk ? "high" : hasMediumRisk ? "medium" : "low",
+    level,
     highRiskDiffs,
     requiresConfirmation,
     requiresManualReview,

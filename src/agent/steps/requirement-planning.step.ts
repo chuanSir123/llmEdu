@@ -1,5 +1,6 @@
 import { callWithToolCalling } from "../llm.service.js";
 import type { ChangeCapability, ChangeCapabilityType, ChangePlan, ContextResult, HarnessStepResult, IntentResult } from "../types.js";
+import { TEMPLATE_SCHEMA } from "../../common/template-schema.js";
 
 const CAPABILITY_TYPES: ChangeCapabilityType[] = [
   "add_field",
@@ -72,7 +73,7 @@ export async function executeRequirementPlanning(
   userMessage: string,
   intent: IntentResult,
   context: ContextResult,
-  schemaName = "demo_school",
+  schemaName = TEMPLATE_SCHEMA,
   planner: RequirementPlanner = planRequirementWithLlm,
 ): Promise<HarnessStepResult<ChangePlan>> {
   const start = Date.now();

@@ -1,4 +1,7 @@
-// 静态规则块（无占位符，全局可缓存，必须放在消息序列最前面以命中前缀缓存）
+import { DATA_PERMISSION_ENUM_TEXT } from "../common/dsl-constants.js";
+
+// 静态规则块（无占位符，全局可缓存，必须放在消息序列最前面以命中前缀缓存；
+// 模块级常量插值在加载时求值一次，不影响前缀缓存）
 export const INTENT_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的需求分析助手。用户会用自然语言描述定制需求，你需要判断这个需求对应哪个功能模块。
 
 ## 输出要求
@@ -16,7 +19,9 @@ export const INTENT_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的需
 2. 如果需求是创建全新功能/页面，action 为 create
 3. 如果无法确定具体功能，featureCode 设为空字符串
 4. 新建报表/统计/看板时，featureCode 是新功能编码，同时必须在 relatedFeatureCodes 中放入数据来源或最相关的现有功能编码；只能从当前系统功能列表中选择，不要根据固定示例或关键词猜测
-5. 只输出 JSON，不要输出其他文字`;
+5. featureCode 与 relatedFeatureCodes 必须从“当前系统功能列表”中选择真实存在的功能编码；不要编造列表里没有的编码。
+6. “学员详情/合同详情/课程详情”等不是独立功能：它们是对应列表功能（student_list / contract_list / course_list）点击“详情”按钮后的展示页。需求涉及详情页字段时，featureCode 必须填对应列表功能编码（如 student_list），不要填 student_detail、contract_detail 这类详情页编码。
+7. 只输出 JSON，不要输出其他文字`;
 
 // 动态上下文块（每个租户不同，放在静态规则之后）
 export const INTENT_FEATURES_TEMPLATE = `## 当前系统功能列表
@@ -30,7 +35,7 @@ export const CLASSIFY_INTENT_TOOL = {
     parameters: {
       type: "object",
       properties: {
-        featureCode: { type: "string", description: "功能编码，如 student_list、contract_list" },
+        featureCode: { type: "string", description: "功能编码，必须来自当前系统功能列表；详情类需求填对应列表功能（如 student_list），不要填 student_detail 等详情页编码" },
         action: { type: "string", enum: ["modify", "create"], description: "操作类型：modify=修改现有功能，create=新建功能" },
         reason: { type: "string", description: "判断理由" },
         moduleCode: { type: "string", description: "模块编码（可选）" },
@@ -132,13 +137,89 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
 | add_action | action_dsl | 添加操作定义 | {actionCode, actionName, actionType, ...} |
 | modify | any | 完整替换（仅此 op 使用 modifiedDslJson） | 无需 fieldDef |
 
+## 字段存储决策树（最重要）
+
+新增字段时，按以下顺序判断存储方式：
+
+1. 用户需求中**只要出现** "筛选/搜索/查询/按XX查/排序/导入校验/报表统计/唯一约束/高频查询" 之一，该字段**必须**作为物理列存储，使用 db_schema add_field。
+2. 用户仅要求 "展示/编辑/详情回显/新增一列" 且无上述查询类需求，该字段存 ext_json，不新增物理列。
+3. 用户同时要求 "展示 AND 筛选/搜索/排序"：因为筛选字段必须是物理列，所以**整体走物理列**，使用 db_schema add_field。
+4. 不确定时，**优先物理列**，避免后续因筛选/排序需求再次变更表结构。
+
+## 常见场景速查
+
+| 用户说法 | 字段类型 | 必须生成的 db_schema |
+|---------|---------|-------------------|
+| 增加XX列展示 | ext_json | 否 |
+| 增加XX列并可以筛选 | 物理列 | 是，add_field |
+| 按XX搜索/查询 | 物理列 | 是，add_field |
+| 报表按XX统计 | 物理列 | 是，add_field |
+| 导入时校验XX | 物理列 | 是，add_field |
+| 给XX加唯一约束 | 物理列 | 是，add_field |
+
+## 正例：新增字段并加筛选
+
+需求：在学员列表增加"家长手机号"列，并加筛选。
+
+正确 diffs：
+\`\`\`json
+[
+  {
+    "targetType": "db_schema",
+    "targetCode": "student",
+    "op": "add_field",
+    "resourceDef": {
+      "tableName": "student",
+      "fields": [{ "key": "parent_phone", "label": "家长手机号", "type": "text" }]
+    }
+  },
+  {
+    "targetType": "page_dsl",
+    "targetCode": "student_list",
+    "op": "add_column",
+    "field": "parent_phone",
+    "fieldDef": { "key": "parent_phone", "label": "家长手机号", "type": "text" }
+  },
+  {
+    "targetType": "page_dsl",
+    "targetCode": "student_list",
+    "op": "add_filter",
+    "field": "parent_phone",
+    "fieldDef": { "key": "parent_phone", "label": "家长手机号", "type": "text" }
+  }
+]
+\`\`\`
+说明：系统会自动补齐 api_dsl add_allowed_field 和 action_dsl add_modal_field，你只需生成 db_schema + page_dsl 变更。
+
+## 反例：缺少物理列导致筛选失败
+
+错误 diffs：
+\`\`\`json
+[
+  {
+    "targetType": "page_dsl",
+    "targetCode": "student_list",
+    "op": "add_column",
+    "field": "parent_phone",
+    "fieldDef": { "key": "parent_phone", "label": "家长手机号", "type": "text" }
+  },
+  {
+    "targetType": "page_dsl",
+    "targetCode": "student_list",
+    "op": "add_filter",
+    "field": "parent_phone",
+    "fieldDef": { "key": "parent_phone", "label": "家长手机号", "type": "text" }
+  }
+]
+\`\`\`
+错误原因：缺少 db_schema add_field。筛选字段必须是物理列，不能是 ext_json 字段。
+
 ## 规则
-0. **多轮对话上下文**：如果用户最后一条消息是在确认上一轮问题（例如“所有字段、重复也新增、不覆盖”），必须继承历史对话里的原始目标（例如“新增导入功能”），不要只根据最后一句生成字段展示/编辑变更。
-1. **字段存储策略（最重要）**：
-   - 新增展示/编辑字段（如地址、备注、家长手机号）默认存入 ext_json，不要要求新增物理表字段；必须能列表显示、详情回显、编辑保存：生成 page_dsl 的 add_column/add_modal_field，并确保 query/detail/create/update API 允许该字段。
-   - 只有用户明确要求筛选、排序、导入校验、报表统计、唯一约束或高频查询时，才按可查询字段处理；筛选字段需要 page_dsl 的 add_filter，query API 也必须允许返回该字段并接收筛选参数。
+0. **多轮对话上下文**：如果用户最后一条消息是在确认上一轮问题（例如"所有字段、重复也新增、不覆盖"），必须继承历史对话里的原始目标（例如"新增导入功能"），不要只根据最后一句生成字段展示/编辑变更。
+1. **字段存储策略（执行上面的决策树）**：
+   - 新增展示/编辑字段（如地址、备注）默认存 ext_json；但一旦出现筛选/搜索/排序/导入校验/报表统计/唯一约束/高频查询需求，必须升级为物理列，使用 db_schema add_field。
    - 新增字段不要 join 不存在的表；普通扩展字段不需要新增表字段，运行时会通过 ext_json 读写。
-   - 新增物理表或物理字段时必须使用 db_schema 目标，且 tableName/field key 必须小写下划线。
+   - 新增物理表或物理字段时必须使用 db_schema 目标，且 tableName/field key 必须小写下划线。db_schema add_field 的 resourceDef 必须包含 tableName 和 fields 数组，fields 不能为空。
 2. **关联变更**：需要查询/筛选的字段必须同时生成 page_dsl 和 api_dsl 的关联变更！
    - page_dsl 的 targetCode 是页面编码（如 student_list）
    - api_dsl 的 targetCode 是 API 编码（如 student_list.query）
@@ -172,7 +253,7 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
    - 审批流使用 approval_flow(create_approval_flow)，步骤必须包含 stepCode、stepName、assigneeRole。
    - 导出使用 page_dsl add_toolbar，fieldDef 必须是 {actionCode:"页面.export", label:"导出", type:"export", actionType:"export", apiCode:"页面.query", exportConfig:{...}}，禁止用 execute_api 指向 create/update。
    - 打印模板使用 print_template(create_print_template)，系统会自动或同时添加页面打印按钮；模板字段来自当前页面/业务对象，不要编造表字段。
-   - 数据权限使用 permission_policy(modify_permission)，dataPermission 在 self_only/own_courses/own_students/own_organization/organization_or_sub/all 中选择，fieldPermission 形如 {"phone":"hidden"}。
+   - 数据权限使用 permission_policy(modify_permission)，dataPermission 在 ${DATA_PERMISSION_ENUM_TEXT} 中选择，fieldPermission 形如 {"phone":"hidden"}。
    - 业务校验规则使用 business_rule(create_business_rule)，validations 只描述规则，不要直接修改资金/课时余额字段。
    - 业务触发/监听使用 business_rule(create_business_event_listener)，必须配置 triggerEvent/trigger.event 和 actions；监听器只编排通知、待办、写入自定义表或调用既有安全业务动作，不要直接改财务/课时派生余额。新增业务枚举用 dictionary(create_dictionary_item)，系统字典项不可覆盖，页面字段可通过 dictCode/optionSource.dictionary 作为筛选和回显来源。
    - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType。category 使用 business_rule_category 系统数据字典，businessType 使用 business_type 系统数据字典；如需新增分类/业务类型，先通过 dictionary(create_dictionary_item) 新增租户字典项，再在规则中引用。
@@ -195,12 +276,23 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
 17. 排课/约课必须通过 page_dsl add_toolbar 或 add_row_action 打开排课弹窗，apiCode=course_list.create，必须包含 course_date、start_time、end_time、teacher_id、organization_id、course_hour 等字段，让 course.create 业务命令执行老师时间冲突校验。
 18. 只输出变更计划，不要输出其他文字
 19. 工具调用参数中 diffs 必须是 JSON 数组，不要把数组 stringify 成字符串
-20. 如果无法理解需求，返回空 diffs 数组`;
+20. 如果无法理解需求，返回空 diffs 数组
+21. **目标必须真实存在（最重要）**：所有 targetCode 必须来自已注入的 SKILL.md / tableColumns / DSL_SUMMARY 中真实存在的页面、接口、表。
+   - page_dsl 的 targetCode 必须是已存在的页面编码（如 student_list），不要写 student_detail 这类详情页编码；"给学员详情加字段"本质是给 student_list 的详情/编辑能力加字段，targetCode 用 student_list，并优先用 add_modal_field/add_column，系统会联动补齐详情接口与弹窗。
+   - api_dsl 的 targetCode（如 student_list.query/detail/create）必须是已存在的接口编码；不要凭空造接口。
+   - db_schema add_field 的 resourceDef.tableName 必须是 tableColumns 里真实存在的物理表；不要为了加一个 QQ 字段去新建或假设一张 student_detail 表，应该加到当前功能对应的事实表（如 student）。
+   - 如果当前注入的上下文里没有出现该页面/接口/表，说明它可能不存在，必须先用已有功能编码替代，或返回空 diffs 让上层重选相关 skill；禁止自己编一个不存在的 targetCode 或表名。`;
 
 export const REPAIR_PROMPT_TEMPLATE = `上一次输出校验失败：
 {errors}
 
+**重要提示（字段存储二次确认）**：
+- 如果错误包含"筛选字段必须是物理列"，说明目标字段在数据库中不存在。修正方法：先新增 db_schema add_field，resourceDef 必须包含 tableName 和 fields 数组（fields 不能为空），然后再生成 page_dsl add_filter / add_column。
+- 如果用户需求中同时出现"新增字段"和"筛选/搜索/排序/导入校验/报表统计"，该字段必须走物理列，禁止使用 ext_json 存储。
+- 修正时，不要在 filters、allowedFields、select、where 中写 "ext_json->>'xxx'" 这类表达式，只能写纯字段名，如 parent_phone。
+
 请重新生成变更计划，确保：
+0. **目标必须真实存在**：page_dsl/api_dsl 增量 op 的 targetCode、db_schema 的 resourceDef.tableName，必须是 SKILL_MD_CONTEXT / TABLE_COLUMNS / DSL_SUMMARY 中真实存在的编码或表。详情类需求（如"给学员详情加字段"）的 targetCode 用对应列表功能（student_list），不要用 student_detail；不要为了加字段编造不存在的 student_detail 表，应加到 student_list 对应的事实表。
 1. 每个 diff 的 targetType 是 page_dsl/api_dsl/action_dsl/skill_registry/db_schema/import_dsl/report_dsl/permission_policy/approval_flow/print_template/business_rule/dictionary/feature_registry 之一
 2. 每个 diff 的 op 是有效的操作类型
 3. add_column/add_filter/add_modal_field 等操作必须包含 fieldDef
@@ -209,14 +301,14 @@ export const REPAIR_PROMPT_TEMPLATE = `上一次输出校验失败：
 6. 字段名必须小写+下划线格式
 7. modify 操作必须包含 modifiedDslJson
 8. 新增列表列必须让 query API 返回该字段
-9. 新增可编辑字段必须让 detail/create/update API 允许该字段，并让新增、编辑、详情弹窗包含该字段
+9. 新增可编辑字段必须让 detail/create/update API 允许该字段，并同时生成 page_dsl add_modal_field 让新增、编辑、详情弹窗包含该字段；用户说"列表和筛选不用"只表示不生成 add_column/add_filter，弹窗字段仍然必须生成，否则字段能保存但界面不回显
 10. 新增表/导入/报表必须使用 resourceDef，不要把 SQL 或资源配置塞进 fieldDef
 11. 筛选字段必须是物理字段：如果用户新增字段并要求筛选/搜索/统计，请同时生成 db_schema add_field；禁止在 filters、allowedFields、select、where 中写 ext_json->>'xxx' 这类表达式，只能写字段名，如 parent_phone
 12. 导入只需要生成 import_dsl(create_import)，不要同时生成 page_dsl add_toolbar；如果完整替换页面 toolbar，导入工具栏按钮必须唯一，且是 {actionCode:"页面.import", label:"导入", type:"import", importConfig:{importCode:"导入编码", apiCode:"页面.create"}}；importConfig.apiCode 禁止指向 .query
 13. 外键字段必须配置 optionSource 和 displayKey：列表/详情显示名称，编辑下拉保存 id；导入时模板填名称并解析为 id
 14. 教务领域字段类型约束：手机号/电话必须用 text/tel，不要用 number；金额/学费/余额/欠费/收款/退款必须用 number/decimal/currency；日期/生日必须用 date/datetime；课时/次数/数量必须用 number/integer/decimal
 15. 导入模板禁止包含 id、created_at、updated_at、deleted 等系统字段；租户不允许覆盖时 duplicateStrategy 必须是 insert
-16. 权限变更必须使用 permission_policy(modify_permission)，禁止直接改 role_resource；dataPermission 在 self_only/own_courses/own_students/own_organization/organization_or_sub/all 中选择；roleCode 使用 PRINCIPAL/TEACHER/STUDY_MANAGER/SALES 等角色编码
+16. 权限变更必须使用 permission_policy(modify_permission)，禁止直接改 role_resource；dataPermission 在 ${DATA_PERMISSION_ENUM_TEXT} 中选择；roleCode 使用当前租户角色列表中的角色编码（见上下文注入的角色信息，如 PRINCIPAL/TEACHER/STUDY_MANAGER/SALES）
 17. 招生/学员跟进动作必须添加为 page_dsl add_row_action，actionCode 建议为 页面.followup，type=open_modal，apiCode=student_followup_list.create，并包含 student_id、follow_type、follow_content、next_follow_time 字段；mapRowToValue 至少包含 {"student_id":"id"}
 18. 课消/扣费确认动作必须添加为 page_dsl add_row_action，actionCode 建议为 course_list.charge，type=open_modal，apiCode=charge_record.create，visibleWhen.course_status 必须为 FINISHED；禁止直接修改 contract_product 剩余课时/金额字段，必须让 chargeRecord.create 业务命令执行余额校验和扣减
 19. 合同收款/补缴/付款确认必须添加为 page_dsl add_row_action，actionCode 建议为 contract_list.funds，type=open_modal，apiCode=funds_history.create，visibleWhen.contract_status 必须为 ACTIVE；必须包含 contract_id、student_id、organization_id、transaction_amount、pay_way_config_id、transaction_time、funds_type 字段，并配置 mapRowToValue.contract_id="id"；禁止直接修改 contract.paid_amount、paid_status 或 contract_product 的 paid/remaining/arrange 字段，必须让 funds.create 业务命令处理分配和状态更新
@@ -234,6 +326,11 @@ export const REPAIR_PROMPT_TEMPLATE = `上一次输出校验失败：
 修正示例：
 错误：add_select_field requires fieldDef for student_list.query
 修正：在对应 diff 中添加 fieldDef: {"field": "address"}
+
+错误：筛选字段必须是物理列: student.parent_phone 不存在
+修正：先添加 db_schema add_field，再添加 page_dsl add_filter。示例：
+{ "targetType": "db_schema", "targetCode": "student", "op": "add_field", "resourceDef": { "tableName": "student", "fields": [{ "key": "parent_phone", "label": "家长手机号", "type": "text" }] } }
+{ "targetType": "page_dsl", "targetCode": "student_list", "op": "add_filter", "field": "parent_phone", "fieldDef": { "key": "parent_phone", "label": "家长手机号", "type": "text" } }
 
 报表字段不存在修正示例：
 错误：报表字段不存在: employee.performance_amount

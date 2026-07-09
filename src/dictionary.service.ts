@@ -101,7 +101,8 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   fulfillment_status: { PENDING: { label: "待履约" }, PROCESSING: { label: "处理中" }, SUCCESS: { label: "已完成" }, FAILED: { label: "履约失败" } }
 };
 
-const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
+/** 字段名→字典码别名（单一来源；seed 与运行时共用，不要在别处再复制一份）。 */
+export const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   category: "business_rule_category",
   businessType: "business_type",
   business_type: "business_type"
@@ -124,6 +125,19 @@ export function systemDictionaryLabel(dictCode: string, itemValue: unknown) {
 
 export function dictionaryCodeForFieldName(fieldName: string) {
   return DICTIONARY_FIELD_ALIASES[fieldName] ?? (SYSTEM_DICTIONARIES[fieldName] ? fieldName : undefined);
+}
+
+/**
+ * 字典值双格式兼容：历史数据可能存原始枚举值（ACTIVE）或字典项 ID 形态（status.ACTIVE）。
+ * 查询/登录判断需要同时匹配两种形态。此前 auth.service 与 query-dsl-engine 各写一份，
+ * 统一收敛到这里。返回 undefined 表示该字段/值无需兼容展开。
+ */
+export function dictionaryCompatValues(field: string, value: unknown): string[] | undefined {
+  const text = String(value ?? "");
+  if (!text || !SYSTEM_DICTIONARIES[field]) return undefined;
+  const raw = dictionaryItemValueFromId(field, text);
+  if (!SYSTEM_DICTIONARIES[field][raw]) return undefined;
+  return [raw, dictionaryItemId(field, raw)];
 }
 
 export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[]) {

@@ -39,9 +39,23 @@ function stringArray(value: unknown, fallback: string[]) {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : fallback;
 }
 
-function targetTypes() {
-  return DEFAULT_TARGET_TYPES;
+function targetTypes(value: unknown): TargetType[] {
+  if (!Array.isArray(value)) return DEFAULT_TARGET_TYPES;
+  const allowed = new Set<string>(DEFAULT_TARGET_TYPES);
+  const parsed = value.map(String).filter((item): item is TargetType => allowed.has(item));
+  return parsed.length > 0 ? parsed : DEFAULT_TARGET_TYPES;
 }
+
+function riskPolicy(value: unknown): TenantAgentPolicy["riskPolicy"] {
+  return value === "confirm" || value === "manual" ? value : "auto";
+}
+
+const DEFAULT_EXECUTION_POLICY: TenantAgentPolicy["executionPolicy"] = {
+  maxPlanAttempts: 3,
+  maxRepairRounds: 5,
+  repairTimeoutMs: 90_000,
+  maxToolCallsPerRepair: 6,
+};
 
 export function defaultTenantAgentPolicy(): TenantAgentPolicy {
   return {
@@ -62,13 +76,19 @@ export function defaultTenantAgentPolicy(): TenantAgentPolicy {
       allowImport: true,
       allowOverwrite: false,
     },
+    executionPolicy: { ...DEFAULT_EXECUTION_POLICY },
   };
+}
+
+function positiveInt(value: unknown, fallback: number): number {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? Math.floor(num) : fallback;
 }
 
 export async function loadTenantAgentPolicy(schemaName: string): Promise<TenantAgentPolicy> {
   const defaults = defaultTenantAgentPolicy();
   const { rows } = await pool.query(
-    `select allowed_tools, allowed_target_types, risk_policy, module_scope, field_policy, publish_policy, data_policy
+    `select allowed_tools, allowed_target_types, risk_policy, module_scope, field_policy, publish_policy, data_policy, execution_policy
      from admin.tenant_agent_config where schema_name = $1 and deleted = false limit 1`,
     [schemaName]
   );
@@ -78,11 +98,12 @@ export async function loadTenantAgentPolicy(schemaName: string): Promise<TenantA
   const fieldPolicy = { ...defaults.fieldPolicy, ...(row.field_policy ?? {}) };
   const publishPolicy = { ...defaults.publishPolicy, ...(row.publish_policy ?? {}) };
   const dataPolicy = { ...defaults.dataPolicy, ...(row.data_policy ?? {}) };
+  const executionPolicy = (row.execution_policy ?? {}) as Record<string, unknown>;
 
   return {
     allowedTools: stringArray(row.allowed_tools, defaults.allowedTools),
-    allowedTargetTypes: targetTypes(),
-    riskPolicy: "auto",
+    allowedTargetTypes: targetTypes(row.allowed_target_types),
+    riskPolicy: riskPolicy(row.risk_policy),
     moduleScope: stringArray(row.module_scope, defaults.moduleScope),
     fieldPolicy: {
       storageStrategy: fieldPolicy.storageStrategy === "physical_first" ? "physical_first" : "ext_json_first",
@@ -96,6 +117,12 @@ export async function loadTenantAgentPolicy(schemaName: string): Promise<TenantA
     dataPolicy: {
       allowImport: dataPolicy.allowImport !== false,
       allowOverwrite: dataPolicy.allowOverwrite === true,
+    },
+    executionPolicy: {
+      maxPlanAttempts: positiveInt(executionPolicy.maxPlanAttempts, defaults.executionPolicy.maxPlanAttempts),
+      maxRepairRounds: positiveInt(executionPolicy.maxRepairRounds, defaults.executionPolicy.maxRepairRounds),
+      repairTimeoutMs: positiveInt(executionPolicy.repairTimeoutMs, defaults.executionPolicy.repairTimeoutMs),
+      maxToolCallsPerRepair: positiveInt(executionPolicy.maxToolCallsPerRepair, defaults.executionPolicy.maxToolCallsPerRepair),
     },
   };
 }

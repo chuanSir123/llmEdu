@@ -124,6 +124,12 @@ async function resolveAuthorizedTenantSchema(user: SessionUser | undefined, requ
   return schema;
 }
 
+function requireAdmin(user: SessionUser | undefined) {
+  if (!user) throw httpError(401, "请先登录");
+  if (user.kind !== "admin") throw httpError(403, "仅平台管理员可操作");
+  return user;
+}
+
 export async function buildServer() {
   if (env.autoSeed) await seed();
 
@@ -354,7 +360,7 @@ export async function buildServer() {
 
   app.post("/api/admin/version/publish", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
-    const user = currentUser(request);
+    const user = requireAdmin(currentUser(request));
     const body = z.object({ versionId: z.string() }).parse(request.body);
     try {
       const result = await publishVersionAndSyncSkillMd(body.versionId, user?.userId ?? "");
@@ -368,7 +374,7 @@ export async function buildServer() {
 
   app.post("/api/admin/version/rollback", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
-    const user = currentUser(request);
+    const user = requireAdmin(currentUser(request));
     const body = z.object({ versionId: z.string() }).parse(request.body);
     try {
       const result = await rollbackVersion(body.versionId, user?.userId ?? "");
@@ -382,7 +388,7 @@ export async function buildServer() {
 
   app.post("/api/admin/version/reject", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
-    const user = currentUser(request);
+    const user = requireAdmin(currentUser(request));
     const body = z.object({ versionId: z.string(), reason: z.string().optional() }).parse(request.body);
     try {
       const result = await rejectVersion(body.versionId, body.reason ?? "驳回", user?.userId ?? "");
@@ -679,19 +685,20 @@ export async function buildServer() {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), featureCode: z.string().optional() }).parse(request.body);
-    assertNotTestCustomizationSchema(body.schemaName);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     try {
       let refreshedCount = 0;
       if (body.featureCode) {
-        await syncSkillMd(body.schemaName, body.featureCode);
+        await syncSkillMd(schema, body.featureCode);
         refreshedCount = 1;
       } else {
-        refreshedCount = await fillEmptySkillMd(body.schemaName);
+        refreshedCount = await fillEmptySkillMd(schema);
       }
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.skill-md", inputSummary: body, outputSummary: { refreshedCount }, costMs: Date.now() - started });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.skill-md", inputSummary: body, outputSummary: { refreshedCount }, costMs: Date.now() - started });
       return { refreshedCount };
     } catch (error) {
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.agent.skill-md", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.agent.skill-md", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   });
@@ -710,24 +717,27 @@ export async function buildServer() {
   app.get("/api/tenant/version/list", { preHandler: [app.authenticate as never] }, async (request) => {
     const user = currentUser(request);
     const query = z.object({ schemaName: z.string(), targetType: z.string().optional(), targetCode: z.string().optional(), status: z.string().optional() }).parse(request.query);
-    return listTenantVersions(query.schemaName, { targetType: query.targetType, targetCode: query.targetCode, status: query.status });
+    const schema = await resolveAuthorizedTenantSchema(user, query.schemaName);
+    return listTenantVersions(schema, { targetType: query.targetType, targetCode: query.targetCode, status: query.status });
   });
 
   app.post("/api/tenant/version/rollback", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), versionId: z.string() }).parse(request.body);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     try {
-      const result = await tenantRollbackVersion({ schemaName: body.schemaName, versionId: body.versionId, userId: user?.userId ?? "" });
+      const result = await tenantRollbackVersion({ schemaName: schema, versionId: body.versionId, userId: user?.userId ?? "" });
       try {
-        await rollbackTestSchemaDsl(body.schemaName, body.versionId);
+        await rollbackTestSchemaDsl(schema, body.versionId);
       } catch (err) {
         console.warn("[Version] test schema rollback skipped:", err instanceof Error ? err.message : String(err));
       }
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.version.rollback", inputSummary: body, outputSummary: result, costMs: Date.now() - started });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.version.rollback", inputSummary: body, outputSummary: result, costMs: Date.now() - started });
       return result;
     } catch (error) {
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.version.rollback", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.version.rollback", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   });
@@ -736,24 +746,27 @@ export async function buildServer() {
     const started = Date.now();
     const user = currentUser(request);
     const body = z.object({ schemaName: z.string(), versionId: z.string() }).parse(request.body);
+    const schema = await resolveAuthorizedTenantSchema(user, body.schemaName);
+    assertNotTestCustomizationSchema(schema);
     try {
-      const result = await rollbackTestSchemaDsl(body.schemaName, body.versionId);
-      const previewUrl = `/${body.schemaName}_test/app/`;
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.version.rollback_preview", inputSummary: body, outputSummary: { ...result, previewUrl }, costMs: Date.now() - started });
+      const result = await rollbackTestSchemaDsl(schema, body.versionId);
+      const previewUrl = `/${schema}_test/app/`;
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.version.rollback_preview", inputSummary: body, outputSummary: { ...result, previewUrl }, costMs: Date.now() - started });
       return { ...result, previewUrl };
     } catch (error) {
-      await audit({ schemaName: body.schemaName, userId: user?.userId, actionCode: "tenant.version.rollback_preview", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+      await audit({ schemaName: schema, userId: user?.userId, actionCode: "tenant.version.rollback_preview", costMs: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   });
 
-  app.get("/api/admin/tenant/module-tree", { preHandler: [app.authenticate as never] }, async () => {
+  app.get("/api/admin/tenant/module-tree", { preHandler: [app.authenticate as never] }, async (request) => {
+    requireAdmin(currentUser(request));
     return loadModuleSelectionTree();
   });
 
   app.post("/api/admin/tenant/create", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
-    const user = currentUser(request);
+    const user = requireAdmin(currentUser(request));
     const body = z.object({ name: z.string(), contactPhone: z.string().optional(), ownerName: z.string().optional(), selectedModules: z.array(z.string()), selectedFeatures: z.array(z.string()) }).parse(request.body);
     try {
       const result = await createTenantWithModules({ ...body, operatorId: user?.userId ?? "" });
@@ -767,7 +780,7 @@ export async function buildServer() {
 
   app.post("/api/admin/tenant/recharge", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
-    const user = currentUser(request);
+    const user = requireAdmin(currentUser(request));
     const body = z.object({ schemaName: z.string(), amount: z.number(), expireTime: z.string(), remark: z.string().optional() }).parse(request.body);
     try {
       const result = await rechargeTenant({ ...body, operatorId: user?.userId ?? "" });
@@ -780,28 +793,48 @@ export async function buildServer() {
   });
 
   app.get("/api/admin/tenant/recharge-records", { preHandler: [app.authenticate as never] }, async (request) => {
+    requireAdmin(currentUser(request));
     const query = z.object({ schemaName: z.string().optional(), page: z.coerce.number().optional(), pageSize: z.coerce.number().optional() }).parse(request.query);
     return listRechargeRecords(query);
   });
 
   app.get("/api/admin/tenant/customization-records", { preHandler: [app.authenticate as never] }, async (request) => {
+    requireAdmin(currentUser(request));
     const query = z.object({ schemaName: z.string().optional(), recordType: z.enum(["assistant", "customization"]).optional(), page: z.coerce.number().optional(), pageSize: z.coerce.number().optional() }).parse(request.query);
     return listCustomizationRecords(query);
   });
 
   app.get("/api/admin/tenant/customization-records/:id", { preHandler: [app.authenticate as never] }, async (request) => {
+    requireAdmin(currentUser(request));
     const params = z.object({ id: z.string() }).parse(request.params);
     return getCustomizationRecordDetail(params.id);
   });
 
+  app.get("/api/tenant/customization-records/:id", { preHandler: [app.authenticate as never] }, async (request) => {
+    const user = currentUser(request);
+    if (!user) throw httpError(401, "请先登录");
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const result = await getCustomizationRecordDetail(params.id);
+    if (result.record) {
+      const recordSchema = result.record.schemaName;
+      const ownSchema = user.schemaName || "";
+      const ownPreviewSchema = ownSchema ? `${ownSchema}_test` : "";
+      if (user.kind !== "admin" && recordSchema !== ownSchema && recordSchema !== ownPreviewSchema) {
+        throw httpError(403, "无权查看此定制记录");
+      }
+    }
+    return result;
+  });
+
   app.get("/api/admin/tenant/dsl-changes", { preHandler: [app.authenticate as never] }, async (request) => {
+    requireAdmin(currentUser(request));
     const query = z.object({ schemaName: z.string() }).parse(request.query);
     return listTenantDslChanges(query.schemaName);
   });
 
   app.post("/api/admin/tenant/copy-to-template", { preHandler: [app.authenticate as never] }, async (request) => {
     const started = Date.now();
-    const user = currentUser(request);
+    const user = requireAdmin(currentUser(request));
     const body = z.object({ schemaName: z.string(), confirmed: z.boolean() }).parse(request.body);
     try {
       const result = await executeCopyToTemplate({ schemaName: body.schemaName, operatorId: user?.userId ?? "", confirmed: body.confirmed });

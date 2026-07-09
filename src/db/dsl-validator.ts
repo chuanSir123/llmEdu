@@ -1,4 +1,5 @@
 import { pool } from "./pool.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 type Problem = {
   apiCode: string;
@@ -43,7 +44,10 @@ export async function validateApiDslAgainstSchema(
   const problems: Problem[] = [];
   if (dsl.operation === "command") return problems;
   const table = dsl.table;
-  const effectiveSchema = typeof (dsl as Record<string, unknown>).schema === "string" ? String((dsl as Record<string, unknown>).schema) : schemaName;
+  // 预览测试库忽略 DSL 中的 schema 字段，确保校验目标正确指向预览库
+  const dslSchemaRaw = (dsl as Record<string, unknown>).schema;
+  const dslSchema = schemaName.endsWith("_test") ? undefined : (typeof dslSchemaRaw === "string" ? String(dslSchemaRaw) : undefined);
+  const effectiveSchema = dslSchema ?? schemaName;
   if (!table) {
     problems.push({ apiCode, schema: effectiveSchema, problem: "missing table" });
     return problems;
@@ -117,7 +121,7 @@ export async function validateActiveDsl() {
   const problems: Problem[] = [];
 
   for (const row of rows) {
-    const schema = row.schema_scope === "admin" ? "admin" : "demo_school";
+    const schema = row.schema_scope === "admin" ? "admin" : TEMPLATE_SCHEMA;
     problems.push(...await validateApiDslAgainstSchema(schema, row.api_code, row.dsl_json));
   }
 

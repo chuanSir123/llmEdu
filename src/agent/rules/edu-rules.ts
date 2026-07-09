@@ -1,4 +1,5 @@
 import { HarnessErrorCode } from "../harness-errors.js";
+import { DATA_PERMISSION_ENUM_TEXT } from "../../common/dsl-constants.js";
 
 // 教务领域规则注册表（附加式单一真相源）
 //
@@ -93,8 +94,8 @@ export const EDU_RULES: EduRule[] = [
     scope: "field_storage",
     errorCode: HarnessErrorCode.FILTER_NOT_PHYSICAL,
     promptHint:
-      "用户要求筛选/搜索/统计某字段时必须同时生成 db_schema add_field 物理列；禁止在 filters/select/where 中写 ext_json->>'xxx' 表达式，只能写字段名。",
-    triggers: ["筛选", "搜索", "按...查询", "统计"],
+      "用户要求筛选/搜索/统计/排序某字段时，该字段必须走物理列；先使用 db_schema add_field，再生成 page_dsl add_filter 和 api_dsl 相关变更。禁止在 filters/select/where/allowedFields 中写 ext_json->>'xxx' 表达式，只能写字段名。",
+    triggers: ["筛选", "搜索", "按...查询", "统计", "排序"],
   },
   {
     code: "extjson_first_storage",
@@ -102,8 +103,17 @@ export const EDU_RULES: EduRule[] = [
     scope: "field_storage",
     errorCode: HarnessErrorCode.FIELD_ECHO_MISSING,
     promptHint:
-      "新增展示/编辑字段（地址、备注、家长手机号）默认存 ext_json，不新增物理列；但必须保证列表显示、详情回显、编辑保存：生成 page_dsl add_column/add_modal_field，并让 query/detail/create/update API 允许该字段。",
+      "新增展示/编辑字段（地址、备注）默认存 ext_json，不新增物理列；但必须保证列表显示、详情回显、编辑保存：生成 page_dsl add_column/add_modal_field，并让 query/detail/create/update API 允许该字段。一旦用户同时要求筛选/搜索/排序/统计，必须改为物理列。",
     triggers: ["增加字段", "新增列", "加一个", "备注", "地址"],
+  },
+  {
+    code: "physical_for_mixed_requirements",
+    title: "展示+筛选/排序/统计时必须整体走物理列",
+    scope: "field_storage",
+    errorCode: HarnessErrorCode.FILTER_NOT_PHYSICAL,
+    promptHint:
+      "若用户同时要求'展示/编辑某字段'和'筛选/搜索/排序/统计该字段'，该字段必须整体作为物理列，先 db_schema add_field，再生成 page_dsl 展示与筛选。不能因为默认 ext_json 策略而忽略筛选需求。",
+    triggers: ["增加列并筛选", "加字段并搜索", "显示并能查询", "展示并筛选"],
   },
   {
     code: "report_real_source_fields",
@@ -145,7 +155,7 @@ export const EDU_RULES: EduRule[] = [
     scope: "permission",
     errorCode: HarnessErrorCode.PERMISSION_INVALID,
     promptHint:
-      "权限调整用 permission_policy(modify_permission)，禁止直接改 role_resource；dataPermission 在 self_only/own_courses/own_students/own_organization/organization_or_sub/all 中选，roleCode 用 PRINCIPAL/TEACHER/STUDY_MANAGER/SALES。",
+      `权限调整用 permission_policy(modify_permission)，禁止直接改 role_resource；dataPermission 在 ${DATA_PERMISSION_ENUM_TEXT} 中选，roleCode 用当前租户已有角色编码。`,
     triggers: ["权限", "只能看自己", "隐藏字段", "角色"],
   },
 ];

@@ -1,8 +1,10 @@
 import { pool } from "../db/pool.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
 import type { DslDiff, TargetType } from "./types.js";
-
-const SYSTEM_FIELD_KEYS = new Set(["id", "created_at", "updated_at", "deleted", "deleted_at"]);
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
+import { SYSTEM_FIELD_SET as SYSTEM_FIELD_KEYS } from "../common/dsl-constants.js";
+import { inferDslFieldType } from "../common/field-type.js";
+import { completeDisplayDiffs } from "./diff-completion.js";
 
 export async function executeDiffs(
   diffs: DslDiff[],
@@ -32,13 +34,16 @@ export async function executeDiffs(
 }
 
 async function expandRelatedDiffs(diffs: DslDiff[], schemaName: string): Promise<DslDiff[]> {
-  const expanded: DslDiff[] = [...diffs];
+  // 反向显示补全：API 放行了新字段但没有任何显示位变更时，合成 page_dsl add_modal_field，
+  // 合成结果参与下方正向扩展（联动补 action_dsl 弹窗字段），修复"字段能存不能显"
+  const sourceDiffs = [...diffs, ...(await completeDisplayDiffs(diffs, schemaName))];
+  const expanded: DslDiff[] = [...sourceDiffs];
   const hasDiff = (targetType: DslDiff["targetType"], targetCode: string, op: DslDiff["op"], field?: string) =>
     expanded.some((diff) => diff.targetType === targetType && diff.targetCode === targetCode && diff.op === op && (!field || String(diff.fieldDef?.field ?? diff.fieldDef?.key ?? diff.field ?? "") === field));
   const hasTarget = (targetType: DslDiff["targetType"], targetCode: string) =>
     expanded.some((diff) => diff.targetType === targetType && diff.targetCode === targetCode);
 
-  for (const diff of diffs) {
+  for (const diff of sourceDiffs) {
     if (diff.targetType === "db_schema" && diff.op === "create_table") {
       expanded.push(...buildCreateTableCompanionDiffs(diff, hasTarget));
     }
@@ -50,7 +55,7 @@ async function expandRelatedDiffs(diffs: DslDiff[], schemaName: string): Promise
     }
   }
 
-  for (const diff of diffs) {
+  for (const diff of sourceDiffs) {
     if (diff.targetType !== "page_dsl") continue;
     const field = String(diff.fieldDef?.key ?? diff.field ?? "");
     if (!field) continue;
@@ -119,18 +124,7 @@ function fieldDefsFromResource(diff: DslDiff) {
   })).filter((field) => field.key && !SYSTEM_FIELD_KEYS.has(field.key));
 }
 
-function normalizeDslFieldType(key: string, label: string, rawType: string) {
-  const text = `${key} ${label}`.toLowerCase();
-  const normalized = rawType.toLowerCase();
-  if (/(phone|mobile|tel|手机号|电话|联系电话)/.test(text)) return "text";
-  if (/(birthday|birth_date|生日)/.test(text)) return "date";
-  if (/(datetime|timestamp|time|时间)/.test(text)) return "datetime";
-  if (/(date|日期)/.test(text)) return "date";
-  if (/(amount|fee|price|balance|tuition|payment|refund|arrears|金额|费用|学费|余额|欠费|收款|退款|count|hours|课时|次数|数量)/.test(text)) return "number";
-  if (/^(varchar|char|string|bigint|int|integer|uuid)$/.test(normalized) || normalized.startsWith("varchar")) return "text";
-  if (normalized === "textarea" || normalized === "select" || normalized === "boolean") return normalized;
-  return rawType || "text";
-}
+const normalizeDslFieldType = inferDslFieldType;
 
 function pageFieldFromResource(field: ReturnType<typeof fieldDefsFromResource>[number], extra: Record<string, unknown> = {}) {
   const meta = inferForeignKeyMeta(field.key);
@@ -539,7 +533,7 @@ async function discoverPageModalCodes(pageCode: string, schemaName: string): Pro
      WHERE page_code = $1
        AND action_type = 'open_modal'
        AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = '${TEMPLATE_SCHEMA}'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [pageCode, schemaName]
   );
@@ -596,7 +590,7 @@ async function loadExistingDsl(
   const { rows } = await pool.query(
     `SELECT ${mapping.contentCol} AS content FROM ${mapping.table}
      WHERE ${mapping.codeCol} = $1
-       AND (schema_scope = 'tenant' AND schema_name = $2 OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
+       AND (schema_scope = 'tenant' AND schema_name = $2 OR (schema_scope = 'tenant' AND schema_name = '${TEMPLATE_SCHEMA}'))
        AND status = 'active' AND deleted = false
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END LIMIT 1`,
     [targetCode, schemaName]

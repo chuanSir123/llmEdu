@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { env } from "../config/env.js";
-import { dictionaryItemId, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { dictionaryItemId, DICTIONARY_FIELD_ALIASES, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 
 export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
@@ -112,14 +112,10 @@ const extraDictionaryFieldKeys = [
   "publish_status", "subscribe_status", "send_status", "reward_status", "action_type", "api_type", "cost_type",
   "pay_type", "receiver_scope", "resource_type", "organization_scope", "target_status", "business_rule_category", "business_type"
 ];
+// extraDictionaryFieldKeys 与 SYSTEM_DICTIONARIES 的 key 高度重叠，保留兼容旧 seed 行为
 const dictionaryFieldKeys = new Set([...Object.keys(valueLabels), ...extraDictionaryFieldKeys]);
-const dictionaryFieldAliases: Record<string, string> = {
-  category: "business_rule_category",
-  businessType: "business_type",
-  business_type: "business_type"
-};
 function dictCodeForField(field: { key: string; dictCode?: string }) {
-  return field.dictCode ?? dictionaryFieldAliases[field.key] ?? (dictionaryFieldKeys.has(field.key) ? field.key : undefined);
+  return field.dictCode ?? DICTIONARY_FIELD_ALIASES[field.key] ?? (dictionaryFieldKeys.has(field.key) ? field.key : undefined);
 }
 
 
@@ -2699,7 +2695,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.table.selectable = true;
     baseDsl.toolbar = [
       { actionCode: "student_list.create", label: "新增", type: "open_modal", variant: "primary" },
-      { actionCode: "student_list.batchEnroll", label: "批量报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "批量报名", fields: contractCreateFields, requiresSelection: true, mapSelectedToValue: { student_ids: "id" }, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) } },
+      { actionCode: "student_list.batchEnroll", label: "批量报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "批量报名", fields: contractCreateFields, requiresSelection: true, requiresSelectionMessage: "请先选择学员", mapSelectedToValue: { student_ids: "id" }, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) } },
       { actionCode: "student_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [

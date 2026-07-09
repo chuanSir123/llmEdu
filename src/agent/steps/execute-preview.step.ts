@@ -2,6 +2,7 @@ import type { DslDiff, HarnessStepResult } from "../types.js";
 import { createDraftBundleVersion } from "../../version/version.service.js";
 import { pool } from "../../db/pool.js";
 import { validateApiDslAgainstSchema } from "../../db/dsl-validator.js";
+import { TEMPLATE_SCHEMA } from "../../common/template-schema.js";
 
 export async function executePreview(
   validDiffs: DslDiff[],
@@ -120,9 +121,9 @@ async function loadCurrentSnapshot(targetType: string, targetCode: string, schem
   const { rows } = await pool.query(
     `select ${mapping.contentCol} as content from ${mapping.table}
      where ${mapping.codeCol} = $1
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
        and status = 'active' and deleted = false
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end limit 1`,
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
     [targetCode, schemaName]
   );
   if (!rows[0]) return null;

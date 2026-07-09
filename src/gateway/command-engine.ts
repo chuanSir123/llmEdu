@@ -2,6 +2,7 @@ import type pg from "pg";
 import { withClient } from "../db/pool.js";
 import { qIdent } from "../db/schema-resolver.js";
 import { withRedisLock } from "../redis-lock.service.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 type CommandDsl = {
   operation: "command";
@@ -116,8 +117,8 @@ async function loadRule(client: pg.PoolClient, schemaName: string, ruleCode: str
     `select rule_json
      from admin.business_rule
      where rule_code = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end
      limit 1`,
     [ruleCode, schemaName]
   );
@@ -1477,16 +1478,17 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
     refundRecords.push(refund);
     if (refund) await arrangeNegativePerformanceForRefund(client, schemaName, str(refund.id), refund, rule);
 
-    await client.query(
+    await assertUpdated(await client.query(
       `update ${table(schemaName, "contract_product")}
        set remaining_real_hour = coalesce(remaining_real_hour,0) - $1,
            remaining_real_amount = coalesce(remaining_real_amount,0) - $2,
            remaining_promotion_hour = coalesce(remaining_promotion_hour,0) - $3,
            remaining_promotion_amount = coalesce(remaining_promotion_amount,0) - $4,
+           lock_version = coalesce(lock_version,0) + 1,
            updated_at = now()
-       where id = $5`,
-      [cpRefundHour, cpRefundAmount, cpRefundPromotionHour, cpRefundPromotionAmount, cp.id]
-    );
+       where id = $5 and coalesce(lock_version,0) = $6`,
+      [cpRefundHour, cpRefundAmount, cpRefundPromotionHour, cpRefundPromotionAmount, cp.id, num(cp.lock_version)]
+    ));
   }
 
   const nextPaid = Math.max(num(contract.paid_amount) - targetRefundAmount, 0);
@@ -1527,21 +1529,24 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
 
   const cpId = str(refund.contract_product_id);
   if (cpId) {
+    const cp = await one(client, `select lock_version from ${table(schemaName, "contract_product")} where id = $1 and deleted = false for update`, [cpId]);
+    if (!cp) throw new Error("合同产品不存在或已删除");
     const refundHour = num(refund.refund_real_hour);
     const refundAmount = num(refund.refund_real_amount);
     const refundPromotionHour = num(refund.refund_promotion_hour);
     const refundPromotionAmount = num(refund.refund_promotion_amount);
 
-    await client.query(
+    await assertUpdated(await client.query(
       `update ${table(schemaName, "contract_product")}
        set remaining_real_hour = coalesce(remaining_real_hour,0) + $1,
            remaining_real_amount = coalesce(remaining_real_amount,0) + $2,
            remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $3,
            remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $4,
+           lock_version = coalesce(lock_version,0) + 1,
            updated_at = now()
-       where id = $5`,
-      [refundHour, refundAmount, refundPromotionHour, refundPromotionAmount, cpId]
-    );
+       where id = $5 and coalesce(lock_version,0) = $6`,
+      [refundHour, refundAmount, refundPromotionHour, refundPromotionAmount, cpId, num(cp.lock_version)]
+    ));
   }
 
   const contractId = str(refund.contract_id);

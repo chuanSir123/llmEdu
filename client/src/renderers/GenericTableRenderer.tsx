@@ -3,6 +3,7 @@ import type { ActionDsl, FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
 import { enumLabelFor } from "../dsl/enumLabels";
+import { isDangerAction } from "../dsl/actionVariant";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type BadgeTone = "green" | "blue" | "amber" | "red" | "gray";
@@ -167,7 +168,7 @@ export function GenericTableRenderer({
                       {(() => {
                         const filteredActions = rowActions.filter((action) => isVisibleAction(action, row));
                         const preferred = filteredActions.filter((action) => primaryRowActions.has(action.actionCode));
-                        const fallback = filteredActions.filter((action) => !action.actionCode.endsWith(".delete")).slice(0, 2);
+                        const fallback = filteredActions.filter((action) => !isDangerAction(action)).slice(0, 2);
                         const visibleActions = preferred.length ? preferred : fallback;
                         const moreActions = filteredActions.filter((action) => !visibleActions.some((visible) => visible.actionCode === action.actionCode));
                         const rowId = String(row.id);
@@ -177,7 +178,7 @@ export function GenericTableRenderer({
                               <button
                                 key={action.actionCode}
                                 className={`whitespace-nowrap ${
-                                  action.actionCode.endsWith(".delete") ? "text-[#ff4d64] hover:text-[#e63d52]" : "text-[#2f80ed] hover:text-[#1765d8]"
+                                  isDangerAction(action) ? "text-[#ff4d64] hover:text-[#e63d52]" : "text-[#2f80ed] hover:text-[#1765d8]"
                                 }`}
                                 onClick={() => onAction(action, row)}
                               >
@@ -198,7 +199,7 @@ export function GenericTableRenderer({
                                       <button
                                         key={action.actionCode}
                                         className={`block h-8 w-full whitespace-nowrap px-3 text-left text-[13px] ${
-                                          action.actionCode.endsWith(".delete") ? "text-[#ff4d64] hover:bg-[#fff1f3]" : "text-[#2f80ed] hover:bg-[#f2f7ff]"
+                                          isDangerAction(action) ? "text-[#ff4d64] hover:bg-[#fff1f3]" : "text-[#2f80ed] hover:bg-[#f2f7ff]"
                                         }`}
                                         onClick={() => {
                                           setOpenMenuRowId(null);
@@ -221,7 +222,7 @@ export function GenericTableRenderer({
                       {rowActions.filter((action) => isVisibleAction(action, row)).map((action) => (
                         <button
                           key={action.actionCode}
-                          className={`${token.button} ${action.actionCode.endsWith(".delete") ? token.dangerButton : token.defaultButton} h-7 px-2.5`}
+                          className={`${token.button} ${isDangerAction(action) ? token.dangerButton : token.defaultButton} h-7 px-2.5`}
                           onClick={() => onAction(action, row)}
                         >
                           {action.label}

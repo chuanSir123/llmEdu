@@ -1,5 +1,6 @@
 import { pool } from "../db/pool.js";
 import { systemDictionaryLabel } from "../dictionary.service.js";
+import { DATA_PERMISSION_PRIORITY } from "../common/dsl-constants.js";
 import type { SessionUser } from "../types.js";
 
 export async function canAccessPage(user: SessionUser | undefined, schemaName: string | undefined, pageCode: string) {
@@ -56,6 +57,26 @@ export async function visibleActionCodes(user: SessionUser | undefined, schemaNa
     }
   }
   return buttons.size > 0 ? buttons : new Set(["*"]);
+}
+
+/**
+ * 判断用户能否在某页面执行某个写接口（按钮权限级别）。
+ * 规则：admin 放行；按钮权限含 "*" 放行；可见按钮编码直接等于 apiCode（常见约定 actionCode=apiCode）放行；
+ * 否则查该页面可见按钮的 action DSL 中是否有任一 apiCode 指向该接口。
+ */
+export async function canExecuteApiOnPage(user: SessionUser | undefined, schemaName: string, pageCode: string, apiCode: string): Promise<boolean> {
+  if (!user) return false;
+  if (user.kind === "admin") return true;
+  const codes = await visibleActionCodes(user, schemaName, pageCode);
+  if (codes.has("*")) return true;
+  if (codes.size === 0) return false;
+  if (codes.has(apiCode)) return true;
+  const { rows } = await pool.query(
+    `select dsl_json->>'apiCode' as api_code from admin.action_dsl
+     where page_code = $1 and status = 'active' and deleted = false and action_code = any($2)`,
+    [pageCode, [...codes]]
+  );
+  return rows.some((row) => String(row.api_code ?? "") === apiCode);
 }
 
 export async function fieldPermissions(user: SessionUser | undefined, schemaName: string, pageCode: string): Promise<Record<string, string>> {
@@ -170,7 +191,7 @@ export async function getDataPermissionScope(user: SessionUser | undefined, sche
     [user.userId]
   );
 
-  const priority: Record<string, number> = { all: 6, own_organization: 5, organization_or_sub: 4, own_students: 3, own_courses: 2, self_only: 1 };
+  const priority = DATA_PERMISSION_PRIORITY;
   let bestPermission = "self_only";
 
   for (const row of rows) {

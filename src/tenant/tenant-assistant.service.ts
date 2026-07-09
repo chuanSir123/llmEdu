@@ -7,12 +7,15 @@ import { executeApiDsl } from "../gateway/query-dsl-engine.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
 import { loadTenantMenu } from "../gateway/menu.service.js";
 import { loadPageFullDsl } from "../gateway/page.service.js";
+import { canAccessPage, canExecuteApiOnPage } from "../permission/permission.service.js";
 import { callWithToolCalling, loadLlmConfig, runWithLlmTraceContext } from "../agent/llm.service.js";
 import { loadAttachments } from "./attachment.service.js";
 import { executeTenantImport, resolveTenantImportConfig } from "./import.service.js";
 import { writeCustomizationRecord } from "./tenant-customization-record.service.js";
 import type { AgentProgressCallback, LlmMessage } from "../agent/types.js";
 import type { SessionUser } from "../types.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
+import { SYSTEM_WRITE_FIELD_SET } from "../common/dsl-constants.js";
 
 type AssistantToolName = "list_modules" | "list_features" | "query_data" | "analyze_data" | "execute_business_api" | "navigate" | "plan_excel_import" | "execute_excel_import";
 type AssistantMessage = { role: string; content: string; timestamp?: string };
@@ -223,6 +226,9 @@ async function runTool(input: {
   }
   if (name === "query_data") {
     const pageCode = String(args.pageCode ?? "");
+    if (!(await canAccessPage(user, schemaName, pageCode))) {
+      return { ok: false, pageCode, error: `当前账号没有页面 ${pageCode} 的访问权限，无法查询。` };
+    }
     const page = await loadPageFullDsl("tenant", pageCode, schemaName, user);
     const dsl = asObject(page.page.dsl_json);
     const dataApi = String(dsl.dataApi ?? `${pageCode}.query`);
@@ -235,6 +241,9 @@ async function runTool(input: {
   }
   if (name === "analyze_data") {
     const pageCode = String(args.pageCode ?? "");
+    if (!(await canAccessPage(user, schemaName, pageCode))) {
+      return { ok: false, pageCode, error: `当前账号没有页面 ${pageCode} 的访问权限，无法分析该页数据。` };
+    }
     const queryDsl = asObject(await loadApiDsl("tenant", `${pageCode}.query`, schemaName).catch(() => ({})));
     const table = String(queryDsl.table ?? pageCode.replace(/_(list|history|record)$/, ""));
     const realCols = await loadTableColumnSet(schemaName, table);
@@ -286,16 +295,27 @@ async function runTool(input: {
     const pageCode = String(args.pageCode ?? "");
     if (!pageCode) return { ok: false, error: "navigate 需要 pageCode" };
     try {
-      // 校验页面存在且当前账号可访问
+      // 校验页面存在
       await loadPageFullDsl("tenant", pageCode, schemaName, user);
     } catch {
-      return { ok: false, pageCode, error: `页面 ${pageCode} 不存在或无权访问` };
+      return { ok: false, pageCode, error: `页面 ${pageCode} 不存在` };
+    }
+    // 校验当前账号页面权限（loadPageFullDsl 只过滤按钮，不校验页面访问权）
+    if (!(await canAccessPage(user, schemaName, pageCode))) {
+      return { ok: false, pageCode, error: `当前账号没有页面 ${pageCode} 的访问权限` };
     }
     return { ok: true, navigate: { pageCode, filters: asObject(args.filters) }, reason: String(args.reason ?? "") };
   }
   if (name === "execute_business_api") {
     const pageCode = String(args.pageCode ?? "");
     const apiCode = String(args.apiCode ?? "");
+    // 页面权限 + 按钮权限：与前端点按钮同等的权限口径，AI 对话不能成为绕过权限的后门
+    if (!(await canAccessPage(user, schemaName, pageCode))) {
+      return { ok: false, pageCode, apiCode, error: `当前账号没有页面 ${pageCode} 的访问权限，无法执行业务操作。` };
+    }
+    if (!(await canExecuteApiOnPage(user, schemaName, pageCode, apiCode))) {
+      return { ok: false, pageCode, apiCode, error: `当前账号在页面 ${pageCode} 没有执行 ${apiCode} 的按钮权限。` };
+    }
     if (!apiCode.endsWith(".create") && !apiCode.endsWith(".update") && !apiCode.endsWith(".delete")) {
       try {
         const apiDsl = asObject(await loadApiDsl("tenant", apiCode, schemaName));
@@ -340,10 +360,21 @@ async function runTool(input: {
     const rawMode = String(args.mode ?? "validate");
     const mode = rawMode === "import" ? "import" : rawMode === "validate_import" ? "validate_import" : "validate";
     const results = [];
+    // 纯校验模式下，前序 sheet 将生成的名称集合（pageCode → 该页各 label 值）。
+    // 后续 sheet 的外键名称命中集合时降级为提示，消除"前序还没入库"导致的校验误报。
+    const plannedRowsByPage = new Map<string, Record<string, unknown>[]>();
     for (const item of plan) {
       if (!item.localPath) continue;
       const config = await resolveTenantImportConfig({ schemaName, pageCode: item.pageCode, apiCode: item.apiCode });
+      // 执行前校验写权限（计划可能来自历史会话或模型直接给出的 pageCode）
+      if (!(await canAccessPage(user, schemaName, item.pageCode)) || !(await canExecuteApiOnPage(user, schemaName, item.pageCode, config.apiCode))) {
+        results.push({ ...item, mode: "denied", total: 0, success: 0, failed: 0, failures: [{ row: 0, message: `当前账号没有页面 ${item.pageCode} 的导入权限，已跳过` }], resultFile: undefined });
+        continue;
+      }
       const sourceRows = await buildMappedRows(item.localPath, item.sheetName, item.fieldMapping);
+      const pendingForeignNames = mode === "validate"
+        ? collectPendingForeignNames(config.fields, plannedRowsByPage)
+        : undefined;
       const runImport = (validateOnly: boolean) => executeTenantImport({
         schemaName,
         pageCode: item.pageCode,
@@ -355,7 +386,9 @@ async function runTool(input: {
         validateOnly,
         user,
         sourceRows,
+        pendingForeignNames,
       });
+      plannedRowsByPage.set(item.pageCode, [...(plannedRowsByPage.get(item.pageCode) ?? []), ...sourceRows]);
       if (mode === "validate_import") {
         const validateResult = await runImport(true);
         results.push({ ...item, mode: "validate", total: validateResult.total, success: validateResult.success, failed: validateResult.failed, failures: validateResult.failures, resultFile: validateResult.resultFile });
@@ -373,13 +406,39 @@ async function runTool(input: {
   throw Object.assign(new Error(`未知工具: ${name}`), { statusCode: 400 });
 }
 
+/**
+ * 收集"将由前序 sheet 导入生成"的外键名称：
+ * 当前 sheet 的外键字段（optionSource.pageCode 指向前序已规划的页面）
+ * 可在纯校验时容忍名称暂未入库，只要该名称出现在前序 sheet 的 label 列中。
+ */
+function collectPendingForeignNames(
+  fields: Array<{ key: string; optionSource?: { pageCode?: string; labelField?: string } }>,
+  plannedRowsByPage: Map<string, Record<string, unknown>[]>,
+): Record<string, Set<string>> | undefined {
+  const result: Record<string, Set<string>> = {};
+  for (const field of fields) {
+    const sourcePage = field.optionSource?.pageCode;
+    if (!sourcePage) continue;
+    const plannedRows = plannedRowsByPage.get(sourcePage);
+    if (!plannedRows?.length) continue;
+    const labelField = field.optionSource?.labelField ?? "name";
+    const names = new Set<string>();
+    for (const row of plannedRows) {
+      const label = String(row[labelField] ?? "").trim();
+      if (label) names.add(label);
+    }
+    if (names.size > 0) result[field.key] = names;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 // 枚举该租户已配置导入能力的页面（import_dsl，含 tenant 覆盖与 demo_school），覆盖定制新增的导入功能
 async function loadImportablePageCodes(schemaName: string): Promise<string[]> {
   const { rows } = await pool.query(
     `select distinct coalesce(dsl_json->>'pageCode', dsl_json->>'page_code') as page_code
      from admin.import_dsl
      where status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))`,
+       and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`,
     [schemaName]
   );
   return rows.map((r: { page_code: string | null }) => String(r.page_code ?? "")).filter((code) => SAFE_FIELD_RE.test(code));
@@ -405,6 +464,8 @@ async function planExcelImport(schemaName: string, attachmentIds: string[], user
   const importTargets = [];
   for (const hint of importPlan) {
     try {
+      // 当前账号无该页面权限时不纳入导入计划（AI 导入与手工导入同权限口径）
+      if (!(await canAccessPage(user, schemaName, hint.pageCode))) continue;
       const config = await resolveTenantImportConfig({ schemaName, pageCode: hint.pageCode, apiCode: hint.apiCode });
       importTargets.push({
         pageCode: hint.pageCode,
@@ -706,7 +767,7 @@ async function buildMappedRows(localPath: string, sheetName: string, fieldMappin
 type WriteApi = { apiCode: string; operation: string; pageCode: string; fields: string[] };
 type PageActionApi = { apiCode: string; pageCode: string; fields: string[] };
 
-const SYSTEM_WRITE_FIELDS = new Set(["id", "created_at", "updated_at", "deleted", "deleted_at", "ext_json"]);
+const SYSTEM_WRITE_FIELDS = SYSTEM_WRITE_FIELD_SET;
 const OPERATION_LABEL: Record<string, string> = { create: "新增", update: "修改", delete: "删除", command: "业务命令" };
 
 function collectPageActionApis(pageCode: string, dsl: unknown): PageActionApi[] {
@@ -739,7 +800,7 @@ async function loadWriteApiCatalog(schemaName: string, pageCodes: string[]): Pro
     `select distinct on (page_code) page_code, dsl_json from admin.page_dsl
      where page_code = any($1)
        and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
      order by page_code, case when schema_scope = 'tenant' then 0 else 1 end`,
     [pages, schemaName]
   );
@@ -753,8 +814,8 @@ async function loadWriteApiCatalog(schemaName: string, pageCodes: string[]): Pro
      where (api_code like any($1) or api_code = any($3))
        and dsl_json->>'operation' in ('create','update','delete','command')
        and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by api_code, case when schema_scope = 'tenant' then 0 else 1 end`,
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by api_code, case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
     [likeCodes, schemaName, actionApiCodes]
   );
   const catalog = rows.map((row: { api_code: string; operation: string; dsl_json: unknown }) => {

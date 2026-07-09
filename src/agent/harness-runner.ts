@@ -156,10 +156,28 @@ async function harnessRunInner(input: {
   let execution: HarnessStepResult<Array<{ versionId: string; versionNo: number }>> = buildSkippedExecution("not started");
   let repairFeedback = "";
   let contextRefreshCount = 0;
-  const maxAttempts = 3;
+  // 迭代预算来自租户 execution_policy（可按租户调整轮次），不再写死
+  const maxAttempts = policy.executionPolicy.maxPlanAttempts;
+  // 卡死检测：同样的失败反馈重复出现时，先强制刷新上下文换路径，再重复则提前终止，不空烧轮次
+  let lastFeedback = "";
+  let forceContextRefresh = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (repairFeedback && contextRefreshCount < maxAttempts - 1 && needsContextRefresh(repairFeedback)) {
+    if (repairFeedback && repairFeedback.trim() === lastFeedback) {
+      if (!forceContextRefresh && contextRefreshCount < maxAttempts - 1) {
+        forceContextRefresh = true;
+      } else {
+        await emit(
+          "failed",
+          "修复未收敛",
+          `连续两轮出现相同错误（${repairFeedback.substring(0, 200)}），已提前终止以避免重复消耗。请补充更明确的需求或换一种描述。`,
+        );
+        break;
+      }
+    }
+    lastFeedback = repairFeedback.trim();
+    if (repairFeedback && contextRefreshCount < maxAttempts - 1 && (forceContextRefresh || needsContextRefresh(repairFeedback))) {
+      forceContextRefresh = false;
       contextRefreshCount += 1;
       await emit("context_loading", "正在补充上下文", "上一次错误显示字段或筛选定义缺失，正在重新定位相关 skill 并读取完整表结构。");
       context = await runStep("context_injection", () =>

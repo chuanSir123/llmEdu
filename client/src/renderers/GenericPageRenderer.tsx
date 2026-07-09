@@ -422,7 +422,7 @@ export function GenericPageRenderer({
     }
     if (action.actionCode.endsWith(".create") || action.actionCode.endsWith(".batchEnroll")) {
       if (action.requiresSelection && selectedRowIds.length === 0) {
-        toast.error("请先选择学员");
+        toast.error(action.requiresSelectionMessage ?? "请先选择数据");
         return;
       }
       const selectedRows = rows.filter((row) => selectedRowIds.includes(String(row.id)));

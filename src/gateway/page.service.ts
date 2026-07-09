@@ -2,6 +2,7 @@ import { pool } from "../db/pool.js";
 import { visibleActionCodes, fieldPermissions, getDataPermissionScope } from "../permission/permission.service.js";
 import type { SessionUser } from "../types.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 export async function loadPageDsl(scope: "admin" | "tenant", pageCode: string, schemaName?: string) {
   const { rows } = await pool.query(
@@ -9,8 +10,8 @@ export async function loadPageDsl(scope: "admin" | "tenant", pageCode: string, s
      from admin.page_dsl
      where page_code = $1 and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
-     order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
+         or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and $2 = 'tenant'))
+     order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end
      limit 1`,
     [pageCode, scope, schemaName ?? null]
   );
@@ -28,11 +29,11 @@ export async function loadPageFullDsl(scope: "admin" | "tenant", pageCode: strin
 
   const [actions, apis, tenantInfo, versionRows, actionPermSet, fieldPermMap, dataPermScope] = await Promise.all([
     pool.query(
-      `select action_code, action_name, action_type, dsl_json from admin.action_dsl where page_code = $1 and status = 'active' and deleted = false and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'')) or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant')) order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
+      `select action_code, action_name, action_type, dsl_json from admin.action_dsl where page_code = $1 and status = 'active' and deleted = false and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'')) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and $2 = 'tenant')) order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
       [pageCode, scope, schemaName ?? null]
     ),
     pool.query(
-      `select api_code, api_type, dsl_json from admin.api_dsl where feature_code = (select feature_code from admin.page_dsl where page_code = $1 and status = 'active' and deleted = false limit 1) and status = 'active' and deleted = false and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'')) or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))`,
+      `select distinct on (api_code) api_code, api_type, dsl_json from admin.api_dsl where feature_code = (select feature_code from admin.page_dsl where page_code = $1 and status = 'active' and deleted = false order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1) and status = 'active' and deleted = false and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'')) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and $2 = 'tenant')) order by api_code, case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
       [pageCode, scope, schemaName ?? null]
     ),
     schemaName ? pool.query(`select schema_name, name, status from admin.tenant_manage where schema_name = $1 and deleted = false`, [schemaName]) : Promise.resolve({ rows: [] }),
@@ -192,8 +193,8 @@ async function enrichImportConfigs(pageDsl: Record<string, unknown>, scope: "adm
     `select import_code, dsl_json from admin.import_dsl
      where import_code = any($1) and status = 'active' and deleted = false
        and ((schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,''))
-         or (schema_scope = 'tenant' and schema_name = 'demo_school' and $2 = 'tenant'))
-     order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
+         or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and $2 = 'tenant'))
+     order by case when schema_scope = $2 and coalesce(schema_name,'') = coalesce($3,'') then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
     [importCodes, scope, schemaName ?? null]
   );
   const configs = new Map<string, Record<string, unknown>>();

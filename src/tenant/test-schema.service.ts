@@ -4,6 +4,8 @@ import { assertSafeIdentifier, qIdent } from "../db/schema-resolver.js";
 import { executeDiffs } from "../agent/diff-executor.js";
 import type { DslDiff } from "../agent/types.js";
 import { DSL_TABLE_MAP } from "../version/version.service.js";
+import { invalidateTableColumnsCache } from "../gateway/query-dsl-engine.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 function httpError(statusCode: number, message: string) {
   return Object.assign(new Error(message), { statusCode });
@@ -21,7 +23,8 @@ function mapFieldTypeToSqlType(fieldType?: string): string {
 
 export function getTestSchemaName(schemaName: string): string {
   assertSafeIdentifier(schemaName);
-  const testSchema = `${schemaName}_test`;
+  const base = schemaName.endsWith("_test") ? schemaName.slice(0, -"_test".length) : schemaName;
+  const testSchema = `${base}_test`;
   assertSafeIdentifier(testSchema);
   return testSchema;
 }
@@ -118,21 +121,32 @@ async function ensureSubscriptions(schemaName: string, testSchema: string, clien
 
 async function resetTestData(schemaName: string, testSchema: string) {
   await withClient(async (client) => {
+    // 查源 schema 的表列表（而非 testSchema），确保源 schema 新增的表也能同步
     const { rows: tables } = await client.query(
       `select table_name from information_schema.tables where table_schema = $1 and table_type = 'BASE TABLE' order by table_name`,
-      [testSchema]
+      [schemaName]
     );
 
+    // 1. DROP testSchema 的所有表（cascade），清除旧表结构（包括上次定制残留的物理列）
     for (const t of tables) {
       const tableName = t.table_name;
-      const quoted = `${qIdent(testSchema)}.${tableName === "user" ? qIdent("user") : tableName}`;
+      const quotedDst = `${qIdent(testSchema)}.${tableName === "user" ? qIdent("user") : tableName}`;
       try {
-        await client.query(`truncate ${quoted} cascade`);
+        await client.query(`drop table if exists ${quotedDst} cascade`);
       } catch {
         // skip
       }
     }
 
+    // 2. 从源 schema 重建表结构，确保和源 schema 完全一致
+    for (const t of tables) {
+      const tableName = t.table_name;
+      const quotedSrc = `${qIdent(schemaName)}.${tableName === "user" ? qIdent("user") : tableName}`;
+      const quotedDst = `${qIdent(testSchema)}.${tableName === "user" ? qIdent("user") : tableName}`;
+      await client.query(`create table ${quotedDst} (like ${quotedSrc} including all)`);
+    }
+
+    // 3. 复制数据
     for (const t of tables) {
       const tableName = t.table_name;
       const quotedSrc = `${qIdent(schemaName)}.${tableName === "user" ? qIdent("user") : tableName}`;
@@ -140,10 +154,13 @@ async function resetTestData(schemaName: string, testSchema: string) {
       try {
         await client.query(`insert into ${quotedDst} select * from ${quotedSrc}`);
       } catch {
-        // skip
+        // skip tables with constraint issues
       }
     }
   });
+
+  // 4. 清除 testSchema 的表结构缓存（表已重建，旧缓存无效）
+  invalidateTableColumnsCache(testSchema);
 }
 
 export async function writeDiffToTestSchema(
@@ -295,7 +312,7 @@ async function resolveTableName(
 ): Promise<string | null> {
   if (diff.targetType === "api_dsl") {
     const { rows } = await pool.query(
-      `select dsl_json from admin.api_dsl where api_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school')) and status = 'active' and deleted = false limit 1`,
+      `select dsl_json from admin.api_dsl where api_code = $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}')) and status = 'active' and deleted = false order by case when schema_name = $2 then 0 when schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
       [diff.targetCode, schemaName]
     );
     const dsl = rows[0]?.dsl_json as Record<string, unknown> | null;
@@ -304,7 +321,7 @@ async function resolveTableName(
   if (diff.targetType === "page_dsl") {
     const pageCode = diff.targetCode;
     const { rows: apiRows } = await pool.query(
-      `select dsl_json from admin.api_dsl where api_code like $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = 'demo_school')) and status = 'active' and deleted = false limit 1`,
+      `select dsl_json from admin.api_dsl where api_code like $1 and (schema_scope = 'tenant' and schema_name = $2 or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}')) and status = 'active' and deleted = false order by case when schema_name = $2 then 0 when schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end limit 1`,
       [`${pageCode}.query`, schemaName]
     );
     const dsl = apiRows[0]?.dsl_json as Record<string, unknown> | null;
@@ -417,6 +434,7 @@ async function applyResourceDiffToTestSchema(
       for (const field of fields) {
         await pool.query(`alter table ${qIdent(testSchema)}.${qIdent(tableName)} add column if not exists ${qIdent(safeResourceName(field.key))} ${mapFieldTypeToSqlType(String(field.type ?? "text"))}`);
       }
+      invalidateTableColumnsCache(testSchema, tableName);
     }
     return;
   }
@@ -575,8 +593,8 @@ async function loadDslSourceRow(dslTable: string, codeCol: string, targetCode: s
   const { rows } = await pool.query(
     `select * from ${dslTable}
      where ${codeCol} = $1 and status = 'active' and deleted = false
-       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
+       and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+     order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end
      limit 1`,
     [targetCode, schemaName]
   );

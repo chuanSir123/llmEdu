@@ -10,6 +10,7 @@ import { validateApiDslAgainstSchema } from "../db/dsl-validator.js";
 import { loadAttachments } from "./attachment.service.js";
 import { dryRunPreviewApis } from "./preview-dry-run.service.js";
 import { loadTenantAgentPolicy } from "../agent/tenant-policy.service.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 function httpError(statusCode: number, message: string) {
   return Object.assign(new Error(message), { statusCode });
@@ -96,6 +97,18 @@ export async function tenantAgentChat(input: {
 }) {
   await checkFeatureEnabled(input.schemaName);
   await checkTenantAdmin(input.user, input.schemaName);
+
+  let existingSession = false;
+  if (input.sessionId) {
+    const { rows } = await pool.query(
+      `select 1 from admin.agent_chat_session where id = $1 and schema_name = $2 and user_id = $3 and status = 'active' and deleted = false`,
+      [input.sessionId, input.schemaName, input.userId]
+    );
+    existingSession = rows.length > 0;
+  }
+  if (!existingSession) {
+    await ensureTestSchema(input.schemaName);
+  }
 
   return withClient(async (client) => {
     let sessionId = input.sessionId;
@@ -561,7 +574,7 @@ async function loadPageModalCodes(pageCode: string, schemaName: string) {
   const { rows } = await pool.query(
     `SELECT dsl_json FROM admin.action_dsl
      WHERE page_code = $1 AND action_type = 'open_modal' AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = '${TEMPLATE_SCHEMA}'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END`,
     [pageCode, schemaName]
   );
@@ -580,7 +593,7 @@ async function loadExistingActionDsl(actionCode: string, schemaName: string) {
   const { rows } = await pool.query(
     `SELECT dsl_json FROM admin.action_dsl
      WHERE action_code = $1 AND status = 'active' AND deleted = false
-       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = 'demo_school'))
+       AND ((schema_scope = 'tenant' AND schema_name = $2) OR (schema_scope = 'tenant' AND schema_name = '${TEMPLATE_SCHEMA}'))
      ORDER BY CASE WHEN schema_scope = 'tenant' THEN 0 ELSE 1 END LIMIT 1`,
     [actionCode, schemaName]
   );

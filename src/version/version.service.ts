@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { pool, withClient } from "../db/pool.js";
 import { collectBusinessEventRelatedFeatureCodes, syncSkillMd } from "../agent/skill-md.service.js";
 import { qIdent } from "../db/schema-resolver.js";
+import { invalidateTableColumnsCache } from "../gateway/query-dsl-engine.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 
 export async function createDraftVersion(input: {
   schemaScope: string;
@@ -199,6 +201,8 @@ async function applyDbResource(client: import("pg").PoolClient, schemaName: stri
         `alter table ${qIdent(schemaName)}.${qIdent(tableName)} add column if not exists ${qIdent(safeName(field.key, "字段"))} ${mapFieldTypeToSqlType(field.type)}`
       );
     }
+    // Clear the table column cache so the DSL query engine picks up the new physical column immediately
+    invalidateTableColumnsCache(schemaName, tableName);
   }
 }
 
@@ -380,8 +384,8 @@ async function loadCurrentBundleItems(client: import("pg").PoolClient, schemaNam
     const { rows } = await client.query(
       `select * from ${source.table}
        where status = 'active' and deleted = false
-         and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-       order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end`,
+         and ((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+       order by case when schema_scope = 'tenant' and schema_name = $1 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end`,
       [schemaName]
     );
     const seen = new Set<string>();
@@ -470,8 +474,8 @@ async function applySnapshotItem(
     const { rows: srcRows } = await client.query(
       `select * from ${dslTable}
        where ${codeCol} = $1 and status = 'active' and deleted = false
-         and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-       order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
+         and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+       order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end
        limit 1`,
       [item.targetCode, schemaName]
     );
@@ -594,8 +598,8 @@ export async function publishVersion(versionId: string, userId: string) {
           const { rows: srcRows } = await client.query(
             `select * from ${dslTable}
              where ${codeCol} = $1 and status = 'active' and deleted = false
-               and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or (schema_scope = 'tenant' and schema_name = 'demo_school'))
-             order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = 'demo_school' then 1 else 2 end
+               and ((schema_scope = 'tenant' and coalesce(schema_name,'') = coalesce($2,'')) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+             order by case when schema_scope = 'tenant' and schema_name = $2 then 0 when schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' then 1 else 2 end
              limit 1`,
             [ver.target_code, ver.schema_name]
           );
@@ -624,7 +628,7 @@ export async function publishVersionAndSyncSkillMd(versionId: string, userId: st
   if (result.targetType === "bundle") {
     const { rows } = await pool.query(`select snapshot_json from admin.dsl_version where id = $1`, [versionId]);
     const items = ((rows[0]?.snapshot_json ?? {}) as { items?: BundleSnapshotItem[] }).items ?? [];
-    const schemaName = result.schemaName ?? "demo_school";
+    const schemaName = result.schemaName ?? TEMPLATE_SCHEMA;
     const features = new Set<string>();
     for (const item of items) {
       if (item.targetType === "page") features.add(item.targetCode);
@@ -647,7 +651,7 @@ export async function publishVersionAndSyncSkillMd(versionId: string, userId: st
   }
   if (result.targetType === "page" || result.targetType === "api" || result.targetType === "action") {
     const featureCode = result.targetCode.replace(/\.(query|detail|create|update|delete)$/, "");
-    const schemaName = result.schemaName ?? "demo_school";
+    const schemaName = result.schemaName ?? TEMPLATE_SCHEMA;
     try {
       await syncSkillMd(schemaName, featureCode);
     } catch (err) {
@@ -655,7 +659,7 @@ export async function publishVersionAndSyncSkillMd(versionId: string, userId: st
     }
   }
   if (result.targetType === "business_rule") {
-    const schemaName = result.schemaName ?? "demo_school";
+    const schemaName = result.schemaName ?? TEMPLATE_SCHEMA;
     const { rows } = await pool.query(
       `select rule_json from admin.business_rule
        where rule_code = $1 and status = 'active' and deleted = false
@@ -808,7 +812,7 @@ export async function initializeTenantVersion(schemaName: string, options: { sel
       { table: "admin.print_template", type: "print_template", codeCol: "template_code" },
       { table: "admin.business_rule", type: "business_rule", codeCol: "rule_code" },
     ];
-    const templateSchema = options.templateSchemaName ?? "demo_school";
+    const templateSchema = options.templateSchemaName ?? TEMPLATE_SCHEMA;
     for (const dt of dslTables) {
       const { rows: dslRows } = await client.query(
         `select * from ${dt.table}
@@ -866,7 +870,7 @@ async function loadDefaultDslVersionSources(client: import("pg").PoolClient) {
   ];
   for (const source of sources) {
     const { rows } = await client.query(
-      `select * from ${source.table} where schema_scope = 'tenant' and schema_name = 'demo_school' and status = 'active' and deleted = false`
+      `select * from ${source.table} where schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}' and status = 'active' and deleted = false`
     );
     for (const row of rows) {
       result.push({

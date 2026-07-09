@@ -166,7 +166,7 @@ export type ChangePlan = {
 export type TenantAgentPolicy = {
   allowedTools: string[];
   allowedTargetTypes: TargetType[];
-  riskPolicy: "auto";
+  riskPolicy: "auto" | "confirm" | "manual";
   moduleScope: string[];
   fieldPolicy: {
     storageStrategy: "ext_json_first" | "physical_first";
@@ -180,6 +180,17 @@ export type TenantAgentPolicy = {
   dataPolicy: {
     allowImport: boolean;
     allowOverwrite: boolean;
+  };
+  /** 迭代预算（来自 tenant_agent_config.execution_policy，可按租户调整） */
+  executionPolicy: {
+    /** 外层"重新生成方案"最大轮次 */
+    maxPlanAttempts: number;
+    /** 内层"校验修复"最大轮次 */
+    maxRepairRounds: number;
+    /** 单次校验修复总超时（毫秒） */
+    repairTimeoutMs: number;
+    /** 单轮修复中允许模型调用自检工具的最大次数 */
+    maxToolCallsPerRepair: number;
   };
 };
 
@@ -256,6 +267,10 @@ export type LlmConfig = {
   maxTokens: number;
   maxContextTokens: number;
   supportsToolCalling: boolean;
+  /** 单次请求超时（毫秒），来自 llm_config.request_timeout_ms，默认 120000 */
+  requestTimeoutMs: number;
+  /** 请求失败最大重试次数，来自 llm_config.max_retries，默认 3 */
+  maxRetries: number;
 };
 
 export type SkillSummary = {

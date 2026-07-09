@@ -6,6 +6,14 @@ export function validateTenantPolicy(diffs: DslDiff[], policy: TenantAgentPolicy
   if (!policy.dataPolicy.allowImport && diffs.some((diff) => diff.targetType === "import_dsl")) {
     errors.push("租户策略不允许导入能力定制");
   }
+  if (policy.allowedTargetTypes.length > 0) {
+    const blockedTargetTypes = diffs
+      .map((diff) => diff.targetType)
+      .filter((targetType) => !policy.allowedTargetTypes.includes(targetType));
+    if (blockedTargetTypes.length > 0) {
+      errors.push(`租户策略不允许定制资源类型: ${[...new Set(blockedTargetTypes)].join(", ")}`);
+    }
+  }
   if (policy.moduleScope.length > 0) {
     const blockedModules = diffs
       .map(resolveModuleCode)
