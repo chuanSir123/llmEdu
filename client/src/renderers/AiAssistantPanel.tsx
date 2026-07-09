@@ -19,6 +19,31 @@ type AttachmentItem = {
   storageUrl: string;
 };
 
+type NavigatePayload = { pageCode?: string; filters?: Record<string, unknown> };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function parseNavigatePayload(event: { message?: string; detail?: unknown }): NavigatePayload | null {
+  if (isRecord(event.detail)) {
+    const pageCode = typeof event.detail.pageCode === "string" ? event.detail.pageCode : undefined;
+    const filters = isRecord(event.detail.filters) ? event.detail.filters : undefined;
+    if (pageCode) return { pageCode, filters };
+  }
+
+  if (!event.message) return null;
+  try {
+    const parsed: unknown = JSON.parse(event.message);
+    if (!isRecord(parsed)) return null;
+    const pageCode = typeof parsed.pageCode === "string" ? parsed.pageCode : undefined;
+    const filters = isRecord(parsed.filters) ? parsed.filters : undefined;
+    return pageCode ? { pageCode, filters } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AiAssistantPanel({ schemaName, initialSessionId, onClose, onNavigate }: { schemaName: string; initialSessionId?: string; onClose: () => void; onNavigate?: (pageCode: string, filters?: Record<string, unknown>) => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -96,10 +121,8 @@ export function AiAssistantPanel({ schemaName, initialSessionId, onClose, onNavi
           if (!event.visibleToTenant) return;
           // 业务导航：收到 navigate 工具结果时直接打开目标页面
           if (event.toolName === "navigate" && onNavigate) {
-            try {
-              const nav = JSON.parse(event.message) as { pageCode?: string; filters?: Record<string, unknown> };
-              if (nav.pageCode) onNavigate(nav.pageCode, nav.filters);
-            } catch { /* ignore */ }
+            const nav = parseNavigatePayload(event);
+            if (nav?.pageCode) onNavigate(nav.pageCode, nav.filters);
           }
           setMessages((prev) => prev.map((msg, index) => index === assistantIndex ? {
             ...msg,

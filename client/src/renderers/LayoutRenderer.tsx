@@ -144,6 +144,16 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
     setShowAiPanel(true);
   }
 
+  function getPageTitle(pageCode: string) {
+    for (const module of modules) {
+      for (const pages of Object.values(module.groups)) {
+        const page = pages.find((item) => item.pageCode === pageCode);
+        if (page) return page.featureName;
+      }
+    }
+    return pageDsls[pageCode]?.title ?? pageCode;
+  }
+
   const managementTree = useMemo(() => {
     const byParent = new Map<string, typeof managementOrganizations>();
     for (const org of managementOrganizations) {
@@ -293,7 +303,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
         <AiAssistantPanel
           schemaName={schemaName}
           onNavigate={(pageCode, filters) => {
-            void openPage(pageCode, pageCode, filters);
+            void openPage(pageCode, getPageTitle(pageCode), filters);
             setShowAssistantPanel(false);
           }}
           onClose={() => setShowAssistantPanel(false)}
