@@ -180,7 +180,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
     <div className={`${token.shell} flex`}>
       <SidebarRenderer modules={modules} activeModule={activeModule} onModule={toggleModule} onOpenPage={openPage} />
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[56px] shrink-0 items-center justify-between border-b border-[#dce8f8] bg-white/90 px-5 shadow-[0_4px_18px_rgba(18,97,216,0.06)] backdrop-blur">
+        <header className="relative z-[80] flex h-[56px] shrink-0 items-center justify-between border-b border-[#dce8f8] bg-white/95 px-5 shadow-[0_4px_18px_rgba(18,97,216,0.06)] backdrop-blur">
           <div className="text-sm font-semibold text-[#172033]">{scope === "admin" ? "平台管理台" : "智能教务工作台"}</div>
           <div className="flex items-center gap-2 text-sm">
             <button className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#d9e3ef] bg-[#f6faff] px-3 text-[#2f80ed] shadow-[0_4px_14px_rgba(18,97,216,0.08)] hover:border-[#9fc7f5] hover:bg-white" onClick={() => setShowAssistantPanel(true)}>
@@ -191,7 +191,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
               <div className="relative">
                 <button
                   type="button"
-                  className={`inline-flex h-8 max-w-[260px] items-center gap-2 border px-2.5 text-left transition ${managementOpen ? "border-[#2f80ed] bg-[#f2f7ff] text-[#1765d8]" : "border-[#d9e3ef] bg-[#fbfcfe] text-[#354154] hover:border-[#9fc7f5] hover:bg-[#f6faff]"}`}
+                  className={`inline-flex h-9 max-w-[260px] items-center gap-2 rounded-xl border px-3 text-left shadow-[0_4px_14px_rgba(18,97,216,0.06)] transition ${managementOpen ? "border-[#2f80ed] bg-[#f2f7ff] text-[#1765d8]" : "border-[#d9e3ef] bg-white text-[#354154] hover:border-[#9fc7f5] hover:bg-[#f6faff]"}`}
                   onClick={() => setManagementOpen((open) => !open)}
                 >
                   <Building2 className="h-4 w-4 shrink-0 text-[#2f80ed]" />
@@ -199,13 +199,13 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
                   <ChevronDown className={`h-4 w-4 shrink-0 text-[#8b95a7] transition-transform ${managementOpen ? "rotate-180" : ""}`} />
                 </button>
                 {managementOpen && (
-                  <div className="absolute right-0 top-[38px] z-50 w-[320px] border border-[#cfd8e6] bg-white shadow-[0_14px_32px_rgba(24,36,56,0.18)]">
-                    <div className="border-b border-[#e8edf5] px-3 py-2">
+                  <div className="absolute right-0 top-[44px] z-[100] w-[320px] overflow-hidden rounded-2xl border border-[#cfe0f5] bg-white shadow-[0_18px_42px_rgba(18,97,216,0.18)]">
+                    <div className="border-b border-[#e8edf5] bg-gradient-to-r from-[#f3f7ff] to-white px-4 py-3">
                       <div className="text-xs font-semibold text-[#172033]">切换管理架构</div>
                       <div className="mt-1 text-[11px] text-[#7a8494]">数据权限按当前架构及其下级生效</div>
                     </div>
-                    <div className="border-b border-[#edf1f6] p-2">
-                      <div className="flex h-8 items-center gap-2 border border-[#d9e3ef] bg-[#f8fafc] px-2">
+                    <div className="border-b border-[#edf1f6] p-3">
+                      <div className="flex h-9 items-center gap-2 rounded-xl border border-[#d9e3ef] bg-[#f8fafc] px-3">
                         <Search className="h-4 w-4 shrink-0 text-[#8b95a7]" />
                         <input
                           className="h-full min-w-0 flex-1 border-0 bg-transparent text-sm text-[#263445] outline-none placeholder:text-[#9aa5b5]"
@@ -221,15 +221,15 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
                         <button
                           key={org.id}
                           type="button"
-                          className={`flex w-full items-center gap-2 py-2 pr-3 text-left text-sm hover:bg-[#f2f7ff] ${org.id === managementOrganizationId ? "bg-[#edf3ff] text-[#1765d8] font-medium" : "text-[#263445]"}`}
+                          className={`mx-2 flex w-[calc(100%-16px)] items-center gap-2 rounded-xl py-2 pr-3 text-left text-sm hover:bg-[#f2f7ff] ${org.id === managementOrganizationId ? "bg-[#edf3ff] text-[#1765d8] font-medium" : "text-[#263445]"}`}
                           style={{ paddingLeft: 12 + org.depth * 18 }}
                           onClick={() => void switchManagementOrganization(org.id)}
                         >
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center border border-[#d9e3ef] bg-white text-[#8b95a7]">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-[#d9e3ef] bg-white text-[#8b95a7]">
                             {org.id === managementOrganizationId ? <Check className="h-3.5 w-3.5 text-[#2f80ed]" /> : <Building2 className="h-3.5 w-3.5" />}
                           </span>
                           <span className="min-w-0 flex-1 truncate">{org.name}</span>
-                          {org.organization_type && <span className="shrink-0 border border-[#e1e7f0] bg-[#f8fafc] px-1.5 py-0.5 text-[11px] text-[#7a8494]">{org.organization_type_label ?? org.organization_type}</span>}
+                          {org.organization_type && <span className="shrink-0 rounded-full border border-[#e1e7f0] bg-[#f8fafc] px-2 py-0.5 text-[11px] text-[#7a8494]">{org.organization_type_label ?? org.organization_type}</span>}
                         </button>
                       ))}
                       {!managementTree.length && <div className="px-3 py-3 text-sm text-[#8b95a7]">无匹配架构</div>}

@@ -804,25 +804,25 @@ export function GenericPageRenderer({
     return (
       <div className="grid h-full grid-cols-[minmax(0,1fr)_360px] overflow-hidden bg-[#f4f7fb]">
         <div className="overflow-auto p-6">
-          <section className="relative mb-6 overflow-hidden rounded-3xl bg-gradient-to-br from-[#0b4bb3] via-[#1261d8] to-[#2f80ed] px-7 py-6 text-white shadow-[0_18px_44px_rgba(18,97,216,0.28)]">
-            <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-cyan-300/20 blur-3xl" />
-            <div className="absolute -bottom-20 left-1/3 h-48 w-48 rounded-full bg-white/10 blur-3xl" />
+          <section className="relative mb-6 overflow-hidden rounded-3xl border border-[#dbeafe] bg-gradient-to-br from-[#eaf3ff] via-[#f5f9ff] to-[#dceeff] px-7 py-6 text-[#172033] shadow-[0_18px_44px_rgba(18,97,216,0.12)]">
+            <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#2f80ed]/20 blur-3xl" />
+            <div className="absolute -bottom-20 left-1/3 h-48 w-48 rounded-full bg-cyan-300/20 blur-3xl" />
             <div className="relative flex flex-wrap items-end justify-between gap-4">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-3 py-1 text-xs text-white/85 backdrop-blur">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-200" />
+                <div className="inline-flex items-center gap-2 rounded-full border border-[#bcd8fb] bg-white/70 px-3 py-1 text-xs text-[#1261d8] shadow-sm backdrop-blur">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#2f80ed]" />
                   智能教务工作台
                 </div>
                 <h1 className="mt-4 text-2xl font-semibold tracking-tight">{dsl.title ?? "后台首页"}</h1>
-                <p className="mt-2 text-sm text-blue-50/90">{dsl.subtitle ?? dashboard?.panels?.[0]?.description ?? "统一查看校区关键数据与常用入口"}</p>
+                <p className="mt-2 text-sm text-[#526075]">{dsl.subtitle ?? dashboard?.panels?.[0]?.description ?? "统一查看校区关键数据与常用入口"}</p>
               </div>
               {metrics.length > 0 && (
                 <div className="grid min-w-[520px] flex-1 grid-cols-1 gap-3 md:grid-cols-3">
                   {metrics.map((metric) => (
                     <button
                       key={`${metric.label}-${metric.field ?? metric.source}`}
-                      className={`rounded-2xl border border-white/20 bg-white/95 px-5 py-4 text-left text-[#172033] shadow-[0_12px_30px_rgba(9,50,120,0.18)] backdrop-blur transition ${
-                        metric.target ? "cursor-pointer hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_16px_36px_rgba(9,50,120,0.24)]" : "cursor-default"
+                      className={`rounded-2xl border border-[#cfe3ff] bg-white/75 px-5 py-4 text-left text-[#172033] shadow-[0_10px_26px_rgba(18,97,216,0.10)] backdrop-blur transition ${
+                        metric.target ? "cursor-pointer hover:-translate-y-0.5 hover:border-[#9fc7f5] hover:bg-white hover:shadow-[0_14px_32px_rgba(18,97,216,0.16)]" : "cursor-default"
                       }`}
                       onClick={() => openTarget(metric.target, metricLabel(metric))}
                     >
