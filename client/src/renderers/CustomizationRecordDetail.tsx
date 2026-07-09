@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { GatewayClient } from "../api/GatewayClient";
+import { MarkdownContent } from "./MarkdownContent";
 
 type ProgressEvent = {
   title: string;
@@ -181,7 +182,7 @@ export function CustomizationRecordDetail({
                           <div className={`whitespace-pre-wrap rounded-[8px] px-4 py-3 text-sm leading-6 shadow-sm ${
                             isUser ? "bg-[#2f80ed] text-white" : "border border-[#e8edf5] bg-white text-[#263445]"
                           }`}>
-                            {entry.content}
+                            <MarkdownContent content={entry.content} inverse={isUser} />
                           </div>
                           {!isUser && <ProgressTimeline events={progressEvents} />}
                         </div>
