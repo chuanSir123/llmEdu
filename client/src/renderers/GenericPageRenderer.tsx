@@ -18,8 +18,9 @@ import { fieldDictCode } from "../dsl/dictionarySource";
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type MetricDsl = {
   label: string;
-  source: "total" | "countBy" | "sum";
+  source: "total" | "countBy" | "sum" | "todayCount" | "todayCountBy";
   field?: string;
+  dateField?: string;
   value?: string | number | boolean;
   suffix?: string;
   target?: PageTargetDsl;
@@ -562,10 +563,26 @@ export function GenericPageRenderer({
     }
   }
 
+  function isTodayValue(value: unknown) {
+    if (!value) return false;
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) return false;
+    const now = new Date();
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  }
+
   function metricValue(metric: MetricDsl) {
     if (metric.source === "total") return total;
     if (metric.source === "countBy" && metric.field) {
       return rows.filter((row) => String(row[metric.field!]) === String(metric.value)).length;
+    }
+    if (metric.source === "todayCount") {
+      const dateField = metric.dateField ?? metric.field ?? "created_at";
+      return rows.filter((row) => isTodayValue(row[dateField])).length;
+    }
+    if (metric.source === "todayCountBy" && metric.field) {
+      const dateField = metric.dateField ?? "created_at";
+      return rows.filter((row) => String(row[metric.field!]) === String(metric.value) && isTodayValue(row[dateField])).length;
     }
     if (metric.source === "sum" && metric.field) {
       return rows.reduce((sum, row) => sum + Number(row[metric.field!] ?? 0), 0).toLocaleString();
@@ -785,57 +802,74 @@ export function GenericPageRenderer({
       "from-[#cd6bd6] to-[#df73ce]"
     ];
     return (
-      <div className="grid h-full grid-cols-[minmax(0,1fr)_360px] overflow-hidden bg-[#eef0f8]">
+      <div className="grid h-full grid-cols-[minmax(0,1fr)_360px] overflow-hidden bg-[#f4f7fb]">
         <div className="overflow-auto p-6">
+          <section className="relative mb-6 overflow-hidden rounded-3xl border border-[#dbeafe] bg-gradient-to-br from-[#eaf3ff] via-[#f5f9ff] to-[#dceeff] px-7 py-6 text-[#172033] shadow-[0_18px_44px_rgba(18,97,216,0.12)]">
+            <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#2f80ed]/20 blur-3xl" />
+            <div className="absolute -bottom-20 left-1/3 h-48 w-48 rounded-full bg-cyan-300/20 blur-3xl" />
+            <div className="relative flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-[#bcd8fb] bg-white/70 px-3 py-1 text-xs text-[#1261d8] shadow-sm backdrop-blur">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#2f80ed]" />
+                  智能教务工作台
+                </div>
+                <h1 className="mt-4 text-2xl font-semibold tracking-tight">{dsl.title ?? "后台首页"}</h1>
+                <p className="mt-2 text-sm text-[#526075]">{dsl.subtitle ?? dashboard?.panels?.[0]?.description ?? "统一查看校区关键数据与常用入口"}</p>
+              </div>
+              {metrics.length > 0 && (
+                <div className="grid min-w-[520px] flex-1 grid-cols-1 gap-3 md:grid-cols-3">
+                  {metrics.map((metric) => (
+                    <button
+                      key={`${metric.label}-${metric.field ?? metric.source}`}
+                      className={`rounded-2xl border border-[#cfe3ff] bg-white/75 px-5 py-4 text-left text-[#172033] shadow-[0_10px_26px_rgba(18,97,216,0.10)] backdrop-blur transition ${
+                        metric.target ? "cursor-pointer hover:-translate-y-0.5 hover:border-[#9fc7f5] hover:bg-white hover:shadow-[0_14px_32px_rgba(18,97,216,0.16)]" : "cursor-default"
+                      }`}
+                      onClick={() => openTarget(metric.target, metricLabel(metric))}
+                    >
+                      <div className="text-[28px] font-bold leading-none text-[#1261d8]">
+                        {metricValue(metric)}
+                        {metric.suffix && <span className="ml-1 text-xs font-normal text-[#7a8494]">{metric.suffix}</span>}
+                      </div>
+                      <div className="mt-2 text-xs font-medium text-[#607083]">{metricLabel(metric)}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
           {dashboard?.quickActions?.length ? (
             <section className="mb-6">
-              <h2 className="mb-4 text-base font-semibold text-[#263445]">常用功能</h2>
-              <div className="flex flex-wrap gap-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-[#172033]">常用功能</h2>
+                  <p className="mt-1 text-xs text-[#7a8494]">高频业务入口，快速进入日常处理页面</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
                 {dashboard.quickActions.map((action, index) => (
                   <button
                     key={action.pageCode}
-                    className={`h-[86px] w-[88px] rounded-[8px] bg-gradient-to-br ${quickGradients[index % quickGradients.length]} px-2 text-center text-xs font-semibold text-white shadow-[0_8px_18px_rgba(47,80,237,0.28)] transition hover:-translate-y-0.5`}
+                    className="group rounded-2xl border border-white bg-white p-4 text-left shadow-[0_10px_28px_rgba(18,97,216,0.08)] transition hover:-translate-y-1 hover:border-[#bcd8fb] hover:shadow-[0_16px_36px_rgba(18,97,216,0.14)]"
                     onClick={() => onOpenPage?.(action.pageCode, action.label, action.filters)}
                   >
-                    <span className="block text-[28px] leading-8">◎</span>
-                    <span className="mt-2 block">{action.label}</span>
+                    <span className={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${quickGradients[index % quickGradients.length]} text-xl text-white shadow-[0_8px_18px_rgba(47,80,237,0.24)] transition group-hover:scale-105`}>{action.icon ?? "◎"}</span>
+                    <span className="mt-3 block text-sm font-semibold text-[#172033]">{action.label}</span>
+                    <span className="mt-1 block truncate text-xs text-[#7a8494]">{action.description ?? "点击打开"}</span>
                   </button>
                 ))}
               </div>
             </section>
           ) : null}
 
-          <section className="mb-6">
-            <h2 className="mb-4 text-base font-semibold text-[#263445]">数据预览</h2>
-            {metrics.length > 0 && (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                {metrics.map((metric) => (
-                  <button
-                    key={`${metric.label}-${metric.field ?? metric.source}`}
-                    className={`rounded-[8px] bg-white px-8 py-7 text-center shadow-[0_8px_22px_rgba(24,36,56,0.06)] transition ${
-                      metric.target ? "cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(24,36,56,0.1)]" : "cursor-default"
-                    }`}
-                    onClick={() => openTarget(metric.target, metricLabel(metric))}
-                  >
-                    <div className="text-[28px] font-semibold text-[#4968ff]">
-                      {metricValue(metric)}
-                      {metric.suffix && <span className="ml-1 text-xs font-normal text-[#8b95a7]">{metric.suffix}</span>}
-                    </div>
-                    <div className="mt-2 text-xs text-[#7a8494]">{metricLabel(metric)}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-
           <section>
-            <h2 className="mb-4 text-base font-semibold text-[#263445]">月排行榜 TOP10</h2>
+            <h2 className="mb-4 text-base font-semibold text-[#172033]">月排行榜 TOP10</h2>
             {(dashboard?.panels ?? []).map((panel) => (
-              <div key={panel.title} className="rounded-[6px] bg-white p-4 shadow-[0_8px_22px_rgba(24,36,56,0.06)]">
+              <div key={panel.title} className="overflow-hidden rounded-2xl border border-white bg-white p-4 shadow-[0_10px_28px_rgba(18,97,216,0.08)]">
                 <div className="mb-3 flex items-center gap-3">
-                  <button className="h-8 min-w-[86px] border border-[#dde3ee] px-3 text-xs text-[#526075]">按分公司</button>
-                  <button className="h-8 min-w-[86px] border border-[#dde3ee] px-3 text-xs text-[#526075]">校区业绩</button>
-                  <button className="h-8 min-w-[86px] border border-[#dde3ee] px-3 text-xs text-[#526075]">统计指标</button>
+                  <button className="h-8 min-w-[86px] rounded-lg border border-[#dbe7ff] bg-[#f3f7ff] px-3 text-xs font-medium text-[#1261d8]">按分公司</button>
+                  <button className="h-8 min-w-[86px] rounded-lg border border-[#dde3ee] bg-white px-3 text-xs text-[#526075] hover:border-[#9fc7f5] hover:text-[#1261d8]">校区业绩</button>
+                  <button className="h-8 min-w-[86px] rounded-lg border border-[#dde3ee] bg-white px-3 text-xs text-[#526075] hover:border-[#9fc7f5] hover:text-[#1261d8]">统计指标</button>
                 </div>
                 <GenericTableRenderer
                   columns={panel.columns ?? tableDsl.columns ?? []}
@@ -851,23 +885,26 @@ export function GenericPageRenderer({
           {error && <div className="mt-4 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         </div>
 
-        <aside className="overflow-auto border-l border-[#e8edf5] bg-white p-5">
+        <aside className="overflow-auto border-l border-[#dce8f8] bg-white/75 p-6 backdrop-blur">
           <div className="mb-6">
-            <h2 className="mb-4 text-base font-semibold text-[#263445]">{dashboard?.rightRail?.title ?? "校区动态"}</h2>
+            <h2 className="mb-4 text-base font-semibold text-[#172033]">{dashboard?.rightRail?.title ?? "校区动态"}</h2>
             {(dashboard?.rightRail?.sections ?? []).map((section) => (
-              <section key={section.title} className="mb-8">
-                <div className="mb-3 text-sm font-semibold text-[#263445]">{section.title}</div>
-                <div className="space-y-3">
+              <section key={section.title} className="mb-5 rounded-2xl border border-white bg-white p-4 shadow-[0_10px_28px_rgba(18,97,216,0.08)]">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-[#172033]">
+                  <span className="h-2 w-2 rounded-full bg-[#2f80ed]" />
+                  {section.title}
+                </div>
+                <div className="space-y-2">
                   {(rightRailItems[section.title] ?? section.items).map((item) => (
                     <button
                       key={`${section.title}-${item.text}`}
-                      className={`flex w-full items-center justify-between gap-3 rounded-[4px] px-2 py-1.5 text-left text-xs transition ${
+                      className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-xs transition ${
                         item.target ? "hover:bg-[#f2f7ff]" : "cursor-default"
                       }`}
                       onClick={() => openTarget(item.target, item.text)}
                     >
                       <div className="min-w-0">
-                        {item.tag && <span className="mr-2 rounded-[3px] bg-[#e8f1ff] px-1.5 py-0.5 text-[#2f80ed]">{item.tag}</span>}
+                        {item.tag && <span className="mr-2 rounded-full bg-[#e8f1ff] px-2 py-0.5 text-[#2f80ed]">{item.tag}</span>}
                         <span className="text-[#526075]">{item.text}</span>
                       </div>
                       <span className="shrink-0 text-[#8b95a7]">{item.meta}</span>

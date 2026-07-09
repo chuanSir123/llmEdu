@@ -59,7 +59,8 @@ function ProgressTimeline({ events }: { events: ProgressEvent[] }) {
       <div className="mb-2 text-xs font-medium text-[#2f80ed]">执行过程</div>
       <div className="space-y-2">
         {events.map((event, eventIdx) => {
-          const statusLabel = progressStatusLabel(event.status);
+          const status = event.status === "running" && eventIdx < events.length - 1 ? "success" : event.status ?? "success";
+          const statusLabel = progressStatusLabel(status);
           return (
             <div key={`${event.stage}-${eventIdx}`} className="flex gap-2 text-xs leading-relaxed text-[#526075]">
               <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#b8c2d2]" />

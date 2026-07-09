@@ -34,21 +34,22 @@ export function SidebarRenderer({
   return (
     <>
       <aside className={token.sidebar}>
-        <div className="flex h-14 items-center justify-center text-lg font-bold tracking-tight text-white">
-          BOSS
+        <div className="flex h-16 flex-col items-center justify-center text-white">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-sm font-bold text-[#1261d8] shadow-[0_8px_24px_rgba(9,50,120,0.28)]">B</div>
+          <div className="mt-1 text-[10px] font-semibold tracking-wide text-white/80">BOSS</div>
         </div>
         <nav className="py-2">
           {modules.map((item) => (
             <button
               key={item.moduleCode}
               className={`relative flex h-[58px] w-full flex-col items-center justify-center gap-1 text-xs transition ${
-                item.moduleCode === active?.moduleCode ? "bg-[#0b55c8] text-white" : "text-white/90 hover:bg-white/10 hover:text-white"
+                item.moduleCode === active?.moduleCode ? "bg-white/18 text-white shadow-[inset_3px_0_0_rgba(255,255,255,0.9)]" : "text-white/85 hover:bg-white/10 hover:text-white"
               }`}
               onClick={() => onModule(item.moduleCode)}
               title={item.moduleName}
             >
               <Icon name={item.icon} />
-              {item.moduleCode === active?.moduleCode && <span className="absolute left-0 top-0 h-full w-1 bg-white" />}
+              {item.moduleCode === active?.moduleCode && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-cyan-200" />}
               <span>{item.moduleName}</span>
             </button>
           ))}
@@ -66,7 +67,7 @@ export function SidebarRenderer({
               visible ? "translate-x-0 opacity-100" : "-translate-x-3 opacity-0"
             }`}
           >
-            <div className="flex h-16 items-center border-b border-[#e5e8ef] px-6">
+            <div className="flex h-16 items-center border-b border-[#e5e8ef] bg-gradient-to-r from-[#f3f7ff] to-white px-6">
               <div>
                 <div className="text-lg font-semibold text-[#1673e6]">LLM Edu</div>
                 <div className="text-xs text-[#7a8999]">{flyoutModule.moduleName}</div>

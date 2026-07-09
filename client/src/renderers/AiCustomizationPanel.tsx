@@ -401,22 +401,25 @@ export function AiCustomizationPanel({ schemaName, initialSessionId, onClose }: 
                       </button>
                       {(msg.progressExpanded || msg.streaming) && (
                         <div className="space-y-2">
-                          {msg.progressEvents.map((event, eventIdx) => (
+                          {msg.progressEvents.map((event, eventIdx) => {
+                            const status = event.status === "running" && eventIdx < msg.progressEvents!.length - 1 ? "success" : event.status ?? (msg.streaming && eventIdx === msg.progressEvents!.length - 1 ? "running" : "success");
+                            return (
                             <div key={`${event.stage}-${eventIdx}`} className="flex gap-2 text-xs leading-relaxed text-[#526075]">
-                              <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${msg.streaming && eventIdx === msg.progressEvents!.length - 1 ? "bg-[#2f80ed]" : "bg-[#b8c2d2]"}`} />
+                              <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${status === "running" ? "bg-[#2f80ed]" : "bg-[#b8c2d2]"}`} />
                               <div>
                                 <div className="flex items-center gap-2">
                                   <span className="font-medium text-[#263445]">{event.title}</span>
-                                  {event.status && (
+                                  {status && (
                                     <span className="rounded-[3px] bg-[#eef3f8] px-1.5 py-0.5 text-[10px] text-[#607083]">
-                                      {event.status === "running" ? "执行中" : event.status === "success" ? "完成" : event.status === "failed" ? "失败" : "跳过"}
+                                      {status === "running" ? "执行中" : status === "success" ? "完成" : status === "failed" ? "失败" : "跳过"}
                                     </span>
                                   )}
                                 </div>
                                 <div>{event.message}</div>
                               </div>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
