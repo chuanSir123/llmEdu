@@ -811,7 +811,7 @@ export function GenericPageRenderer({
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-[#bcd8fb] bg-white/70 px-3 py-1 text-xs text-[#1261d8] shadow-sm backdrop-blur">
                   <span className="h-1.5 w-1.5 rounded-full bg-[#2f80ed]" />
-                  智能教务工作台
+                  今日总览
                 </div>
                 <h1 className="mt-4 text-2xl font-semibold tracking-tight">{dsl.title ?? "后台首页"}</h1>
                 <p className="mt-2 text-sm text-[#526075]">{dsl.subtitle ?? dashboard?.panels?.[0]?.description ?? "统一查看校区关键数据与常用入口"}</p>

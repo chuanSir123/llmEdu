@@ -181,7 +181,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
       <SidebarRenderer modules={modules} activeModule={activeModule} onModule={toggleModule} onOpenPage={openPage} />
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="relative z-[80] flex h-[56px] shrink-0 items-center justify-between border-b border-[#dce8f8] bg-white/95 px-5 shadow-[0_4px_18px_rgba(18,97,216,0.06)] backdrop-blur">
-          <div className="text-sm font-semibold text-[#172033]">{scope === "admin" ? "平台管理台" : "智能教务工作台"}</div>
+          <div />
           <div className="flex items-center gap-2 text-sm">
             <button className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#d9e3ef] bg-[#f6faff] px-3 text-[#2f80ed] shadow-[0_4px_14px_rgba(18,97,216,0.08)] hover:border-[#9fc7f5] hover:bg-white" onClick={() => setShowAssistantPanel(true)}>
               <Sparkles className="h-4 w-4" />
@@ -238,14 +238,14 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
                 )}
               </div>
             )}
-            <div className="ml-1 flex h-8 items-center gap-2 border-l border-[#e8edf5] pl-3">
-              <span className="inline-flex h-7 w-7 items-center justify-center bg-[#eef5ff] text-xs font-semibold text-[#2f80ed]">
+            <div className="ml-1 inline-flex h-9 items-center gap-2 rounded-xl border border-[#d9e3ef] bg-white px-2.5 pr-3 shadow-[0_4px_14px_rgba(18,97,216,0.06)]">
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-[#edf5ff] text-xs font-semibold text-[#1261d8]">
                 {userInitial}
               </span>
-              <span className="max-w-[120px] truncate text-[#354154]">{user?.name}</span>
+              <span className="max-w-[120px] truncate text-sm text-[#354154]">{user?.name}</span>
             </div>
             <button
-              className="inline-flex h-8 items-center gap-1.5 border border-[#dde3ee] px-2.5 text-[#526075] hover:border-[#2f80ed] hover:text-[#2f80ed]"
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#dde3ee] bg-white px-3 text-[#526075] shadow-[0_4px_14px_rgba(18,97,216,0.04)] hover:border-[#2f80ed] hover:bg-[#f6faff] hover:text-[#2f80ed]"
               onClick={() => {
                 logout();
                 navigate(scope === "admin" ? "/admin" : `/${schemaName}`);
