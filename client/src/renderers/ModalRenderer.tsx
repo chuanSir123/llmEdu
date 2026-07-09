@@ -58,7 +58,7 @@ export function ModalRenderer({
       ? `flex flex-col gap-2 ${spanClass(field)}`
       : `grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 ${spanClass(field)}`;
   return (
-    <div className={isBoss ? "fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" : token.modalBackdrop}>
+    <div className={isBoss ? "fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/45 p-4 pt-6 sm:pt-8" : token.modalBackdrop}>
       <div className={isBoss ? `flex max-h-[92vh] w-full flex-col ${widthClass} rounded-[3px] bg-white shadow-[0_18px_48px_rgba(15,23,42,0.28)]` : `flex max-h-[92vh] w-full flex-col ${widthClass} rounded-[4px] border border-[#e5e8ef] bg-white shadow-xl`}>
         <div className={isBoss ? "flex h-12 shrink-0 items-center justify-between border-b border-[#e8edf5] px-5" : "flex h-12 shrink-0 items-center justify-between border-b border-line px-4"}>
           <h3 className={isBoss ? "text-base font-semibold text-[#263445]" : "text-base font-semibold"}>{title}</h3>
