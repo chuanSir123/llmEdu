@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, FileSpreadsheet, Image, Paperclip, Send, Sparkles, X } from "lucide-react";
 import { GatewayClient } from "../api/GatewayClient";
+import { MarkdownContent } from "./MarkdownContent";
 import { useToast } from "../context/ToastContext";
 
 type Message = {
@@ -187,7 +188,7 @@ export function AiAssistantPanel({ schemaName, initialSessionId, onClose, onNavi
                       ))}
                     </div>
                   )}
-                  <div className="whitespace-pre-wrap">{msg.content || (msg.streaming ? "正在处理..." : "")}</div>
+                  <MarkdownContent content={msg.content || (msg.streaming ? "正在处理..." : "")} inverse={msg.role === "user"} />
                 </div>
               </div>
             ))}

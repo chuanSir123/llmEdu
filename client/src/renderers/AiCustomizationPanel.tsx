@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { GatewayClient } from "../api/GatewayClient";
+import { MarkdownContent } from "./MarkdownContent";
 import { useToast } from "../context/ToastContext";
 
 
@@ -384,7 +385,7 @@ export function AiCustomizationPanel({ schemaName, initialSessionId, onClose }: 
                       : "bg-[#f4f6f9] text-[#263445]"
                   }`}
                 >
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  <MarkdownContent content={msg.content} inverse={msg.role === "user"} />
                   {msg.progressEvents && msg.progressEvents.length > 0 && (
                     <div className={`${msg.content ? "mt-3 border-t border-[#e0e4eb] pt-3" : ""}`}>
                       <button
