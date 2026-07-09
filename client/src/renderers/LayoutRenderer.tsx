@@ -180,10 +180,10 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
     <div className={`${token.shell} flex`}>
       <SidebarRenderer modules={modules} activeModule={activeModule} onModule={toggleModule} onOpenPage={openPage} />
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[48px] shrink-0 items-center justify-between border-b border-[#e8edf5] bg-white px-4">
-          <div />
+        <header className="flex h-[56px] shrink-0 items-center justify-between border-b border-[#dce8f8] bg-white/90 px-5 shadow-[0_4px_18px_rgba(18,97,216,0.06)] backdrop-blur">
+          <div className="text-sm font-semibold text-[#172033]">{scope === "admin" ? "平台管理台" : "智能教务工作台"}</div>
           <div className="flex items-center gap-2 text-sm">
-            <button className="inline-flex h-8 items-center gap-1.5 border border-[#d9e3ef] bg-[#f6faff] px-2.5 text-[#2f80ed] hover:border-[#9fc7f5]" onClick={() => setShowAssistantPanel(true)}>
+            <button className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#d9e3ef] bg-[#f6faff] px-3 text-[#2f80ed] shadow-[0_4px_14px_rgba(18,97,216,0.08)] hover:border-[#9fc7f5] hover:bg-white" onClick={() => setShowAssistantPanel(true)}>
               <Sparkles className="h-4 w-4" />
               <span>AI 助手</span>
             </button>

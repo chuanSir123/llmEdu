@@ -185,7 +185,7 @@ export type PageDsl = {
     valueLabels?: Record<string, Record<string, string>>;
     dictionaryMeta?: Record<string, Record<string, Record<string, unknown>>>;
     dashboard?: {
-      quickActions?: Array<{ label: string; pageCode: string; moduleCode?: string; filters?: Record<string, unknown> }>;
+      quickActions?: Array<{ label: string; pageCode: string; moduleCode?: string; filters?: Record<string, unknown>; icon?: string; description?: string }>;
       rightRail?: {
         title: string;
         sections: Array<{
