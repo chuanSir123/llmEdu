@@ -3347,11 +3347,11 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         },
         dashboard: {
           quickActions: [
-            { label: "学员列表", pageCode: "student_list", moduleCode: "student" },
-            { label: "排课列表", pageCode: "course_list", moduleCode: "education" },
-            { label: "周课表", pageCode: "course_week_schedule", moduleCode: "education" },
-            { label: "合同列表", pageCode: "contract_list", moduleCode: "finance" },
-            { label: "收款记录", pageCode: "funds_history", moduleCode: "finance" }
+            { label: "学员列表", pageCode: "student_list", moduleCode: "student", icon: "🎓", description: "查看正式学员档案" },
+            { label: "排课列表", pageCode: "course_list", moduleCode: "education", icon: "📅", description: "处理课程安排" },
+            { label: "周课表", pageCode: "course_week_schedule", moduleCode: "education", icon: "🗓️", description: "查看本周课表" },
+            { label: "合同列表", pageCode: "contract_list", moduleCode: "finance", icon: "📄", description: "管理报名合同" },
+            { label: "收款记录", pageCode: "funds_history", moduleCode: "finance", icon: "💳", description: "核对校区收款" }
           ],
           rightRail: {
             title: "校区动态",
