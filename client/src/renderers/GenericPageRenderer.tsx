@@ -18,8 +18,9 @@ import { fieldDictCode } from "../dsl/dictionarySource";
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type MetricDsl = {
   label: string;
-  source: "total" | "countBy" | "sum";
+  source: "total" | "countBy" | "sum" | "todayCount" | "todayCountBy";
   field?: string;
+  dateField?: string;
   value?: string | number | boolean;
   suffix?: string;
   target?: PageTargetDsl;
@@ -562,10 +563,26 @@ export function GenericPageRenderer({
     }
   }
 
+  function isTodayValue(value: unknown) {
+    if (!value) return false;
+    const date = new Date(String(value));
+    if (Number.isNaN(date.getTime())) return false;
+    const now = new Date();
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  }
+
   function metricValue(metric: MetricDsl) {
     if (metric.source === "total") return total;
     if (metric.source === "countBy" && metric.field) {
       return rows.filter((row) => String(row[metric.field!]) === String(metric.value)).length;
+    }
+    if (metric.source === "todayCount") {
+      const dateField = metric.dateField ?? metric.field ?? "created_at";
+      return rows.filter((row) => isTodayValue(row[dateField])).length;
+    }
+    if (metric.source === "todayCountBy" && metric.field) {
+      const dateField = metric.dateField ?? "created_at";
+      return rows.filter((row) => String(row[metric.field!]) === String(metric.value) && isTodayValue(row[dateField])).length;
     }
     if (metric.source === "sum" && metric.field) {
       return rows.reduce((sum, row) => sum + Number(row[metric.field!] ?? 0), 0).toLocaleString();

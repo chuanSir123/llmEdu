@@ -702,7 +702,8 @@ export const pages: PageSeed[] = [
       { key: "name", label: "学员姓名", filter: true },
       { key: "contact", label: "联系电话" },
       { key: "student_status", label: "状态" },
-      { key: "school_name", label: "学校" }
+      { key: "school_name", label: "学校" },
+      { key: "created_at", label: "创建时间", type: "datetime" }
     ]
   },
   {
@@ -3326,20 +3327,22 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
           subtitle: "今日教务、招生、财务和学员状态总览",
           metrics: [
             {
-              label: "学员总数",
-              source: "countBy",
+              label: "今日新增学员",
+              source: "todayCountBy",
               field: "student_status",
               value: "FORMAL",
-              target: { pageCode: "student_list", title: "学员列表" }
+              dateField: "created_at",
+              target: { pageCode: "student_list", title: "学员列表", filters: { student_status: "FORMAL" } }
             },
             {
-              label: "新生报名",
-              source: "countBy",
+              label: "今日新生报名",
+              source: "todayCountBy",
               field: "student_status",
               value: "LEAD",
+              dateField: "created_at",
               target: { pageCode: "lead_list", title: "新生报名" }
             },
-            { label: "学员总数", source: "total", target: { pageCode: "frontdesk_home", title: "运营首页" } }
+            { label: "学员总数", source: "total", target: { pageCode: "student_list", title: "学员列表" } }
           ]
         },
         dashboard: {
