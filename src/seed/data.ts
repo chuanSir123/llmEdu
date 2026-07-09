@@ -702,7 +702,8 @@ export const pages: PageSeed[] = [
       { key: "name", label: "学员姓名", filter: true },
       { key: "contact", label: "联系电话" },
       { key: "student_status", label: "状态" },
-      { key: "school_name", label: "学校" }
+      { key: "school_name", label: "学校" },
+      { key: "created_at", label: "创建时间", type: "datetime" }
     ]
   },
   {
@@ -3326,29 +3327,31 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
           subtitle: "今日教务、招生、财务和学员状态总览",
           metrics: [
             {
-              label: "学员总数",
-              source: "countBy",
+              label: "今日新增学员",
+              source: "todayCountBy",
               field: "student_status",
               value: "FORMAL",
-              target: { pageCode: "student_list", title: "学员列表" }
+              dateField: "created_at",
+              target: { pageCode: "student_list", title: "学员列表", filters: { student_status: "FORMAL" } }
             },
             {
-              label: "新生报名",
-              source: "countBy",
+              label: "今日新生报名",
+              source: "todayCountBy",
               field: "student_status",
               value: "LEAD",
+              dateField: "created_at",
               target: { pageCode: "lead_list", title: "新生报名" }
             },
-            { label: "学员总数", source: "total", target: { pageCode: "frontdesk_home", title: "运营首页" } }
+            { label: "学员总数", source: "total", target: { pageCode: "student_list", title: "学员列表" } }
           ]
         },
         dashboard: {
           quickActions: [
-            { label: "学员列表", pageCode: "student_list", moduleCode: "student" },
-            { label: "排课列表", pageCode: "course_list", moduleCode: "education" },
-            { label: "周课表", pageCode: "course_week_schedule", moduleCode: "education" },
-            { label: "合同列表", pageCode: "contract_list", moduleCode: "finance" },
-            { label: "收款记录", pageCode: "funds_history", moduleCode: "finance" }
+            { label: "学员列表", pageCode: "student_list", moduleCode: "student", icon: "🎓", description: "查看正式学员档案" },
+            { label: "排课列表", pageCode: "course_list", moduleCode: "education", icon: "📅", description: "处理课程安排" },
+            { label: "周课表", pageCode: "course_week_schedule", moduleCode: "education", icon: "🗓️", description: "查看本周课表" },
+            { label: "合同列表", pageCode: "contract_list", moduleCode: "finance", icon: "📄", description: "管理报名合同" },
+            { label: "收款记录", pageCode: "funds_history", moduleCode: "finance", icon: "💳", description: "核对校区收款" }
           ],
           rightRail: {
             title: "校区动态",
