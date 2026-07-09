@@ -343,7 +343,7 @@ export function AiCustomizationPanel({ schemaName, initialSessionId, onClose }: 
 
   return (
     <>
-      <div className={`fixed inset-0 z-50 transition-opacity duration-200 ${visible ? "opacity-100" : "opacity-0"}`}>
+      <div className={`fixed inset-0 z-[200] transition-opacity duration-200 ${visible ? "opacity-100" : "opacity-0"}`}>
         <div className="absolute inset-0 bg-black/45" onClick={onClose} />
         <aside
           className={`absolute right-0 top-0 h-full w-[480px] flex flex-col bg-white shadow-[-8px_0_24px_rgba(15,23,42,0.18)] transition-transform duration-300 ease-out ${
@@ -605,7 +605,7 @@ export function AiCustomizationPanel({ schemaName, initialSessionId, onClose }: 
 
 
       {publishConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45">
+        <div className="fixed inset-0 z-[210] flex items-start justify-center overflow-y-auto bg-black/45 p-4 pt-6 sm:pt-8">
           <div className="w-full max-w-[420px] rounded-lg bg-white p-6 shadow-xl">
             <h3 className="text-base font-semibold text-[#263445] mb-3">确认发布</h3>
             <p className="text-sm text-[#526075] mb-1">

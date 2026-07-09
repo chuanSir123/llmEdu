@@ -6,6 +6,12 @@ type MarkdownContentProps = {
   inverse?: boolean;
 };
 
+function normalizeMarkdown(content: string) {
+  return (content || "")
+    .replace(/\\n/g, "\n")
+    .replace(/\\([\\`*_{}\[\]()#+\-.!|>])/g, "$1");
+}
+
 function inlineMarkdown(text: string, inverse = false): ReactNode[] {
   const nodes: ReactNode[] = [];
   const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
@@ -73,7 +79,7 @@ function parseTable(lines: string[], start: number, inverse: boolean): { node: R
 }
 
 export function MarkdownContent({ content, className = "", inverse = false }: MarkdownContentProps) {
-  const lines = (content || "").split(/\r?\n/);
+  const lines = normalizeMarkdown(content).split(/\r?\n/);
   const nodes: ReactNode[] = [];
   let i = 0;
   while (i < lines.length) {

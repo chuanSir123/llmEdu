@@ -137,7 +137,7 @@ export function AiAssistantPanel({ schemaName, initialSessionId, onClose, onNavi
   ];
 
   return (
-    <div className="fixed inset-0 z-50">
+    <div className="fixed inset-0 z-[200]">
       <div className="absolute inset-0 bg-black/35" onClick={onClose} />
       <aside className="absolute right-0 top-0 flex h-full w-[520px] max-w-[100vw] flex-col bg-white shadow-[-12px_0_34px_rgba(15,23,42,0.22)]">
         <div className="flex h-14 items-center justify-between border-b border-[#e8edf5] px-5">

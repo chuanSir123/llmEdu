@@ -16,6 +16,6 @@ export const token = {
   dangerButton: "border-[#ff4d64] bg-[#ff4d64] text-white hover:border-[#e63d52] hover:bg-[#e63d52]",
   tab: "h-9 border-r border-[#e6ebf3] px-4 text-[13px]",
   activeTab: "bg-white text-[#1261d8] shadow-[0_-2px_0_#2f80ed_inset]",
-  modalBackdrop: "fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4",
+  modalBackdrop: "fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/30 p-4 pt-6 sm:pt-8",
   modal: "w-full max-w-2xl rounded-[4px] border border-[#e5e8ef] bg-white shadow-xl"
 };

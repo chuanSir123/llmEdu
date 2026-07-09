@@ -53,7 +53,7 @@ export function ApprovalTaskDetail({ value, onClose, onApprove, onReject }: Appr
   const businessEntries = Object.entries(payload).filter(([key]) => !["approval_comment", "approval_task_id", "approvalTaskId"].includes(key));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+    <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-6 sm:p-6 sm:pt-8">
       <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-[#e8edf5] px-5 py-4">
           <div>

@@ -131,7 +131,7 @@ export function CustomizationRecordDetail({
   }, [recordId]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+    <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/45 p-4 pt-6 sm:pt-8">
       <div className="flex h-[92vh] w-full max-w-[1180px] flex-col rounded-lg bg-white shadow-[0_18px_48px_rgba(15,23,42,0.28)]">
         <div className="flex h-12 items-center justify-between border-b border-[#e8edf5] px-5">
           <div>
@@ -179,7 +179,7 @@ export function CustomizationRecordDetail({
                         )}
                         <div className={`min-w-0 max-w-[76%] ${isUser ? "items-end" : "items-start"}`}>
                           <div className={`mb-1 text-xs ${isUser ? "text-right" : ""} text-[#8b95a7]`}>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "未知时间"}</div>
-                          <div className={`whitespace-pre-wrap rounded-[8px] px-4 py-3 text-sm leading-6 shadow-sm ${
+                          <div className={`rounded-[8px] px-4 py-3 text-sm leading-6 shadow-sm ${
                             isUser ? "bg-[#2f80ed] text-white" : "border border-[#e8edf5] bg-white text-[#263445]"
                           }`}>
                             <MarkdownContent content={entry.content} inverse={isUser} />

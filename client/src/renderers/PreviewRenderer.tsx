@@ -24,7 +24,7 @@ export function PreviewRenderer({ schemaName, versionId, onClose }: { schemaName
   }, [schemaName, versionId]);
 
   return (
-    <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/45 p-4">
+    <div className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto bg-black/45 p-4 pt-6 sm:pt-8">
       <div className="flex h-[92vh] w-full max-w-[1180px] flex-col rounded-lg bg-white shadow-[0_18px_48px_rgba(15,23,42,0.28)]">
         <div className="flex h-12 items-center justify-between border-b border-[#e8edf5] px-5">
           <div className="flex items-center gap-3">
