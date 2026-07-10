@@ -14,6 +14,11 @@ const seedDictionaryFields: Record<string, string> = {
   status: "status",
   pay_type: "pay_type",
   staff_type: "staff_type",
+  grade: "grade",
+  grade_ids: "grade",
+  subject: "subject",
+  subject_ids: "subject",
+  gender: "gender",
   student_status: "student_status",
   source_type: "source_type",
   channel_type: "channel_type",
@@ -60,6 +65,10 @@ const seedDictionaryFields: Record<string, string> = {
 function normalizeSeedDictionaryIds(row: Record<string, unknown>) {
   for (const [field, dictCode] of Object.entries(seedDictionaryFields)) {
     const value = row[field];
+    if (Array.isArray(value)) {
+      row[field] = value.map((item) => typeof item === "string" && !item.includes(".") && SYSTEM_DICTIONARIES[dictCode]?.[item] ? dictionaryItemId(dictCode, item) : item);
+      continue;
+    }
     if (typeof value !== "string" || value.includes(".")) continue;
     if (!SYSTEM_DICTIONARIES[dictCode]?.[value]) continue;
     row[field] = dictionaryItemId(dictCode, value);

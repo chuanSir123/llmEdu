@@ -2780,6 +2780,35 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.layout = "enrollment";
     baseDsl.presentation.header.subtitle = "按报名流程完成学员信息、报读课程、业务属性和结算";
     baseDsl.presentation.modal.size = "fullscreen";
+    baseDsl.presentation.enrollment = {
+      sections: {
+        student: { title: "学员信息", fieldKeys: ["student_ids"] },
+        products: { title: "报读课程", fieldKeys: ["product_ids"], emptyText: "请选择要报读的课程" },
+        attributes: { title: "业务属性", fieldKeys: ["contract_type", "organization_id", "sign_staff_id", "sign_time", "promotion_id", "remark"] },
+        settlement: {
+          title: "结算",
+          labels: {
+            total: "共 {count} 个课程，总金额",
+            productPromotion: "课程优惠",
+            contractPromotion: "合同优惠",
+            receivable: "合同应收款",
+            save: "保存合同"
+          }
+        }
+      },
+      productTable: {
+        productIdsField: "product_ids",
+        rowValuePrefix: "cp_",
+        productNameField: "name",
+        productTypeField: "product_type",
+        defaultHourField: "default_course_hour",
+        unitPriceField: "unit_price",
+        totalAmountField: "total_amount",
+        promotionAmountField: "promotion_amount",
+        columns: { product: "课程产品", courseHour: "课时", unitPrice: "单价", totalAmount: "总价", promotionAmount: "优惠金额" }
+      },
+      promotion: { field: "promotion_id", typeField: "type", valueField: "value", reduceValue: "REDUCE", discountValue: "DISCOUNT" }
+    };
     baseDsl.toolbar = [
       {
         actionCode: "lead_list.create",

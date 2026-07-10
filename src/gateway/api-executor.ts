@@ -10,7 +10,7 @@ import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
-import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, systemDictionaryLabel, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryConfigValues, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, systemDictionaryLabel, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 import { isCoreBusinessRule } from "../common/dsl-constants.js";
 
@@ -73,11 +73,11 @@ function safeCode(value: unknown, label: string) {
 
 
 function businessRuleCategoryLabel(category: string) {
-  return SYSTEM_DICTIONARIES.business_rule_category?.[category]?.label ?? category;
+  return systemDictionaryLabel("business_rule_category", category) ?? category;
 }
 
 function businessRuleTypeLabel(type: string) {
-  return SYSTEM_DICTIONARIES.business_type?.[type]?.label ?? type;
+  return systemDictionaryLabel("business_type", type) ?? type;
 }
 
 // 模块中文名以 module_registry 为准（租户可定制模块），带短 TTL 缓存；查不到回落模块编码
@@ -222,13 +222,14 @@ async function saveApprovalFlow(schemaName: string, params: Record<string, unkno
   const id = String(input.id ?? "");
   const flowCode = input.flow_code || input.flowCode ? safeCode(input.flow_code ?? input.flowCode, "审批编码") : `custom_flow_${Date.now()}`;
   const flowName = String(input.name ?? input.flow_name ?? input.flowName ?? flowCode);
-  const config = {
-    ...parseJsonObject(input.config_json),
+  const rawConfig = parseJsonObject(input.config_json);
+  const config = await normalizeDictionaryConfigValues(schemaName, {
+    ...rawConfig,
     resourceType: "approval_flow",
     flowCode,
     flowName,
-    businessType: input.business_type ?? parseJsonObject(input.config_json).businessType ?? "",
-  };
+    businessType: input.business_type ?? rawConfig.businessType ?? "",
+  }) as Record<string, unknown>;
   const values = [
     id || randomUUID(),
     flowName,
@@ -311,7 +312,7 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
   const input = asObject(params.data ?? params);
   const ruleCode = input.rule_code || input.ruleCode ? safeCode(input.rule_code ?? input.ruleCode, "规则编码") : `custom_rule_${Date.now()}`;
   const ruleName = String(input.rule_name ?? input.ruleName ?? ruleCode);
-  const ruleJson = { ...parseJsonObject(input.rule_json), ruleCode, ruleName };
+  const ruleJson = await normalizeDictionaryConfigValues(schemaName, { ...parseJsonObject(input.rule_json), ruleCode, ruleName }) as Record<string, unknown>;
   const { rows } = await pool.query(
     `select id, rule_json from admin.business_rule
      where schema_scope = 'tenant' and schema_name = $1 and rule_code = $2 and deleted = false

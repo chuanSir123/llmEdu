@@ -3,7 +3,11 @@ import type { FieldDsl } from "./types";
 const fieldDictAliases: Record<string, string> = {
   category: "business_rule_category",
   businessType: "business_type",
-  business_type: "business_type"
+  business_type: "business_type",
+  grade_ids: "grade",
+  subject_ids: "subject",
+  stage: "lead_stage",
+  recordType: "record_type"
 };
 
 export function fieldDictCode(field: FieldDsl) {

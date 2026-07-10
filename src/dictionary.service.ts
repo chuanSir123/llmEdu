@@ -27,6 +27,9 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   status: { ACTIVE: { label: "启用", metadata: { tone: "green" } }, INACTIVE: { label: "停用" }, ENABLED: { label: "启用" }, DISABLED: { label: "停用" }, PUBLISHED: { label: "已发布", metadata: { tone: "blue" } }, DRAFT: { label: "草稿" }, draft: { label: "草稿", metadata: { tone: "amber" } }, active: { label: "生效", metadata: { tone: "green" } }, archived: { label: "归档", metadata: { tone: "gray" } }, rejected: { label: "已驳回" }, pending: { label: "待处理" }, success: { label: "成功" }, failed: { label: "失败" }, running: { label: "执行中" }, skipped: { label: "已跳过" }, APPROVED: { label: "已通过" }, REJECTED: { label: "已拒绝" }, CANCELED: { label: "已取消" } },
   mode: { draft: { label: "草稿" }, publish_after_confirm: { label: "确认后发布", metadata: { tone: "blue" } }, import: { label: "导入" }, validate: { label: "校验" } },
   staff_type: { MANAGER: { label: "校长" }, TEACHER: { label: "老师" }, STUDY_MANAGER: { label: "学管师" }, SALES: { label: "顾问" } },
+  grade: { PRESCHOOL: { label: "幼儿园" }, GRADE_1: { label: "一年级" }, GRADE_2: { label: "二年级" }, GRADE_3: { label: "三年级" }, GRADE_4: { label: "四年级" }, GRADE_5: { label: "五年级" }, GRADE_6: { label: "六年级" }, GRADE_7: { label: "初一" }, GRADE_8: { label: "初二" }, GRADE_9: { label: "初三" }, GRADE_10: { label: "高一" }, GRADE_11: { label: "高二" }, GRADE_12: { label: "高三" }, ADULT: { label: "成人" } },
+  subject: { CHINESE: { label: "语文" }, MATH: { label: "数学" }, ENGLISH: { label: "英语" }, PHYSICS: { label: "物理" }, CHEMISTRY: { label: "化学" }, BIOLOGY: { label: "生物" }, HISTORY: { label: "历史" }, GEOGRAPHY: { label: "地理" }, POLITICS: { label: "政治" }, SCIENCE: { label: "科学" }, ART: { label: "美术" }, MUSIC: { label: "音乐" }, SPORTS: { label: "体育" }, OTHER: { label: "其他" } },
+  gender: { MALE: { label: "男" }, FEMALE: { label: "女" }, UNKNOWN: { label: "未知" } },
   organization_type: { HEAD: { label: "总部" }, BRANCH: { label: "校区" }, DEPARTMENT: { label: "部门" }, TENANT: { label: "机构" }, CAMPUS: { label: "校区" }, COMPANY: { label: "分公司" }, CUSTOM: { label: "自定义架构" } },
   contract_type: { NEW_SIGN: { label: "新签" }, RENEWAL: { label: "续费" }, REFERRAL: { label: "引流" } },
   course_type: { ONE_ON_ONE_COURSE: { label: "一对一" }, SMALL_CLASS: { label: "小班" }, ONE_ON_N_GROUP: { label: "一对N" } },
@@ -46,7 +49,7 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   lead_stage: { NEW: { label: "新线索" }, FOLLOWING: { label: "跟进中" }, TRIAL_SCHEDULED: { label: "已邀约试听" }, TRIAL_COMPLETED: { label: "已试听" }, CONVERTED: { label: "已转化" }, LOST: { label: "已流失" } },
   lead_assignment_action_type: { ASSIGN: { label: "分配" }, TRANSFER: { label: "转移" }, RECLAIM: { label: "回收" } },
   business_rule_category: { funds_allocation: { label: "资金分配" }, promotion_allocation: { label: "优惠分配" }, performance_allocation: { label: "业绩分配" }, approval_trigger: { label: "审批触发" }, validation: { label: "校验规则" }, workflow: { label: "业务流转" }, refund: { label: "退费规则" }, charge: { label: "扣费规则" }, attendance: { label: "考勤规则" } },
-  business_type: { contract: { label: "合同签约" }, funds: { label: "收款" }, course: { label: "排课" }, course_cancel: { label: "课程取消" }, attendance: { label: "考勤" }, charge: { label: "扣费" }, charge_reverse: { label: "撤销扣费" }, refund: { label: "退费" }, contract_refund: { label: "合同退费" }, product_price: { label: "产品价格" }, performance: { label: "业绩" } },
+  business_type: { contract: { label: "新增合同" }, lead_enroll: { label: "新增报名" }, contract_create: { label: "新增合同" }, contract_update: { label: "编辑合同" }, funds: { label: "新增收款" }, funds_create: { label: "新增收款" }, course: { label: "新增排课" }, course_create: { label: "新增排课" }, course_cancel: { label: "取消课程" }, attendance: { label: "考勤签到" }, charge: { label: "扣费确认" }, charge_reverse: { label: "撤销扣费" }, refund: { label: "新增退费" }, refund_create: { label: "新增退费" }, contract_refund: { label: "合同退费" }, product_price: { label: "编辑产品" }, performance: { label: "业绩分配" }, performance_adjust: { label: "业绩调整" }, leave: { label: "请假" }, makeup: { label: "补课" } },
   action_type: { open_page: { label: "打开页面" }, execute_api: { label: "执行接口" }, open_modal: { label: "打开弹窗" }, open_ai_customization: { label: "AI 定制" }, dropdown: { label: "下拉菜单" }, input: { label: "输入" }, display: { label: "展示" }, tab: { label: "页签" }, export: { label: "导出" }, import: { label: "导入" } },
   api_type: { query: { label: "查询" }, detail: { label: "详情" }, create: { label: "新增" }, update: { label: "更新" }, delete: { label: "删除" }, command: { label: "命令" } },
   resource_type: { page: { label: "页面" }, action: { label: "动作" }, field: { label: "字段" } },
@@ -89,7 +92,7 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   payment_status: { PENDING: { label: "待支付" }, PAID: { label: "已支付" }, FAILED: { label: "支付失败" }, CLOSED: { label: "已关闭" }, REFUNDED: { label: "已退款" } },
   organization_performance_owner: { contractOrganization: { label: "合同所属校区" }, courseOrganization: { label: "上课校区" }, receiptOrganization: { label: "收款校区" } },
   personal_performance_owner: { signStaff: { label: "签约顾问" }, ownerStaff: { label: "学员归属顾问" }, classTeacher: { label: "任课老师" }, splitByProductOwner: { label: "按产品归属人拆分" } },
-  business_action_code: { "contract_list.create": { label: "新增合同" }, "refund_record.create": { label: "新增退费" }, "course_list.cancel": { label: "取消课程" }, "charge_record.reverse": { label: "撤销扣费" }, "product_list.edit": { label: "编辑产品" }, "contract_list.delete": { label: "作废合同" }, "funds_history.create": { label: "新增收款" } },
+  business_action_code: { "lead_list.enroll": { label: "新增报名" }, "contract_list.create": { label: "新增合同" }, "funds_history.create": { label: "新增收款" }, "refund_record.create": { label: "新增退费" }, "course_list.create": { label: "新增排课" }, "course_list.cancel": { label: "取消课程" }, "charge_record.create": { label: "扣费确认" }, "charge_record.reverse": { label: "撤销扣费" }, "product_list.edit": { label: "编辑产品" }, "contract_list.delete": { label: "作废合同" } },
   approval_flow_code: { contract_discount_approval: { label: "合同优惠审批" }, refund_create_approval: { label: "退费审批" }, course_cancel_approval: { label: "课程取消审批" }, charge_reverse_approval: { label: "扣费冲销审批" }, product_price_approval: { label: "产品价格审批" } },
   approval_trigger_event: { contract_discount_submit: { label: "合同优惠提交" }, lead_enroll_submit: { label: "新生报名提交" }, contract_create_submit: { label: "合同创建提交" }, funds_create_submit: { label: "收款提交" }, refund_create_submit: { label: "退费提交" }, course_create_submit: { label: "排课提交" }, course_cancel_submit: { label: "课程取消提交" }, charge_reverse_submit: { label: "撤销扣费提交" }, product_price_change_submit: { label: "产品改价提交" } },
   approval_trigger_page: { contract_list: { label: "合同列表" }, lead_list: { label: "新生报名" }, funds_history: { label: "收款记录" }, refund_record: { label: "退费记录" }, course_list: { label: "排课列表" }, charge_record: { label: "扣费记录" }, product_list: { label: "产品列表" } },
@@ -105,7 +108,31 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
 export const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   category: "business_rule_category",
   businessType: "business_type",
-  business_type: "business_type"
+  business_type: "business_type",
+  grade_ids: "grade",
+  subject_ids: "subject",
+  stage: "lead_stage",
+  assigneeRole: "approval_role",
+  event: "approval_trigger_event",
+  pageCode: "approval_trigger_page",
+  actionCode: "approval_action_code",
+  targetAction: "business_action_code",
+  targetApi: "business_action_code",
+  triggerApprovalFlow: "approval_flow_code",
+  requireApprovalFlow: "approval_flow_code",
+  fundsAllocation: "funds_allocation_method",
+  promotionAllocation: "promotion_allocation_method",
+  performanceAllocation: "performance_allocation_method",
+  refundAllocation: "refund_allocation_method",
+  splitBy: "allocation_split_by",
+  generateLogTable: "generated_log_table",
+  organizationPerformanceOwner: "organization_performance_owner",
+  personalPerformanceOwner: "personal_performance_owner",
+  productPriority: "product_priority",
+  defaultChargeType: "charge_type",
+  field: "rule_condition_field",
+  operator: "rule_operator",
+  valueField: "rule_system_value"
 };
 
 export function dictionaryItemId(dictCode: string, itemValue: unknown) {
@@ -144,25 +171,41 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
   const normalized = { ...input };
   const candidates = fields
     .map((field) => ({ field, dictCode: dictionaryCodeForFieldName(field), value: input[field] }))
-    .filter((item): item is { field: string; dictCode: string; value: unknown } => Boolean(item.dictCode) && typeof item.value === "string" && item.value.trim() !== "");
+    .filter((item): item is { field: string; dictCode: string; value: string | string[] } => {
+      if (!item.dictCode) return false;
+      if (typeof item.value === "string") return item.value.trim() !== "";
+      return Array.isArray(item.value) && item.value.some((value) => typeof value === "string" && value.trim() !== "");
+    });
   if (!candidates.length) return normalized;
 
-  const values = [...new Set(candidates.map((item) => String(item.value)))];
+  const values = [...new Set(candidates.flatMap((item) => Array.isArray(item.value) ? item.value.map(String) : [String(item.value)]))];
   const dictCodes = [...new Set(candidates.map((item) => item.dictCode))];
   const { rows } = await pool.query(
-    `select id, dict_code, item_value
+    `select id, dict_code, item_value, item_label
        from admin.dictionary_item
       where dict_code = any($2::text[]) and deleted = false
-        and (id = any($1::text[]) or item_value = any($1::text[]))
+        and (id = any($1::text[]) or item_value = any($1::text[]) or item_label = any($1::text[]))
         and ((schema_scope = 'admin' and schema_name = '') or (schema_scope = 'tenant' and schema_name = $3))`,
     [values, dictCodes, schemaName]
   );
-  const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_value}`, row.id]]));
+  const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_value}`, row.id], [`${row.dict_code}:${row.item_label}`, row.id]]));
   for (const item of candidates) {
+    if (Array.isArray(item.value)) {
+      normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? value);
+      continue;
+    }
     const itemId = byInputAndCode.get(`${item.dictCode}:${String(item.value)}`);
     if (itemId !== undefined) normalized[item.field] = itemId;
   }
   return normalized;
+}
+
+export async function normalizeDictionaryConfigValues(schemaName: string, value: unknown): Promise<unknown> {
+  if (Array.isArray(value)) return Promise.all(value.map((item) => normalizeDictionaryConfigValues(schemaName, item)));
+  if (!value || typeof value !== "object") return value;
+  const normalized = await normalizeDictionaryInputValues(schemaName, value as Record<string, unknown>, Object.keys(value as Record<string, unknown>));
+  const entries = await Promise.all(Object.entries(normalized).map(async ([key, child]) => [key, await normalizeDictionaryConfigValues(schemaName, child)] as const));
+  return Object.fromEntries(entries);
 }
 
 function safeDictCode(value: unknown) {
