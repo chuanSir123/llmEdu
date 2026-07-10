@@ -49,7 +49,7 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   lead_stage: { NEW: { label: "新线索" }, FOLLOWING: { label: "跟进中" }, TRIAL_SCHEDULED: { label: "已邀约试听" }, TRIAL_COMPLETED: { label: "已试听" }, CONVERTED: { label: "已转化" }, LOST: { label: "已流失" } },
   lead_assignment_action_type: { ASSIGN: { label: "分配" }, TRANSFER: { label: "转移" }, RECLAIM: { label: "回收" } },
   business_rule_category: { funds_allocation: { label: "资金分配" }, promotion_allocation: { label: "优惠分配" }, performance_allocation: { label: "业绩分配" }, approval_trigger: { label: "审批触发" }, validation: { label: "校验规则" }, workflow: { label: "业务流转" }, refund: { label: "退费规则" }, charge: { label: "扣费规则" }, attendance: { label: "考勤规则" } },
-  business_type: { contract: { label: "新增合同" }, lead_enroll: { label: "新增报名" }, contract_create: { label: "新增合同" }, contract_update: { label: "编辑合同" }, funds: { label: "新增收款" }, funds_create: { label: "新增收款" }, course: { label: "新增排课" }, course_create: { label: "新增排课" }, course_cancel: { label: "取消课程" }, attendance: { label: "考勤签到" }, charge: { label: "扣费确认" }, charge_reverse: { label: "撤销扣费" }, refund: { label: "新增退费" }, refund_create: { label: "新增退费" }, contract_refund: { label: "合同退费" }, product_price: { label: "编辑产品" }, performance: { label: "业绩分配" }, performance_adjust: { label: "业绩调整" }, leave: { label: "请假" }, makeup: { label: "补课" } },
+  business_type: { lead_enroll: { label: "新增报名" }, contract_create: { label: "新增合同" }, contract_update: { label: "编辑合同" }, funds_create: { label: "新增收款" }, course_create: { label: "新增排课" }, course_cancel: { label: "取消课程" }, attendance: { label: "考勤签到" }, charge: { label: "扣费确认" }, charge_reverse: { label: "撤销扣费" }, refund_create: { label: "新增退费" }, contract_refund: { label: "合同退费" }, product_price: { label: "编辑产品" }, performance: { label: "业绩分配" }, performance_adjust: { label: "业绩调整" }, leave: { label: "请假" }, makeup: { label: "补课" } },
   action_type: { open_page: { label: "打开页面" }, execute_api: { label: "执行接口" }, open_modal: { label: "打开弹窗" }, open_ai_customization: { label: "AI 定制" }, dropdown: { label: "下拉菜单" }, input: { label: "输入" }, display: { label: "展示" }, tab: { label: "页签" }, export: { label: "导出" }, import: { label: "导入" } },
   api_type: { query: { label: "查询" }, detail: { label: "详情" }, create: { label: "新增" }, update: { label: "更新" }, delete: { label: "删除" }, command: { label: "命令" } },
   resource_type: { page: { label: "页面" }, action: { label: "动作" }, field: { label: "字段" } },
@@ -104,6 +104,21 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   fulfillment_status: { PENDING: { label: "待履约" }, PROCESSING: { label: "处理中" }, SUCCESS: { label: "已完成" }, FAILED: { label: "履约失败" } }
 };
 
+/** 历史枚举值→当前字典项值别名；用于兼容旧数据，不再作为可选项写入字典。 */
+const LEGACY_DICTIONARY_VALUE_ALIASES: Record<string, Record<string, string>> = {
+  business_type: {
+    contract: "contract_create",
+    funds: "funds_create",
+    course: "course_create",
+    refund: "refund_create"
+  }
+};
+
+function canonicalDictionaryItemValue(dictCode: string, value: unknown) {
+  const raw = dictionaryItemValueFromId(dictCode, value);
+  return LEGACY_DICTIONARY_VALUE_ALIASES[dictCode]?.[raw] ?? raw;
+}
+
 /** 字段名→字典码别名（单一来源；seed 与运行时共用，不要在别处再复制一份）。 */
 export const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   category: "business_rule_category",
@@ -146,7 +161,7 @@ function dictionaryItemValueFromId(dictCode: string, value: unknown) {
 }
 
 export function systemDictionaryLabel(dictCode: string, itemValue: unknown) {
-  const value = dictionaryItemValueFromId(dictCode, itemValue);
+  const value = canonicalDictionaryItemValue(dictCode, itemValue);
   return SYSTEM_DICTIONARIES[dictCode]?.[value]?.label;
 }
 
@@ -163,8 +178,9 @@ export function dictionaryCompatValues(field: string, value: unknown): string[] 
   const text = String(value ?? "");
   if (!text || !SYSTEM_DICTIONARIES[field]) return undefined;
   const raw = dictionaryItemValueFromId(field, text);
-  if (!SYSTEM_DICTIONARIES[field][raw]) return undefined;
-  return [raw, dictionaryItemId(field, raw)];
+  const canonical = canonicalDictionaryItemValue(field, raw);
+  if (!SYSTEM_DICTIONARIES[field][canonical]) return undefined;
+  return [...new Set([raw, dictionaryItemId(field, raw), canonical, dictionaryItemId(field, canonical)])];
 }
 
 export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[]) {
@@ -178,7 +194,13 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
     });
   if (!candidates.length) return normalized;
 
-  const values = [...new Set(candidates.flatMap((item) => Array.isArray(item.value) ? item.value.map(String) : [String(item.value)]))];
+  const values = [...new Set(candidates.flatMap((item) => {
+    const rawValues = Array.isArray(item.value) ? item.value.map(String) : [String(item.value)];
+    return rawValues.flatMap((raw) => {
+      const canonical = canonicalDictionaryItemValue(item.dictCode, raw);
+      return [raw, canonical, dictionaryItemId(item.dictCode, canonical)];
+    });
+  }))];
   const dictCodes = [...new Set(candidates.map((item) => item.dictCode))];
   const { rows } = await pool.query(
     `select id, dict_code, item_value, item_label
@@ -191,10 +213,10 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
   const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_value}`, row.id], [`${row.dict_code}:${row.item_label}`, row.id]]));
   for (const item of candidates) {
     if (Array.isArray(item.value)) {
-      normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? value);
+      normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? byInputAndCode.get(`${item.dictCode}:${canonicalDictionaryItemValue(item.dictCode, value)}`) ?? value);
       continue;
     }
-    const itemId = byInputAndCode.get(`${item.dictCode}:${String(item.value)}`);
+    const itemId = byInputAndCode.get(`${item.dictCode}:${String(item.value)}`) ?? byInputAndCode.get(`${item.dictCode}:${canonicalDictionaryItemValue(item.dictCode, item.value)}`);
     if (itemId !== undefined) normalized[item.field] = itemId;
   }
   return normalized;
@@ -241,6 +263,13 @@ export async function seedSystemDictionaries() {
       );
       sort += 10;
     }
+    await pool.query(
+      `update admin.dictionary_item
+          set status = 'INACTIVE', deleted = true, updated_at = now()
+        where dict_code = $1 and schema_scope = 'admin' and schema_name = ''
+          and is_system = true and item_value <> all($2::text[])`,
+      [dictCode, Object.keys(items)]
+    );
   }
 }
 
