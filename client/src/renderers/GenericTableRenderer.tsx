@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ActionDsl, FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
-import { enumLabelFor } from "../dsl/enumLabels";
+import { dictionaryLabelFor } from "../dsl/dictionaryLabels";
 import { isDangerAction } from "../dsl/actionVariant";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
@@ -62,7 +62,7 @@ function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation
     ? row[column.displayKey]
     : row[column.key];
   const text = formatValue(rawValue, column.type, column.key);
-  const displayText = text === "-" ? text : (enumLabelFor(column.key, text, presentation?.valueLabels) ?? text);
+  const displayText = text === "-" ? text : (dictionaryLabelFor(column.key, text, presentation?.valueLabels) ?? text);
   if (isImageField(column) && text !== "-") {
     return <img src={text} alt={column.title ?? column.label ?? column.key} className="h-12 w-16 rounded border border-[#dde3ee] object-cover" />;
   }
@@ -74,7 +74,7 @@ function renderCell(column: FieldDsl, row: Record<string, unknown>, presentation
 function renderPlainCellTitle(column: FieldDsl, row: Record<string, unknown>, presentation?: Presentation) {
   const raw = column.displayKey ? row[column.displayKey] ?? row[column.key] : row[column.key];
   const text = formatValue(raw, column.type, column.key);
-  return text === "-" ? text : enumLabelFor(column.key, text, presentation?.valueLabels) ?? text;
+  return text === "-" ? text : dictionaryLabelFor(column.key, text, presentation?.valueLabels) ?? text;
 }
 
 export function GenericTableRenderer({
