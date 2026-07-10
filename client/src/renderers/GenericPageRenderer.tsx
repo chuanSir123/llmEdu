@@ -15,6 +15,16 @@ import { CustomizationRecordDetail } from "./CustomizationRecordDetail";
 import { CalendarView } from "./CalendarView";
 import { fieldDictCode } from "../dsl/dictionarySource";
 
+const editorDictionaryCodes: Record<string, string[]> = {
+  business_rule_editor: [
+    "business_rule_category", "business_type", "funds_allocation_method", "allocation_split_by", "generated_log_table",
+    "promotion_allocation_method", "performance_allocation_method", "organization_performance_owner", "personal_performance_owner",
+    "product_priority", "business_action_code", "approval_flow_code", "refund_allocation_method", "charge_type",
+    "rule_condition_field", "rule_system_value", "rule_operator"
+  ],
+  approval_flow_editor: ["approval_trigger_event", "approval_trigger_page", "approval_action_code", "approval_role", "business_type"]
+};
+
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type MetricDsl = {
   label: string;
@@ -122,11 +132,12 @@ export function GenericPageRenderer({
     const actionFields = actions.flatMap((action) => action.fields ?? []);
     const fields = [...filtersDsl, ...(tableDsl.columns ?? []), ...(modalDsl.fields ?? []), ...actionFields];
     const fieldCodes = fields.map((field) => fieldDictCode(field)).filter(Boolean) as string[];
+    const editorCodes = fields.flatMap((field) => editorDictionaryCodes[String(field.type ?? "")] ?? []);
     const refCodes = actions.flatMap((action) => [
       ...collectDictionaryRefs(action.defaultValues),
       ...collectDictionaryRefs(action.visibleWhen)
     ]);
-    return [...new Set([...fieldCodes, ...refCodes])];
+    return [...new Set([...fieldCodes, ...editorCodes, ...refCodes])];
   }, [dsl.pageCode, JSON.stringify(filtersDsl), JSON.stringify(tableDsl.columns ?? []), JSON.stringify(tableDsl.rowActions ?? []), JSON.stringify(modalDsl.fields ?? []), JSON.stringify(toolbarDsl)]);
 
   useEffect(() => {
@@ -172,7 +183,7 @@ export function GenericPageRenderer({
 
   const presentationWithDictionaries = useMemo(() => ({
     ...(dsl.presentation ?? {}),
-    valueLabels: { ...dictionaryLabels, ...(dsl.presentation?.valueLabels ?? {}) },
+    valueLabels: { ...(dsl.presentation?.valueLabels ?? {}), ...dictionaryLabels },
     dictionaryMeta: { ...dictionaryMeta, ...(dsl.presentation?.dictionaryMeta ?? {}) }
   }), [dsl.presentation, dictionaryLabels, dictionaryMeta]);
 

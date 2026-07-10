@@ -308,6 +308,31 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
   };
 }
 
+async function getBusinessRuleDetail(schemaName: string, params: Record<string, unknown>) {
+  const id = String(params.id ?? "");
+  if (!id) throw Object.assign(new Error("规则 ID 不能为空"), { statusCode: 400 });
+  const { rows } = await pool.query(
+    `select id, schema_scope, schema_name, rule_code, rule_name, rule_json, status, updated_at
+       from admin.business_rule
+      where id = $1 and status = 'active' and deleted = false
+        and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+      order by case when schema_name = $2 then 0 else 1 end
+      limit 1`,
+    [id, schemaName]
+  );
+  const row = rows[0];
+  if (!row) throw Object.assign(new Error("规则不存在或已删除"), { statusCode: 404 });
+  const ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  return {
+    ...row,
+    rule_json: ruleJson,
+    business_type: ruleJson.businessType ?? "",
+    source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
+    category_label: businessRuleCategoryLabel(String(ruleJson.category ?? "")),
+    business_type_label: businessRuleTypeLabel(String(ruleJson.businessType ?? ""))
+  };
+}
+
 async function saveBusinessRule(schemaName: string, params: Record<string, unknown>) {
   const input = asObject(params.data ?? params);
   const ruleCode = input.rule_code || input.ruleCode ? safeCode(input.rule_code ?? input.ruleCode, "规则编码") : `custom_rule_${Date.now()}`;
@@ -380,6 +405,7 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
   if (apiCode === "my_submitted_approval.query") return queryApprovalTasks(schemaName, { ...params, view: "submitted" }, user);
   if (apiCode === "done_approval.query") return queryApprovalTasks(schemaName, { ...params, view: "done" }, user);
   if (apiCode === "business_rule_list.query") return queryBusinessRules(schemaName, params);
+  if (apiCode === "business_rule_list.detail") return getBusinessRuleDetail(schemaName, params);
   if (apiCode === "business_rule_list.create" || apiCode === "business_rule_list.update") return saveBusinessRule(schemaName, params);
   if (apiCode === "business_rule_list.delete") {
     const { rows } = await pool.query(`select rule_code, rule_json from admin.business_rule where id = $1 and schema_scope = 'tenant' and schema_name = $2 and deleted = false limit 1`, [params.id, schemaName]);
