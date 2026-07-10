@@ -94,12 +94,19 @@ export function GenericPageRenderer({
 
   const createAction = toolbarDsl.find((action) => action.actionCode.endsWith(".create") || action.actionCode.endsWith(".enroll"));
   const enrollmentFields = dsl.layout === "enrollment" ? (createAction?.fields ?? modalDsl.fields) : [];
+  const enrollmentConfig = dsl.presentation?.enrollment ?? {};
+  const enrollmentProductConfig = enrollmentConfig.productTable ?? {};
+  const enrollmentPromotionConfig = enrollmentConfig.promotion ?? {};
+  const enrollmentSections = enrollmentConfig.sections ?? {};
+  const productIdsField = enrollmentProductConfig.productIdsField ?? "product_ids";
+  const productValuePrefix = enrollmentProductConfig.rowValuePrefix ?? "cp_";
+  const promotionField = enrollmentPromotionConfig.field ?? "promotion_id";
   const enrollmentValueWithDefaults = dsl.layout === "enrollment" ? { ...(resolveDictionaryDefaults(createAction?.defaultValues) ?? {}), ...enrollmentValue } : {};
 
   const selectedProductIds = useMemo(() => {
     if (dsl.layout !== "enrollment") return [] as string[];
-    return (Array.isArray(enrollmentValueWithDefaults.product_ids) ? enrollmentValueWithDefaults.product_ids : []) as string[];
-  }, [dsl.layout, dsl.pageCode, enrollmentValueWithDefaults.product_ids]);
+    return (Array.isArray(enrollmentValueWithDefaults[productIdsField]) ? enrollmentValueWithDefaults[productIdsField] : []) as string[];
+  }, [dsl.layout, dsl.pageCode, productIdsField, enrollmentValueWithDefaults[productIdsField]]);
 
   const productRows = useMemo(() => {
     if (dsl.layout !== "enrollment" || !selectedProductIds.length) return [] as Record<string, unknown>[];
@@ -204,28 +211,28 @@ export function GenericPageRenderer({
     if (dsl.layout !== "enrollment") return [] as Array<{ productId: string; productName: string; productType: string; courseHour: number; unitPrice: number; totalAmount: number; promotionAmount: number }>;
     return selectedProductIds.map((pid, idx) => {
       const productRow = productRows[idx] ?? {};
-      const cpKey = `cp_${pid}`;
+      const cpKey = `${productValuePrefix}${pid}`;
       const existing = enrollmentValueWithDefaults[cpKey] as Record<string, unknown> | undefined;
-      const defaultHour = Number(productRow.default_course_hour ?? 0);
-      const unitPrice = Number(productRow.unit_price ?? 0);
-      const defaultTotal = Number(productRow.total_amount ?? 0);
+      const defaultHour = Number(productRow[enrollmentProductConfig.defaultHourField ?? "default_course_hour"] ?? 0);
+      const unitPrice = Number(productRow[enrollmentProductConfig.unitPriceField ?? "unit_price"] ?? 0);
+      const defaultTotal = Number(productRow[enrollmentProductConfig.totalAmountField ?? "total_amount"] ?? 0);
       const courseHour = existing && "course_hour" in existing ? Number(existing.course_hour ?? 0) : defaultHour;
       const cpUnitPrice = existing && "unit_price" in existing ? Number(existing.unit_price ?? 0) : unitPrice;
       const cpTotal = existing && "total_amount" in existing ? Number(existing.total_amount ?? 0) : defaultTotal;
       const cpPromotionAmount = existing && "promotion_amount" in existing ? Number(existing.promotion_amount ?? 0) : 0;
       return {
         productId: pid,
-        productName: String(productRow.name ?? ""),
-        productType: String(productRow.product_type ?? ""),
+        productName: String(productRow[enrollmentProductConfig.productNameField ?? "name"] ?? ""),
+        productType: String(productRow[enrollmentProductConfig.productTypeField ?? "product_type"] ?? ""),
         courseHour: Math.round(courseHour * 100) / 100,
         unitPrice: Math.round(cpUnitPrice * 100) / 100,
         totalAmount: Math.round(cpTotal * 100) / 100,
         promotionAmount: Math.round(cpPromotionAmount * 100) / 100
       };
     });
-  }, [dsl.layout, selectedProductIds, productRows, enrollmentValueWithDefaults]);
+  }, [dsl.layout, selectedProductIds, productRows, enrollmentValueWithDefaults, enrollmentProductConfig, productValuePrefix]);
 
-  const promotionId = dsl.layout === "enrollment" ? String(enrollmentValueWithDefaults.promotion_id ?? "") : "";
+  const promotionId = dsl.layout === "enrollment" ? String(enrollmentValueWithDefaults[promotionField] ?? "") : "";
 
   const promotionRow = useMemo(() => {
     if (dsl.layout !== "enrollment" || !promotionId) return null as Record<string, unknown> | null;
@@ -238,11 +245,11 @@ export function GenericPageRenderer({
     const totalProductAmount = contractProducts.reduce((sum, cp) => sum + cp.totalAmount, 0);
     let contractPromotionAmount = 0;
     if (promotionRow) {
-      const promoType = String(promotionRow.type ?? "");
-      const promoValue = Number(promotionRow.value ?? 0);
-      if (promoType === "REDUCE") {
+      const promoType = String(promotionRow[enrollmentPromotionConfig.typeField ?? "type"] ?? "");
+      const promoValue = Number(promotionRow[enrollmentPromotionConfig.valueField ?? "value"] ?? 0);
+      if (promoType === (enrollmentPromotionConfig.reduceValue ?? "REDUCE")) {
         contractPromotionAmount = promoValue;
-      } else if (promoType === "DISCOUNT") {
+      } else if (promoType === (enrollmentPromotionConfig.discountValue ?? "DISCOUNT")) {
         contractPromotionAmount = Math.round(totalProductAmount * (1 - promoValue / 10) * 100) / 100;
       }
     }
@@ -250,7 +257,7 @@ export function GenericPageRenderer({
     const allPromotion = contractPromotionAmount + productPromotionTotal;
     const receivable = totalProductAmount - allPromotion;
     return { totalProductAmount, contractPromotionAmount, productPromotionTotal, allPromotion, receivable };
-  }, [dsl.layout, contractProducts, promotionRow]);
+  }, [dsl.layout, contractProducts, promotionRow, enrollmentPromotionConfig]);
 
   const modalTitle = useMemo(() => {
     if (!modal) return "";
@@ -363,10 +370,10 @@ export function GenericPageRenderer({
     if (!createAction) return;
     const apiCode = createAction.apiCode ?? dsl.createApi;
     const submitData: Record<string, unknown> = { ...(resolveDictionaryDefaults(createAction.defaultValues) ?? {}), ...enrollmentValue };
-    const productIds = (Array.isArray(submitData.product_ids) ? submitData.product_ids : []) as string[];
+    const productIds = (Array.isArray(submitData[productIdsField]) ? submitData[productIdsField] : []) as string[];
     if (productIds.length) {
       const contractProducts = productIds.map((pid) => {
-        const cpKey = `cp_${pid}`;
+        const cpKey = `${productValuePrefix}${pid}`;
         const cpData = (submitData[cpKey] ?? {}) as Record<string, unknown>;
         return {
           product_id: pid,
@@ -378,7 +385,7 @@ export function GenericPageRenderer({
       });
       submitData.contract_products = contractProducts;
       for (const pid of productIds) {
-        delete submitData[`cp_${pid}`];
+        delete submitData[`${productValuePrefix}${pid}`];
       }
       if (!submitData.total_amount) {
         submitData.total_amount = contractProducts.reduce((sum: number, cp: Record<string, unknown>) => sum + Number(cp.plan_real_amount ?? 0), 0);
@@ -753,8 +760,8 @@ export function GenericPageRenderer({
   useEffect(() => {
     if (dsl.layout !== "enrollment") return;
     let cancelled = false;
-    const productField = (createAction?.fields ?? modalDsl.fields).find((f) => f.key === "product_ids");
-    const promoField = (createAction?.fields ?? modalDsl.fields).find((f) => f.key === "promotion_id");
+    const productField = (createAction?.fields ?? modalDsl.fields).find((f) => f.key === productIdsField);
+    const promoField = (createAction?.fields ?? modalDsl.fields).find((f) => f.key === promotionField);
     const loads: Promise<void>[] = [];
     if (productField?.optionSource) {
       loads.push(
@@ -790,7 +797,7 @@ export function GenericPageRenderer({
     }
     if (loads.length) Promise.all(loads).catch(() => {});
     return () => { cancelled = true; };
-  }, [dsl.pageCode, dsl.layout]);
+  }, [dsl.pageCode, dsl.layout, productIdsField, promotionField]);
 
   if (dsl.layout === "dashboard") {
     const quickGradients = [
@@ -921,12 +928,19 @@ export function GenericPageRenderer({
 
   if (dsl.layout === "enrollment") {
     const byKeys = (keys: string[]) => visibleModalFields(enrollmentFields).filter((field) => keys.includes(field.key));
+    const sectionKeys = {
+      student: enrollmentSections.student?.fieldKeys ?? ["student_ids"],
+      products: enrollmentSections.products?.fieldKeys ?? [productIdsField],
+      attributes: enrollmentSections.attributes?.fieldKeys ?? ["contract_type", "organization_id", "sign_staff_id", "sign_time", promotionField, "remark"]
+    };
+    const productColumns = enrollmentProductConfig.columns ?? {};
+    const settlementLabels = enrollmentSections.settlement?.labels ?? {};
 
     function r2(v: number) { return Math.round((v + Number.EPSILON) * 100) / 100; }
     function floor2(v: number) { return Math.floor((v + Number.EPSILON) * 100) / 100; }
 
     function updateCpField(productId: string, field: string, rawValue: unknown) {
-      const cpKey = `cp_${productId}`;
+      const cpKey = `${productValuePrefix}${productId}`;
       const existing = (enrollmentValueWithDefaults[cpKey] ?? {}) as Record<string, unknown>;
       const numVal = rawValue === "" ? 0 : r2(Number(rawValue));
       let next = { ...existing, [field]: numVal };
@@ -961,11 +975,11 @@ export function GenericPageRenderer({
         </div>
         <div className="space-y-3">
           {section(
-            "学员信息",
+            enrollmentSections.student?.title ?? "学员信息",
             <GenericFormRenderer
               scope={scope}
               schemaName={schemaName}
-              fields={byKeys(["student_ids"])}
+              fields={byKeys(sectionKeys.student)}
               value={enrollmentValueWithDefaults}
               onChange={(next) => setEnrollmentValue(next)}
               presentation={presentationWithDictionaries}
@@ -974,30 +988,30 @@ export function GenericPageRenderer({
             />
           )}
           {section(
-            "报读课程",
+            enrollmentSections.products?.title ?? "报读课程",
             <div>
               <GenericFormRenderer
                 scope={scope}
                 schemaName={schemaName}
-                fields={byKeys(["product_ids"])}
+                fields={byKeys(sectionKeys.products)}
                 value={enrollmentValueWithDefaults}
                 onChange={(next) => {
-                  const newIds = (Array.isArray(next.product_ids) ? next.product_ids : []) as string[];
-                  const oldIds = (Array.isArray(enrollmentValueWithDefaults.product_ids) ? enrollmentValueWithDefaults.product_ids : []) as string[];
+                  const newIds = (Array.isArray(next[productIdsField]) ? next[productIdsField] : []) as string[];
+                  const oldIds = (Array.isArray(enrollmentValueWithDefaults[productIdsField]) ? enrollmentValueWithDefaults[productIdsField] : []) as string[];
                   const added = newIds.filter((id: string) => !oldIds.includes(id));
                   const merged = { ...enrollmentValueWithDefaults, ...next };
                   for (const pid of added) {
                     const productRow = productRows[selectedProductIds.length] ?? (remoteProductOptionsRef.current ?? []).find((o) => o.value === String(pid))?.row ?? {};
-                    const cpKey = `cp_${pid}`;
+                    const cpKey = `${productValuePrefix}${pid}`;
                     if (!merged[cpKey]) {
-                      const hour = r2(Number(productRow.default_course_hour ?? 0));
-                      const price = r2(Number(productRow.unit_price ?? 0));
-                      const total = r2(Number(productRow.total_amount ?? hour * price));
+                      const hour = r2(Number(productRow[enrollmentProductConfig.defaultHourField ?? "default_course_hour"] ?? 0));
+                      const price = r2(Number(productRow[enrollmentProductConfig.unitPriceField ?? "unit_price"] ?? 0));
+                      const total = r2(Number(productRow[enrollmentProductConfig.totalAmountField ?? "total_amount"] ?? hour * price));
                       merged[cpKey] = { course_hour: hour, unit_price: price, total_amount: total, promotion_amount: 0 };
                     }
                   }
                   for (const oldId of oldIds) {
-                    if (!newIds.includes(oldId)) delete merged[`cp_${oldId}`];
+                    if (!newIds.includes(oldId)) delete merged[`${productValuePrefix}${oldId}`];
                   }
                   setEnrollmentValue(merged);
                 }}
@@ -1010,11 +1024,11 @@ export function GenericPageRenderer({
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-[#f8fafc] text-[#5f6b7a]">
-                        <th className="px-3 py-2 text-left font-medium">课程产品</th>
-                        <th className="px-3 py-2 text-center font-medium w-[100px]">课时</th>
-                        <th className="px-3 py-2 text-center font-medium w-[100px]">单价</th>
-                        <th className="px-3 py-2 text-center font-medium w-[110px]">总价</th>
-                        <th className="px-3 py-2 text-center font-medium w-[110px]">优惠金额</th>
+                        <th className="px-3 py-2 text-left font-medium">{productColumns.product ?? "课程产品"}</th>
+                        <th className="px-3 py-2 text-center font-medium w-[100px]">{productColumns.courseHour ?? "课时"}</th>
+                        <th className="px-3 py-2 text-center font-medium w-[100px]">{productColumns.unitPrice ?? "单价"}</th>
+                        <th className="px-3 py-2 text-center font-medium w-[110px]">{productColumns.totalAmount ?? "总价"}</th>
+                        <th className="px-3 py-2 text-center font-medium w-[110px]">{productColumns.promotionAmount ?? "优惠金额"}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1046,35 +1060,35 @@ export function GenericPageRenderer({
               )}
               {!contractProducts.length && (
                 <div className="mt-4 min-h-[82px] border border-[#e8edf5] bg-[#f8fafc] px-4 py-7 text-center text-sm text-[#8b95a7]">
-                  请选择要报读的课程
+                  {enrollmentSections.products?.emptyText ?? "请选择要报读的课程"}
                 </div>
               )}
             </div>
           )}
           <div className="grid gap-3 xl:grid-cols-[1fr_360px]">
             {section(
-              "业务属性",
+              enrollmentSections.attributes?.title ?? "业务属性",
               <GenericFormRenderer
                 scope={scope}
                 schemaName={schemaName}
-                fields={byKeys(["contract_type", "organization_id", "sign_staff_id", "sign_time", "promotion_id", "remark"])}
+                fields={byKeys(sectionKeys.attributes)}
                 value={enrollmentValueWithDefaults}
                 onChange={(next) => {
-                  const promoChanged = next.promotion_id !== enrollmentValueWithDefaults.promotion_id;
-                  if (promoChanged && next.promotion_id) {
-                    const promoOpt = (remotePromotionOptionsRef.current ?? []).find((o) => o.value === String(next.promotion_id));
+                  const promoChanged = next[promotionField] !== enrollmentValueWithDefaults[promotionField];
+                  if (promoChanged && next[promotionField]) {
+                    const promoOpt = (remotePromotionOptionsRef.current ?? []).find((o) => o.value === String(next[promotionField]));
                     const promo = promoOpt?.row;
                     if (promo && contractProducts.length) {
-                      const promoType = String(promo.type ?? "");
-                      const promoValue = Number(promo.value ?? 0);
+                      const promoType = String(promo[enrollmentPromotionConfig.typeField ?? "type"] ?? "");
+                      const promoValue = Number(promo[enrollmentPromotionConfig.valueField ?? "value"] ?? 0);
                       const totalProductAmount = contractProducts.reduce((sum, cp) => sum + cp.totalAmount, 0);
                       let totalPromotion = 0;
-                      if (promoType === "REDUCE") totalPromotion = promoValue;
-                      else if (promoType === "DISCOUNT") totalPromotion = r2(totalProductAmount * (1 - promoValue / 10));
+                      if (promoType === (enrollmentPromotionConfig.reduceValue ?? "REDUCE")) totalPromotion = promoValue;
+                      else if (promoType === (enrollmentPromotionConfig.discountValue ?? "DISCOUNT")) totalPromotion = r2(totalProductAmount * (1 - promoValue / 10));
                       let remaining = totalPromotion;
                       const merged = { ...enrollmentValueWithDefaults, ...next };
                       contractProducts.forEach((cp, idx) => {
-                        const cpKey = `cp_${cp.productId}`;
+                        const cpKey = `${productValuePrefix}${cp.productId}`;
                         const existing = (merged[cpKey] ?? {}) as Record<string, unknown>;
                         const share = idx === contractProducts.length - 1
                           ? r2(remaining)
@@ -1086,10 +1100,10 @@ export function GenericPageRenderer({
                       return;
                     }
                   }
-                  if (promoChanged && !next.promotion_id) {
+                  if (promoChanged && !next[promotionField]) {
                     const merged = { ...enrollmentValueWithDefaults, ...next };
                     for (const cp of contractProducts) {
-                      const cpKey = `cp_${cp.productId}`;
+                      const cpKey = `${productValuePrefix}${cp.productId}`;
                       const existing = (merged[cpKey] ?? {}) as Record<string, unknown>;
                       merged[cpKey] = { ...existing, promotion_amount: 0 };
                     }
@@ -1104,18 +1118,18 @@ export function GenericPageRenderer({
               />
             )}
             {section(
-              "结算",
+              enrollmentSections.settlement?.title ?? "结算",
               <div className="space-y-4 text-sm">
-                <div className="flex justify-between text-[#607083]"><span>共 {contractProducts.length} 个课程，总金额</span><span>{computedTotals.totalProductAmount.toFixed(2)} 元</span></div>
-                <div className="flex justify-between text-[#607083]"><span>课程优惠</span><span className="text-[#d92d20]">-{computedTotals.productPromotionTotal.toFixed(2)} 元</span></div>
-                <div className="flex justify-between text-[#607083]"><span>合同优惠</span><span className="text-[#d92d20]">-{computedTotals.contractPromotionAmount.toFixed(2)} 元</span></div>
-                <div className="flex justify-between border-t border-[#e8edf5] pt-4 text-base font-semibold text-[#2f80ed]"><span>合同应收款</span><span>{computedTotals.receivable.toFixed(2)} 元</span></div>
+                <div className="flex justify-between text-[#607083]"><span>{(settlementLabels.total ?? "共 {count} 个课程，总金额").replace("{count}", String(contractProducts.length))}</span><span>{computedTotals.totalProductAmount.toFixed(2)} 元</span></div>
+                <div className="flex justify-between text-[#607083]"><span>{settlementLabels.productPromotion ?? "课程优惠"}</span><span className="text-[#d92d20]">-{computedTotals.productPromotionTotal.toFixed(2)} 元</span></div>
+                <div className="flex justify-between text-[#607083]"><span>{settlementLabels.contractPromotion ?? "合同优惠"}</span><span className="text-[#d92d20]">-{computedTotals.contractPromotionAmount.toFixed(2)} 元</span></div>
+                <div className="flex justify-between border-t border-[#e8edf5] pt-4 text-base font-semibold text-[#2f80ed]"><span>{settlementLabels.receivable ?? "合同应收款"}</span><span>{computedTotals.receivable.toFixed(2)} 元</span></div>
               </div>
             )}
           </div>
           <div className="sticky bottom-0 flex justify-end border border-[#d9e3ed] bg-white px-5 py-4 shadow-[0_-8px_20px_rgba(24,36,56,0.06)]">
             <button className={`${token.button} ${token.primaryButton} h-9 px-8`} onClick={() => void submitEnrollment()}>
-              保存合同
+              {settlementLabels.save ?? "保存合同"}
             </button>
           </div>
         </div>

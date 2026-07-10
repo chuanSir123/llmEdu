@@ -3,7 +3,7 @@ import { GatewayClient } from "../api/GatewayClient";
 import type { FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
-import { enumDisplayFor } from "../dsl/enumLabels";
+import { dictionaryDisplayFor } from "../dsl/dictionaryLabels";
 import { effectiveOptionSource } from "../dsl/dictionarySource";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
 import { BusinessRuleEditor } from "./BusinessRuleEditor";
@@ -279,7 +279,7 @@ export function GenericFormRenderer({
               <textarea
                 className={`${token.input} min-h-[96px] w-full min-w-0 resize-y py-2 leading-5`}
                 rows={field.rows ?? 4}
-                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
+                value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 onChange={(event) => onChange({ ...value, [field.key]: event.target.value })}
               />
@@ -355,7 +355,7 @@ export function GenericFormRenderer({
               <input
                 className={`${token.input} w-full min-w-0 ${isReadonly ? "bg-[#f5f7fa] text-[#8b95a7] cursor-default" : ""}`}
                 type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "number" ? "number" : "text"}
-                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
+                value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}
                 onChange={(event) => onChange({ ...value, [field.key]: parseInputValue(field, event.target.value) })}

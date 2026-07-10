@@ -1,4 +1,5 @@
 import { token } from "../styles/designTokens";
+import { dictionaryOptionEntries, firstDictionaryOptionValue, preferredDictionaryValue } from "../dsl/dictionaryLabels";
 
 type Step = {
   stepCode?: string;
@@ -11,7 +12,7 @@ function optionsFor(valueLabels: Record<string, Record<string, string>>, dictCod
 }
 
 function firstOptionValue(options: Record<string, string>, fallback = "") {
-  return Object.keys(options)[0] ?? fallback;
+  return firstDictionaryOptionValue(options, fallback);
 }
 
 
@@ -52,33 +53,33 @@ export function ApprovalFlowEditor({
           <span className="text-[#5f6b7a]">触发事件</span>
           <select
             className={token.input}
-            value={String(asObject(config.trigger).event ?? "")}
+            value={preferredDictionaryValue(triggerEvents, asObject(config.trigger).event)}
             onChange={(event) => updateConfig({ trigger: { ...asObject(config.trigger), event: event.target.value } })}
           >
             <option value="">请选择</option>
-            {Object.entries(triggerEvents).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {dictionaryOptionEntries(triggerEvents).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-[#5f6b7a]">触发页面</span>
           <select
             className={token.input}
-            value={String(asObject(config.trigger).pageCode ?? "")}
+            value={preferredDictionaryValue(pageOptions, asObject(config.trigger).pageCode)}
             onChange={(event) => updateConfig({ trigger: { ...asObject(config.trigger), pageCode: event.target.value } })}
           >
             <option value="">请选择</option>
-            {Object.entries(pageOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {dictionaryOptionEntries(pageOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-[#5f6b7a]">审批后动作</span>
           <select
             className={token.input}
-            value={String((Array.isArray(config.afterApproved) ? config.afterApproved[0] as Record<string, unknown> : {})?.actionCode ?? "")}
+            value={preferredDictionaryValue(actionOptions, (Array.isArray(config.afterApproved) ? config.afterApproved[0] as Record<string, unknown> : {})?.actionCode)}
             onChange={(event) => updateConfig({ afterApproved: event.target.value ? [{ type: "enable_action", actionCode: event.target.value }] : [] })}
           >
             <option value="">不设置</option>
-            {Object.entries(actionOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {dictionaryOptionEntries(actionOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
       </div>
@@ -92,9 +93,9 @@ export function ApprovalFlowEditor({
         {steps.map((step, index) => (
           <div key={index} className="grid grid-cols-[1.2fr_1fr_56px] gap-2 border-t border-[#e8edf5] px-3 py-2">
             <input className={token.input} value={step.stepName ?? ""} onChange={(event) => updateStep(index, { stepName: event.target.value })} />
-            <select className={token.input} value={step.assigneeRole ?? ""} onChange={(event) => updateStep(index, { assigneeRole: event.target.value })}>
+            <select className={token.input} value={preferredDictionaryValue(roleOptions, step.assigneeRole)} onChange={(event) => updateStep(index, { assigneeRole: event.target.value })}>
               <option value="">请选择</option>
-              {Object.entries(roleOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              {dictionaryOptionEntries(roleOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
             <button
               type="button"

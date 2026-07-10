@@ -184,6 +184,32 @@ export type PageDsl = {
     statusMap?: Record<string, Record<string, "green" | "blue" | "amber" | "red" | "gray">>;
     valueLabels?: Record<string, Record<string, string>>;
     dictionaryMeta?: Record<string, Record<string, Record<string, unknown>>>;
+    enrollment?: {
+      sections?: {
+        student?: { title?: string; fieldKeys?: string[] };
+        products?: { title?: string; fieldKeys?: string[]; emptyText?: string };
+        attributes?: { title?: string; fieldKeys?: string[] };
+        settlement?: { title?: string; labels?: { total?: string; productPromotion?: string; contractPromotion?: string; receivable?: string; save?: string } };
+      };
+      productTable?: {
+        productIdsField?: string;
+        rowValuePrefix?: string;
+        productNameField?: string;
+        productTypeField?: string;
+        defaultHourField?: string;
+        unitPriceField?: string;
+        totalAmountField?: string;
+        promotionAmountField?: string;
+        columns?: { product?: string; courseHour?: string; unitPrice?: string; totalAmount?: string; promotionAmount?: string };
+      };
+      promotion?: {
+        field?: string;
+        typeField?: string;
+        valueField?: string;
+        reduceValue?: string;
+        discountValue?: string;
+      };
+    };
     dashboard?: {
       quickActions?: Array<{ label: string; pageCode: string; moduleCode?: string; filters?: Record<string, unknown>; icon?: string; description?: string }>;
       rightRail?: {
