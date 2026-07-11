@@ -42,7 +42,7 @@ export const DATA_PERMISSION_ENUM_TEXT = DATA_PERMISSION_LEVELS.map((item) => it
 /**
  * 平台内置核心业务规则编码（seed 时会同时在 rule_json 上打 coreRule/locked 标记）。
  * 判断"是否核心规则"应优先读 rule_json 元数据（isCoreBusinessRule），
- * 本清单仅作为 seed 与无元数据旧数据的兜底，避免各文件重复维护。
+ * 本清单作为 seed 与规则保护的集中配置，避免各文件重复维护。
  */
 export const CORE_BUSINESS_RULE_CODES = new Set([
   "funds_create_rule",
@@ -50,6 +50,7 @@ export const CORE_BUSINESS_RULE_CODES = new Set([
   "refund_create_rule",
   "contract_refund_rule",
   "course_create_rule",
+  "course_delete_rule",
   "course_time_validation_rule",
 ]);
 

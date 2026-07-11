@@ -3,7 +3,7 @@ import { GatewayClient } from "../api/GatewayClient";
 import type { FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
-import { enumDisplayFor } from "../dsl/enumLabels";
+import { dictionaryDisplayFor, dictionaryOptionEntries } from "../dsl/dictionaryLabels";
 import { effectiveOptionSource } from "../dsl/dictionarySource";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
 import { BusinessRuleEditor } from "./BusinessRuleEditor";
@@ -117,8 +117,20 @@ export function GenericFormRenderer({
     return raw ? [String(raw)] : [];
   };
 
+  const dedupeOptions = (options: Array<{ value: string; label: string; row: Record<string, unknown> }>) => {
+    const byLabel = new Map<string, { value: string; label: string; row: Record<string, unknown> }>();
+    for (const option of options) {
+      const current = byLabel.get(option.label);
+      const currentIsDictionaryId = current?.value.includes(".") ?? false;
+      const nextIsDictionaryId = option.value.includes(".");
+      if (!current || (nextIsDictionaryId && !currentIsDictionaryId)) byLabel.set(option.label, option);
+    }
+    return [...byLabel.values()];
+  };
+
   const treeOptions = (field: FieldDsl, options?: Record<string, string>) => {
-    const list = effectiveOptionSource(field) ? remoteOptions[field.key] ?? [] : Object.entries(options ?? {}).map(([value, label]) => ({ value, label, row: {} }));
+    const rawList = effectiveOptionSource(field) ? remoteOptions[field.key] ?? [] : dictionaryOptionEntries(options ?? {}).map(([value, label]) => ({ value, label, row: {} }));
+    const list = dedupeOptions(rawList);
     if (!field.type?.startsWith("organizationTree")) return list.map((option) => ({ ...option, depth: 0 }));
     const byParent = new Map<string, typeof list>();
     for (const option of list) {
@@ -150,7 +162,7 @@ export function GenericFormRenderer({
     const text = String(raw ?? "");
     if (!text) return false;
     const itemValue = String(option.row.itemValue ?? option.row.item_value ?? "");
-    return option.value === text || (Boolean(itemValue) && itemValue === text);
+    return option.value === text || option.value.endsWith(`.${text}`) || (Boolean(itemValue) && itemValue === text);
   };
 
   const formatInputValue = (field: FieldDsl, raw: unknown) => {
@@ -279,7 +291,7 @@ export function GenericFormRenderer({
               <textarea
                 className={`${token.input} min-h-[96px] w-full min-w-0 resize-y py-2 leading-5`}
                 rows={field.rows ?? 4}
-                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
+                value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 onChange={(event) => onChange({ ...value, [field.key]: event.target.value })}
               />
@@ -355,7 +367,7 @@ export function GenericFormRenderer({
               <input
                 className={`${token.input} w-full min-w-0 ${isReadonly ? "bg-[#f5f7fa] text-[#8b95a7] cursor-default" : ""}`}
                 type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "number" ? "number" : "text"}
-                value={isReadonly ? enumDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
+                value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}
                 onChange={(event) => onChange({ ...value, [field.key]: parseInputValue(field, event.target.value) })}
