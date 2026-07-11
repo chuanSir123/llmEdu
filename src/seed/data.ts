@@ -159,6 +159,59 @@ export function enhanceDictionaryFields(value: unknown): unknown {
   return obj;
 }
 
+
+const businessRuleEditorSchema = {
+  sections: {
+    funds_allocation: {
+      selects: [
+        { key: "fundsAllocation", label: "资金分配方式", dictCode: "funds_allocation_method" },
+        { key: "splitBy", label: "拆分维度", dictCode: "allocation_split_by" },
+        { key: "generateLogTable", label: "生成明细", dictCode: "generated_log_table" }
+      ],
+      switches: [
+        { key: "updateContractPaidStatus", label: "自动更新合同收款状态" },
+        { key: "allowPreStoreWithoutContract", label: "允许无合同预存" },
+        { key: "allowManualAdjust", label: "允许手工调整" }
+      ],
+      rows: ["validations"]
+    },
+    promotion_allocation: {
+      selects: [
+        { key: "promotionAllocation", label: "优惠分配方式", dictCode: "promotion_allocation_method" },
+        { key: "splitBy", label: "拆分维度", dictCode: "allocation_split_by" },
+        { key: "generateLogTable", label: "生成明细", dictCode: "generated_log_table" }
+      ],
+      switches: [
+        { key: "requireAtLeastOneProduct", label: "合同至少包含一个产品" },
+        { key: "snapshotPromotion", label: "签约时保存优惠快照" },
+        { key: "allowManualAdjust", label: "允许手工调整" }
+      ]
+    },
+    performance_allocation: {
+      selects: [
+        { key: "performanceAllocation", label: "业绩分配方式", dictCode: "performance_allocation_method" },
+        { key: "organizationPerformanceOwner", label: "校区业绩归属", dictCode: "organization_performance_owner" },
+        { key: "personalPerformanceOwner", label: "个人业绩归属", dictCode: "personal_performance_owner" },
+        { key: "productPriority", label: "产品优先级", dictCode: "product_priority" },
+        { key: "generateLogTable", label: "生成明细", dictCode: "generated_log_table" }
+      ],
+      switches: [
+        { key: "includePromotionAmount", label: "优惠金额计入业绩" },
+        { key: "includeRefundDeduction", label: "退费自动冲减业绩" },
+        { key: "allowManualAdjust", label: "允许手工调整" }
+      ],
+      numbers: [
+        { key: "oneToOneWeight", label: "一对一权重", suffix: "%" },
+        { key: "classCourseWeight", label: "班课权重", suffix: "%" }
+      ]
+    },
+    validation: { selects: [{ key: "targetApi", label: "校验接口", dictCode: "business_action_code" }], switches: [{ key: "preventTeacherTimeConflict", label: "防止老师时间冲突" }, { key: "preventStudentTimeConflict", label: "防止学员时间冲突" }, { key: "preventInvalidTimeRange", label: "防止无效时间范围" }], rows: ["validations"] },
+    refund: { selects: [{ key: "refundAllocation", label: "退费冲减方式", dictCode: "refund_allocation_method" }], switches: [{ key: "allowRefundOverBalance", label: "允许超过余额退费" }, { key: "updateContractProductBalance", label: "自动更新产品余额" }, { key: "updateContractPaidStatus", label: "自动更新合同收款状态" }, { key: "autoRefundToEleAccount", label: "退回电子账户" }], rows: ["validations"] },
+    charge: { selects: [{ key: "defaultChargeType", label: "默认扣费类型", dictCode: "charge_type" }], switches: [{ key: "allowNegativeBalance", label: "允许负余额扣费" }, { key: "updateContractProductBalance", label: "自动更新产品余额" }, { key: "autoCalculateChargeAmount", label: "自动计算扣费金额" }], rows: ["validations"] },
+    attendance: { switches: [{ key: "requireCheckInBeforeCharge", label: "签到后才允许扣费" }, { key: "autoCalculateChargeAmount", label: "按课时自动计算扣费" }, { key: "allowAfterFinished", label: "允许课后补签" }], rows: ["validations"] }
+  }
+};
+
 const studentSelect = { pageCode: "student_list", apiCode: "student_list.query", labelField: "name" };
 const allStudentSelect = { pageCode: "frontdesk_home", apiCode: "frontdesk_home.query", labelField: "name" };
 const orgSelect = { pageCode: "organization_list", apiCode: "organization_list.query", labelField: "name" };
@@ -2686,7 +2739,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     ];
     baseDsl.modal.fields = [
       { key: "rule_name", label: "规则名称", type: "text", required: true },
-      { key: "rule_json", label: "规则设置", type: "business_rule_editor", span: "full" }
+      { key: "rule_json", label: "规则设置", type: "business_rule_editor", span: "full", editorSchema: businessRuleEditorSchema }
     ];
     baseDsl.presentation.modal.size = "large";
     baseDsl.presentation.table.primaryRowActions = ["business_rule_list.detail", "business_rule_list.edit", "business_rule_list.delete"];
@@ -3539,6 +3592,7 @@ export const businessRules = [
     rule_name: "收款资金分配规则",
     rule_json: {
       category: "funds_allocation",
+      categories: ["funds_allocation", "promotion_allocation", "performance_allocation"],
       businessType: "funds_create",
       fundsAllocation: "byCpRemainingAmount",
       splitBy: "contract_product",
@@ -3546,6 +3600,13 @@ export const businessRules = [
       allowPreStoreWithoutContract: true,
       allowManualAdjust: false,
       generateLogTable: "money_arrange_log",
+      promotionAllocation: "byCpAmountRatio",
+      performanceAllocation: "byCpPaidRatio",
+      organizationPerformanceOwner: "contractOrganization",
+      personalPerformanceOwner: "signStaff",
+      productPriority: "none",
+      includePromotionAmount: false,
+      includeRefundDeduction: true,
       voidGeneratesPerformanceReverse: true,
       validations: [
         { field: "transaction_amount", operator: ">", value: 0, message: "收款金额必须大于 0" }
@@ -3613,6 +3674,7 @@ export const businessRules = [
     rule_json: {
       category: "refund",
       businessType: "refund_create",
+      categories: ["refund"],
       refundAllocation: "byCpRemainingAmount",
       allowRefundOverBalance: false,
       updateContractProductBalance: true,
@@ -3712,10 +3774,10 @@ export const businessRules = [
   },
   {
     rule_code: "promotion_allocation_rule",
-    rule_name: "优惠分配通用规则",
+    rule_name: "收款优惠分配规则",
     rule_json: {
       category: "promotion_allocation",
-      businessType: "contract_create",
+      businessType: "funds_create",
       promotionAllocation: "byCpAmountRatio",
       splitBy: "contract_product",
       snapshotPromotion: true,
@@ -3725,10 +3787,10 @@ export const businessRules = [
   },
   {
     rule_code: "performance_allocation_rule",
-    rule_name: "业绩分配通用规则",
+    rule_name: "收款业绩分配规则",
     rule_json: {
       category: "performance_allocation",
-      businessType: "performance",
+      businessType: "funds_create",
       performanceAllocation: "byCpPaidRatio",
       organizationPerformanceOwner: "contractOrganization",
       personalPerformanceOwner: "signStaff",
@@ -3856,6 +3918,34 @@ export const businessRules = [
       includeFinished: false,
       blockAttendedOrCharged: true,
       description: "停课日历批量处理仅影响待上课课程；默认拦截已有考勤或已确认扣费课程，支持批量取消或按天数顺延。"
+    }
+  },
+  {
+    rule_code: "funds_delete_rule",
+    rule_name: "删除收款回滚规则",
+    rule_json: {
+      category: "funds_allocation",
+      categories: ["funds_allocation", "performance_allocation"],
+      businessType: "funds_delete",
+      fundsAllocation: "byCpRemainingAmount",
+      reverseMoneyArrangeOnDelete: true,
+      reversePerformanceOnDelete: true,
+      updateContractPaidStatus: true,
+      requireDeleteReason: true,
+      generateLogTable: "money_arrange_log"
+    }
+  },
+  {
+    rule_code: "refund_delete_rule",
+    rule_name: "删除退费回滚规则",
+    rule_json: {
+      category: "refund",
+      categories: ["refund"],
+      businessType: "refund_delete",
+      refundAllocation: "originalPaymentReverse",
+      restoreContractProductBalance: true,
+      updateContractPaidStatus: true,
+      requireDeleteReason: true
     }
   },
   {
