@@ -351,6 +351,7 @@ export function GenericFormRenderer({
               <BusinessRuleEditor
                 value={value[field.key]}
                 valueLabels={presentation?.valueLabels}
+                editorSchema={field.editorSchema}
                 onChange={(next) => onChange({ ...value, [field.key]: next })}
               />
             ) : field.type === "permission_editor" ? (

@@ -80,6 +80,15 @@ function businessRuleTypeLabel(type: string) {
   return systemDictionaryLabel("business_type", type) ?? type;
 }
 
+function businessRuleCategories(ruleJson: Record<string, unknown>) {
+  const values = Array.isArray(ruleJson.categories) ? ruleJson.categories : [ruleJson.category];
+  return values.map((item) => String(item ?? "")).filter(Boolean);
+}
+
+function businessRuleCategoryLabels(ruleJson: Record<string, unknown>) {
+  return businessRuleCategories(ruleJson).map((category) => businessRuleCategoryLabel(category)).join("、");
+}
+
 // 模块中文名以 module_registry 为准（租户可定制模块），带短 TTL 缓存；查不到回落模块编码
 let moduleLabelCache: { labels: Record<string, string>; expiresAt: number } | null = null;
 
@@ -294,18 +303,31 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
      limit $${values.length - 1} offset $${values.length}`,
     values
   );
-  return {
-    rows: rows.map(({ __total, ...row }) => ({
-      ...row,
-      source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
-      rule_json: asObject(row.rule_json),
-      category_label: businessRuleCategoryLabel(String(asObject(row.rule_json).category ?? "")),
-      business_type_label: businessRuleTypeLabel(String(asObject(row.rule_json).businessType ?? "")),
-    })),
-    total: Number(rows[0]?.__total ?? 0),
-    page,
-    pageSize,
-  };
+  const grouped = new Map<string, Record<string, unknown>>();
+  for (const { __total, ...row } of rows) {
+    const ruleJson = asObject(row.rule_json);
+    const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
+    const groupKey = businessType || String(row.rule_code);
+    const categories = businessRuleCategories(ruleJson);
+    const existing = grouped.get(groupKey);
+    if (existing) {
+      const mergedCategories = Array.from(new Set([...(existing.categories as string[]), ...categories]));
+      existing.category_label = mergedCategories.map((category) => businessRuleCategoryLabel(category)).join("、");
+      existing.rule_count = Number(existing.rule_count ?? 1) + 1;
+    } else {
+      grouped.set(groupKey, {
+        ...row,
+        source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
+        rule_json: ruleJson,
+        categories,
+        category_label: businessRuleCategoryLabels(ruleJson),
+        business_type_label: businessRuleTypeLabel(businessType),
+        rule_count: 1
+      });
+    }
+  }
+  const groupedRows = Array.from(grouped.values());
+  return { rows: groupedRows, total: groupedRows.length, page, pageSize };
 }
 
 async function getBusinessRuleDetail(schemaName: string, params: Record<string, unknown>) {
@@ -328,7 +350,7 @@ async function getBusinessRuleDetail(schemaName: string, params: Record<string, 
     rule_json: ruleJson,
     business_type: ruleJson.businessType ?? "",
     source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
-    category_label: businessRuleCategoryLabel(String(ruleJson.category ?? "")),
+    category_label: businessRuleCategoryLabels(ruleJson),
     business_type_label: businessRuleTypeLabel(String(ruleJson.businessType ?? ""))
   };
 }
