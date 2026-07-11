@@ -37,6 +37,8 @@ export type FieldDsl = {
   field?: string;
   defaultRange?: "current_month";
   maxRangeDays?: number;
+  /** 可定制编辑器配置，例如 business_rule_editor 的分类字段、开关和行配置。 */
+  editorSchema?: Record<string, unknown>;
 };
 
 export type WhereCondition = {

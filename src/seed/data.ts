@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { env } from "../config/env.js";
 import { dictionaryItemId, DICTIONARY_FIELD_ALIASES, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { businessRuleEditorSchema } from "../business-rule-editor-schema.js";
 
 export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
@@ -158,6 +159,7 @@ export function enhanceDictionaryFields(value: unknown): unknown {
   }
   return obj;
 }
+
 
 const studentSelect = { pageCode: "student_list", apiCode: "student_list.query", labelField: "name" };
 const allStudentSelect = { pageCode: "frontdesk_home", apiCode: "frontdesk_home.query", labelField: "name" };
@@ -2686,7 +2688,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     ];
     baseDsl.modal.fields = [
       { key: "rule_name", label: "规则名称", type: "text", required: true },
-      { key: "rule_json", label: "规则设置", type: "business_rule_editor", span: "full" }
+      { key: "rule_json", label: "规则设置", type: "business_rule_editor", span: "full", editorSchema: businessRuleEditorSchema }
     ];
     baseDsl.presentation.modal.size = "large";
     baseDsl.presentation.table.primaryRowActions = ["business_rule_list.detail", "business_rule_list.edit", "business_rule_list.delete"];
@@ -3539,6 +3541,7 @@ export const businessRules = [
     rule_name: "收款资金分配规则",
     rule_json: {
       category: "funds_allocation",
+      categories: ["funds_allocation", "promotion_allocation", "performance_allocation"],
       businessType: "funds_create",
       fundsAllocation: "byCpRemainingAmount",
       splitBy: "contract_product",
@@ -3546,6 +3549,13 @@ export const businessRules = [
       allowPreStoreWithoutContract: true,
       allowManualAdjust: false,
       generateLogTable: "money_arrange_log",
+      promotionAllocation: "byCpAmountRatio",
+      performanceAllocation: "byCpPaidRatio",
+      organizationPerformanceOwner: "contractOrganization",
+      personalPerformanceOwner: "signStaff",
+      productPriority: "none",
+      includePromotionAmount: false,
+      includeRefundDeduction: true,
       voidGeneratesPerformanceReverse: true,
       validations: [
         { field: "transaction_amount", operator: ">", value: 0, message: "收款金额必须大于 0" }
@@ -3613,6 +3623,7 @@ export const businessRules = [
     rule_json: {
       category: "refund",
       businessType: "refund_create",
+      categories: ["refund"],
       refundAllocation: "byCpRemainingAmount",
       allowRefundOverBalance: false,
       updateContractProductBalance: true,
@@ -3712,10 +3723,10 @@ export const businessRules = [
   },
   {
     rule_code: "promotion_allocation_rule",
-    rule_name: "优惠分配通用规则",
+    rule_name: "收款优惠分配规则",
     rule_json: {
       category: "promotion_allocation",
-      businessType: "contract_create",
+      businessType: "funds_create",
       promotionAllocation: "byCpAmountRatio",
       splitBy: "contract_product",
       snapshotPromotion: true,
@@ -3725,10 +3736,10 @@ export const businessRules = [
   },
   {
     rule_code: "performance_allocation_rule",
-    rule_name: "业绩分配通用规则",
+    rule_name: "收款业绩分配规则",
     rule_json: {
       category: "performance_allocation",
-      businessType: "performance",
+      businessType: "funds_create",
       performanceAllocation: "byCpPaidRatio",
       organizationPerformanceOwner: "contractOrganization",
       personalPerformanceOwner: "signStaff",
@@ -3856,6 +3867,34 @@ export const businessRules = [
       includeFinished: false,
       blockAttendedOrCharged: true,
       description: "停课日历批量处理仅影响待上课课程；默认拦截已有考勤或已确认扣费课程，支持批量取消或按天数顺延。"
+    }
+  },
+  {
+    rule_code: "funds_delete_rule",
+    rule_name: "删除收款回滚规则",
+    rule_json: {
+      category: "funds_allocation",
+      categories: ["funds_allocation", "performance_allocation"],
+      businessType: "funds_delete",
+      fundsAllocation: "byCpRemainingAmount",
+      reverseMoneyArrangeOnDelete: true,
+      reversePerformanceOnDelete: true,
+      updateContractPaidStatus: true,
+      requireDeleteReason: true,
+      generateLogTable: "money_arrange_log"
+    }
+  },
+  {
+    rule_code: "refund_delete_rule",
+    rule_name: "删除退费回滚规则",
+    rule_json: {
+      category: "refund",
+      categories: ["refund"],
+      businessType: "refund_delete",
+      refundAllocation: "originalPaymentReverse",
+      restoreContractProductBalance: true,
+      updateContractPaidStatus: true,
+      requireDeleteReason: true
     }
   },
   {
