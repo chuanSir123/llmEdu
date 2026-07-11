@@ -313,6 +313,8 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
     if (existing) {
       const mergedCategories = Array.from(new Set([...(existing.categories as string[]), ...categories]));
       existing.category_label = mergedCategories.map((category) => businessRuleCategoryLabel(category)).join("、");
+      existing.categories = mergedCategories;
+      existing.rule_json = { ...(existing.rule_json as Record<string, unknown>), categories: mergedCategories, category: mergedCategories[0] };
       existing.rule_count = Number(existing.rule_count ?? 1) + 1;
     } else {
       grouped.set(groupKey, {
@@ -344,7 +346,19 @@ async function getBusinessRuleDetail(schemaName: string, params: Record<string, 
   );
   const row = rows[0];
   if (!row) throw Object.assign(new Error("规则不存在或已删除"), { statusCode: 404 });
-  const ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  let ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
+  if (businessType) {
+    const peerRows = await pool.query(
+      `select rule_json from admin.business_rule
+       where status = 'active' and deleted = false
+         and coalesce(rule_json->>'businessType', rule_json->>'business_type') = $1
+         and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`,
+      [businessType, schemaName]
+    );
+    const mergedCategories = Array.from(new Set(peerRows.rows.flatMap((peer) => businessRuleCategories(asObject(peer.rule_json)))));
+    if (mergedCategories.length) ruleJson = { ...ruleJson, category: mergedCategories[0], categories: mergedCategories };
+  }
   return {
     ...row,
     rule_json: ruleJson,
