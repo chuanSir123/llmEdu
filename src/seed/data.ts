@@ -3498,7 +3498,7 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
     return {
       operation: "command",
       command: "course.delete",
-      ruleCode: "course_create_rule"
+      ruleCode: "course_delete_rule"
     };
   }
   const hasOrganizationScope = page.table === "organization" || page.fields.some((field) => field.key === "organization_id");
@@ -3525,7 +3525,7 @@ export const businessRules = [
     rule_name: "签合同基础规则",
     rule_json: {
       category: "promotion_allocation",
-      businessType: "contract",
+      businessType: "contract_create",
       promotionAllocation: "byCpAmountRatio",
       splitBy: "contract_product",
       requireAtLeastOneProduct: true,
@@ -3539,7 +3539,7 @@ export const businessRules = [
     rule_name: "收款资金分配规则",
     rule_json: {
       category: "funds_allocation",
-      businessType: "funds",
+      businessType: "funds_create",
       fundsAllocation: "byCpRemainingAmount",
       splitBy: "contract_product",
       updateContractPaidStatus: true,
@@ -3569,7 +3569,7 @@ export const businessRules = [
     rule_name: "排课冲突规则",
     rule_json: {
       category: "validation",
-      businessType: "course",
+      businessType: "course_create",
       preventTeacherTimeConflict: true,
       preventStudentTimeConflict: true,
       preventInvalidTimeRange: true,
@@ -3612,7 +3612,7 @@ export const businessRules = [
     rule_name: "退费规则",
     rule_json: {
       category: "refund",
-      businessType: "refund",
+      businessType: "refund_create",
       refundAllocation: "byCpRemainingAmount",
       allowRefundOverBalance: false,
       updateContractProductBalance: true,
@@ -3682,7 +3682,7 @@ export const businessRules = [
     rule_name: "排课时间校验规则",
     rule_json: {
       category: "validation",
-      businessType: "course",
+      businessType: "course_create",
       targetApi: "course_list.create",
       validations: [
         { field: "end_time", operator: ">", valueField: "start_time", message: "结束时间必须晚于开始时间" },
@@ -3699,7 +3699,7 @@ export const businessRules = [
     rule_name: "资金分配通用规则",
     rule_json: {
       category: "funds_allocation",
-      businessType: "funds",
+      businessType: "funds_create",
       fundsAllocation: "byCpRemainingAmount",
       splitBy: "contract_product",
       allowManualAdjust: false,
@@ -3715,7 +3715,7 @@ export const businessRules = [
     rule_name: "优惠分配通用规则",
     rule_json: {
       category: "promotion_allocation",
-      businessType: "contract",
+      businessType: "contract_create",
       promotionAllocation: "byCpAmountRatio",
       splitBy: "contract_product",
       snapshotPromotion: true,
@@ -3778,7 +3778,7 @@ export const businessRules = [
     rule_name: "优惠审批阈值规则",
     rule_json: {
       category: "approval_trigger",
-      businessType: "contract",
+      businessType: "contract_create",
       targetAction: "contract_list.create",
       triggerApprovalFlow: "contract_discount_approval",
       thresholdAmount: 0,
@@ -3792,7 +3792,7 @@ export const businessRules = [
     rule_name: "退费审批阈值规则",
     rule_json: {
       category: "approval_trigger",
-      businessType: "refund",
+      businessType: "refund_create",
       targetAction: "refund_record.create",
       triggerApprovalFlow: "refund_create_approval",
       thresholdAmount: 0,
@@ -3816,7 +3816,7 @@ export const businessRules = [
   },
   {
     rule_code: "charge_reverse_approval_rule",
-    rule_name: "撤销扣费审批规则",
+    rule_name: "取消扣费审批规则",
     rule_json: {
       category: "approval_trigger",
       businessType: "charge_reverse",
@@ -3832,7 +3832,7 @@ export const businessRules = [
     rule_name: "预存款入账规则",
     rule_json: {
       category: "funds_allocation",
-      businessType: "funds",
+      businessType: "funds_create",
       fundsAllocation: "manual",
       splitBy: "contract",
       allowPreStoreWithoutContract: true,
@@ -3849,7 +3849,8 @@ export const businessRules = [
     rule_name: "停课影响课程处理规则",
     rule_json: {
       category: "workflow",
-      businessType: "course_cancel",
+      businessType: "holiday_course_impact",
+      targetAction: "course_holiday_calendar.cancelCourses",
       defaultAction: "cancel",
       postponeDays: 7,
       includeFinished: false,
@@ -3858,14 +3859,19 @@ export const businessRules = [
     }
   },
   {
-    rule_code: "course_cancel_rule",
-    rule_name: "课程取消规则",
+    rule_code: "course_delete_rule",
+    rule_name: "删除排课规则",
     rule_json: {
       category: "workflow",
-      businessType: "course_cancel",
-      targetAction: "course_list.cancel",
+      businessType: "course_delete",
+      targetAction: "course_list.delete",
       allowAfterFinished: false,
-      requireApprovalFlow: "course_cancel_approval"
+      allowDeleteWithAttendance: true,
+      allowDeleteWithCharges: true,
+      reverseChargesOnDelete: true,
+      resetAttendanceOnDelete: true,
+      requireDeleteReason: false,
+      requireApprovalFlow: "course_delete_approval"
     }
   }
 ];
@@ -3904,7 +3910,7 @@ export const approvalFlows = [
       flowCode: "contract_discount_approval",
       flowName: "合同优惠审批",
       moduleCode: "finance",
-      businessType: "contract",
+      businessType: "contract_create",
       trigger: { event: "contract_discount_submit", pageCode: "contract_list" },
       steps: [
         { stepCode: "sales_submit", stepName: "销售提交", assigneeRole: "SALES" },
@@ -3923,7 +3929,7 @@ export const approvalFlows = [
       flowCode: "lead_enroll_approval",
       flowName: "新生报名审批",
       moduleCode: "recruit",
-      businessType: "lead_enroll",
+      businessType: "contract_create",
       trigger: { event: "lead_enroll_submit", pageCode: "lead_list" },
       steps: [
         { stepCode: "sales_submit", stepName: "顾问提交", assigneeRole: "SALES" },
@@ -4028,33 +4034,33 @@ export const approvalFlows = [
     }
   },
   {
-    flow_code: "course_cancel_approval",
-    flow_name: "课程取消审批",
+    flow_code: "course_delete_approval",
+    flow_name: "删除排课审批",
     module_code: "education",
     status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
-      flowCode: "course_cancel_approval",
-      flowName: "课程取消审批",
+      flowCode: "course_delete_approval",
+      flowName: "删除排课审批",
       moduleCode: "education",
-      businessType: "course_cancel",
-      trigger: { event: "course_cancel_submit", pageCode: "course_list" },
+      businessType: "course_delete",
+      trigger: { event: "course_delete_submit", pageCode: "course_list" },
       steps: [
         { stepCode: "teacher_submit", stepName: "老师提交", assigneeRole: "TEACHER" },
         { stepCode: "principal_review", stepName: "校长审批", assigneeRole: "PRINCIPAL" }
       ],
-      afterApproved: [{ type: "enable_action", actionCode: "course_list.cancel" }]
+      afterApproved: [{ type: "enable_action", actionCode: "course_list.delete" }]
     }
   },
   {
     flow_code: "charge_reverse_approval",
-    flow_name: "撤销扣费审批",
+    flow_name: "取消扣费审批",
     module_code: "education",
     status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "charge_reverse_approval",
-      flowName: "撤销扣费审批",
+      flowName: "取消扣费审批",
       moduleCode: "education",
       businessType: "charge_reverse",
       trigger: { event: "charge_reverse_submit", pageCode: "charge_record" },
@@ -4117,7 +4123,7 @@ export const skillContentMap: Record<string, string> = {
   course_holiday_calendar: "# 停课日历\n\n## 功能描述\n维护校区停课日；开启禁止排课后，排课会按规则拦截停课日期。",
   course_week_schedule: "# 周课表\n\n## 功能描述\n按日期和时间查看一周课程安排，适合前台、教务和老师快速核对课表。",
   course_list: "# 排课列表\n\n## 功能描述\n查看课程安排、上课时间和课程状态，支持一对一、小班、一对N等多种课程类型。\n\n## 使用说明\n- 点击「新增排课」创建课程\n- 支持按课程名称和状态筛选\n- 课程状态包括待上课、已完成、已取消\n\n## 注意事项\n- 排课冲突规则会阻止老师时间冲突\n- 已取消课程不可扣费",
-  charge_record: "# 扣费记录\n\n## 功能描述\n管理学员上课扣费，支持实收扣费、优惠扣费和赠课扣费。\n\n## 使用说明\n- 点击「新增扣费」选择课程和合同产品\n- 支持扣费撤销操作\n- 扣费自动更新合同产品余额\n\n## 注意事项\n- 余额不足时扣费会被拒绝\n- 撤销扣费会恢复合同产品余额",
+  charge_record: "# 扣费记录\n\n## 功能描述\n管理学员上课扣费，支持实收扣费、优惠扣费和赠课扣费。\n\n## 使用说明\n- 点击「新增扣费」选择课程和合同产品\n- 支持取消扣费操作\n- 扣费自动更新合同产品余额\n\n## 注意事项\n- 余额不足时扣费会被拒绝\n- 取消扣费会恢复合同产品余额",
   contract_list: "# 合同列表\n\n## 功能描述\n跟踪合同状态、应收实收和付款进度，支持合同收款操作。\n\n## 使用说明\n- 点击「新增合同」创建合同\n- 行操作支持收款、详情、编辑\n- 合同自动关联优惠分配\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 付款状态根据实收金额自动更新",
   contract_product_list: "# 合同产品\n\n## 功能描述\n查看合同关联的产品信息，包括剩余课时、剩余金额等。\n\n## 使用说明\n- 按合同维度查看产品列表\n- 显示实时剩余课时和金额\n\n## 注意事项\n- 剩余数据由扣费和退费操作自动维护",
   funds_history: "# 收款记录\n\n## 功能描述\n核对收款流水、支付方式和交易时间，支持合同收款和预存两种类型。\n\n## 使用说明\n- 点击「新增收款」录入收款\n- 支持现金、微信、支付宝、电子账户等支付方式\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 预存类型不需要关联合同",

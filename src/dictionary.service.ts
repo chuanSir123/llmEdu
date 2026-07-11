@@ -49,7 +49,7 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   lead_stage: { NEW: { label: "新线索" }, FOLLOWING: { label: "跟进中" }, TRIAL_SCHEDULED: { label: "已邀约试听" }, TRIAL_COMPLETED: { label: "已试听" }, CONVERTED: { label: "已转化" }, LOST: { label: "已流失" } },
   lead_assignment_action_type: { ASSIGN: { label: "分配" }, TRANSFER: { label: "转移" }, RECLAIM: { label: "回收" } },
   business_rule_category: { funds_allocation: { label: "资金分配" }, promotion_allocation: { label: "优惠分配" }, performance_allocation: { label: "业绩分配" }, approval_trigger: { label: "审批触发" }, validation: { label: "校验规则" }, workflow: { label: "业务流转" }, refund: { label: "退费规则" }, charge: { label: "扣费规则" }, attendance: { label: "考勤规则" } },
-  business_type: { lead_enroll: { label: "新增报名" }, contract_create: { label: "新增合同" }, contract_update: { label: "编辑合同" }, funds_create: { label: "新增收款" }, course_create: { label: "新增排课" }, course_cancel: { label: "取消课程" }, attendance: { label: "考勤签到" }, charge: { label: "扣费确认" }, charge_reverse: { label: "撤销扣费" }, refund_create: { label: "新增退费" }, contract_refund: { label: "合同退费" }, product_price: { label: "编辑产品" }, performance: { label: "业绩分配" }, performance_adjust: { label: "业绩调整" }, leave: { label: "请假" }, makeup: { label: "补课" } },
+  business_type: { contract_create: { label: "新增合同" }, contract_update: { label: "编辑合同" }, funds_create: { label: "新增收款" }, course_create: { label: "新增排课" }, course_delete: { label: "删除排课" }, holiday_course_impact: { label: "停课处理" }, attendance: { label: "考勤签到" }, charge: { label: "扣费确认" }, charge_reverse: { label: "取消扣费" }, refund_create: { label: "新增退费" }, contract_refund: { label: "合同退费" }, product_price: { label: "编辑产品" }, performance: { label: "业绩分配" }, performance_adjust: { label: "业绩调整" }, leave: { label: "请假" }, makeup: { label: "补课" } },
   action_type: { open_page: { label: "打开页面" }, execute_api: { label: "执行接口" }, open_modal: { label: "打开弹窗" }, open_ai_customization: { label: "AI 定制" }, dropdown: { label: "下拉菜单" }, input: { label: "输入" }, display: { label: "展示" }, tab: { label: "页签" }, export: { label: "导出" }, import: { label: "导入" } },
   api_type: { query: { label: "查询" }, detail: { label: "详情" }, create: { label: "新增" }, update: { label: "更新" }, delete: { label: "删除" }, command: { label: "命令" } },
   resource_type: { page: { label: "页面" }, action: { label: "动作" }, field: { label: "字段" } },
@@ -92,11 +92,11 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   payment_status: { PENDING: { label: "待支付" }, PAID: { label: "已支付" }, FAILED: { label: "支付失败" }, CLOSED: { label: "已关闭" }, REFUNDED: { label: "已退款" } },
   organization_performance_owner: { contractOrganization: { label: "合同所属校区" }, courseOrganization: { label: "上课校区" }, receiptOrganization: { label: "收款校区" } },
   personal_performance_owner: { signStaff: { label: "签约顾问" }, ownerStaff: { label: "学员归属顾问" }, classTeacher: { label: "任课老师" }, splitByProductOwner: { label: "按产品归属人拆分" } },
-  business_action_code: { "lead_list.enroll": { label: "新增报名" }, "contract_list.create": { label: "新增合同" }, "funds_history.create": { label: "新增收款" }, "refund_record.create": { label: "新增退费" }, "course_list.create": { label: "新增排课" }, "course_list.cancel": { label: "取消课程" }, "charge_record.create": { label: "扣费确认" }, "charge_record.reverse": { label: "撤销扣费" }, "product_list.edit": { label: "编辑产品" }, "contract_list.delete": { label: "作废合同" } },
-  approval_flow_code: { contract_discount_approval: { label: "合同优惠审批" }, refund_create_approval: { label: "退费审批" }, course_cancel_approval: { label: "课程取消审批" }, charge_reverse_approval: { label: "扣费冲销审批" }, product_price_approval: { label: "产品价格审批" } },
-  approval_trigger_event: { contract_discount_submit: { label: "合同优惠提交" }, lead_enroll_submit: { label: "新生报名提交" }, contract_create_submit: { label: "合同创建提交" }, funds_create_submit: { label: "收款提交" }, refund_create_submit: { label: "退费提交" }, course_create_submit: { label: "排课提交" }, course_cancel_submit: { label: "课程取消提交" }, charge_reverse_submit: { label: "撤销扣费提交" }, product_price_change_submit: { label: "产品改价提交" } },
+  business_action_code: { "lead_list.enroll": { label: "新增报名" }, "contract_list.create": { label: "新增合同" }, "funds_history.create": { label: "新增收款" }, "refund_record.create": { label: "新增退费" }, "course_list.create": { label: "新增排课" }, "course_list.delete": { label: "删除排课" }, "course_holiday_calendar.cancelCourses": { label: "批量取消课程" }, "course_holiday_calendar.postponeCourses": { label: "批量顺延课程" }, "charge_record.create": { label: "扣费确认" }, "charge_record.reverse": { label: "取消扣费" }, "product_list.edit": { label: "编辑产品" }, "contract_list.delete": { label: "作废合同" } },
+  approval_flow_code: { contract_discount_approval: { label: "合同优惠审批" }, refund_create_approval: { label: "退费审批" }, course_delete_approval: { label: "删除排课审批" }, charge_reverse_approval: { label: "取消扣费审批" }, product_price_approval: { label: "产品价格审批" } },
+  approval_trigger_event: { contract_discount_submit: { label: "合同优惠提交" }, lead_enroll_submit: { label: "新生报名提交" }, contract_create_submit: { label: "合同创建提交" }, funds_create_submit: { label: "收款提交" }, refund_create_submit: { label: "退费提交" }, course_create_submit: { label: "排课提交" }, course_delete_submit: { label: "删除排课提交" }, charge_reverse_submit: { label: "取消扣费提交" }, product_price_change_submit: { label: "产品改价提交" } },
   approval_trigger_page: { contract_list: { label: "合同列表" }, lead_list: { label: "新生报名" }, funds_history: { label: "收款记录" }, refund_record: { label: "退费记录" }, course_list: { label: "排课列表" }, charge_record: { label: "扣费记录" }, product_list: { label: "产品列表" } },
-  approval_action_code: { "contract_list.funds": { label: "允许合同收款" }, "contract_list.create": { label: "允许新增合同" }, "lead_list.enroll": { label: "允许报名转化" }, "funds_history.create": { label: "允许新增收款" }, "refund_record.create": { label: "允许新增退费" }, "course_list.create": { label: "允许新增排课" }, "course_list.cancel": { label: "允许取消课程" }, "charge_record.reverse": { label: "允许撤销扣费" }, "product_list.edit": { label: "允许编辑产品" } },
+  approval_action_code: { "contract_list.funds": { label: "允许合同收款" }, "contract_list.create": { label: "允许新增合同" }, "lead_list.enroll": { label: "允许报名转化" }, "funds_history.create": { label: "允许新增收款" }, "refund_record.create": { label: "允许新增退费" }, "course_list.create": { label: "允许新增排课" }, "course_list.delete": { label: "允许删除排课" }, "charge_record.reverse": { label: "允许取消扣费" }, "product_list.edit": { label: "允许编辑产品" } },
   approval_role: { PRINCIPAL: { label: "校长" }, MANAGER: { label: "校长" }, SALES: { label: "顾问" }, TEACHER: { label: "老师" }, STUDY_MANAGER: { label: "学管师" } },
   rule_condition_field: { transaction_amount: { label: "收款金额" }, refund_real_amount: { label: "退费金额" }, charge_amount: { label: "扣费金额" }, promotion_amount: { label: "优惠金额" }, unit_price: { label: "产品单价" }, old_unit_price: { label: "原产品单价" }, start_time: { label: "开始时间" }, end_time: { label: "结束时间" }, teacher_id: { label: "授课老师" }, student_id: { label: "上课学员" }, course_date: { label: "上课日期" } },
   rule_system_value: { start_time: { label: "开始时间" }, end_time: { label: "结束时间" }, old_unit_price: { label: "原产品单价" }, "course_date,start_time,end_time": { label: "同一天同时间段" }, "teacher_course_date,start_time,end_time": { label: "老师同一天同时间段" }, "student_course_date,start_time,end_time": { label: "学员同一天同时间段" } },
@@ -170,9 +170,8 @@ export function dictionaryCodeForFieldName(fieldName: string) {
 }
 
 /**
- * 字典值双格式兼容：历史数据可能存原始枚举值（ACTIVE）或字典项 ID 形态（status.ACTIVE）。
- * 查询/登录判断需要同时匹配两种形态。此前 auth.service 与 query-dsl-engine 各写一份，
- * 统一收敛到这里。返回 undefined 表示该字段/值无需兼容展开。
+ * 字典值查询展开：业务入参可使用字典项 ID（status.ACTIVE）或 item_value（ACTIVE）。
+ * 查询/登录判断需要同时匹配两种标准形态。返回 undefined 表示该字段/值无需展开。
  */
 export function dictionaryCompatValues(field: string, value: unknown): string[] | undefined {
   const text = String(value ?? "");
@@ -194,13 +193,7 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
     });
   if (!candidates.length) return normalized;
 
-  const values = [...new Set(candidates.flatMap((item) => {
-    const rawValues = Array.isArray(item.value) ? item.value.map(String) : [String(item.value)];
-    return rawValues.flatMap((raw) => {
-      const canonical = canonicalDictionaryItemValue(item.dictCode, raw);
-      return [raw, canonical, dictionaryItemId(item.dictCode, canonical)];
-    });
-  }))];
+  const values = [...new Set(candidates.flatMap((item) => Array.isArray(item.value) ? item.value.map(String) : [String(item.value)]))];
   const dictCodes = [...new Set(candidates.map((item) => item.dictCode))];
   const { rows } = await pool.query(
     `select id, dict_code, item_value, item_label
@@ -213,10 +206,10 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
   const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_value}`, row.id], [`${row.dict_code}:${row.item_label}`, row.id]]));
   for (const item of candidates) {
     if (Array.isArray(item.value)) {
-      normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? byInputAndCode.get(`${item.dictCode}:${canonicalDictionaryItemValue(item.dictCode, value)}`) ?? value);
+      normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? value);
       continue;
     }
-    const itemId = byInputAndCode.get(`${item.dictCode}:${String(item.value)}`) ?? byInputAndCode.get(`${item.dictCode}:${canonicalDictionaryItemValue(item.dictCode, item.value)}`);
+    const itemId = byInputAndCode.get(`${item.dictCode}:${String(item.value)}`);
     if (itemId !== undefined) normalized[item.field] = itemId;
   }
   return normalized;

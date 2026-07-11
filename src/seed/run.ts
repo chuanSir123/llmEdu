@@ -392,7 +392,7 @@ async function seedAdmin() {
        and (rule_name = '排课时间冲突校验' or rule_json->>'ruleCode' = 'course_time_conflict')`,
     [JSON.stringify({
       category: "validation",
-      businessType: "course",
+      businessType: "course_create",
       targetApi: "course_list.create",
       preventTeacherTimeConflict: true,
       preventStudentTimeConflict: true,
