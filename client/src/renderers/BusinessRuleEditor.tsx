@@ -153,7 +153,16 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
   const operatorOptions = valueLabels.rule_operator ?? {};
   const categoryOptions = valueLabels.business_rule_category ?? {};
   const businessTypeOptions = valueLabels.business_type ?? {};
-  const section = ruleSections[categoryKey] ?? {};
+  const businessTypeKey = dictionaryItemValue(rule.businessType);
+  const baseSection = ruleSections[categoryKey] ?? {};
+  const courseDeleteSwitches = businessTypeKey === "course_delete" ? [
+    { key: "allowDeleteWithAttendance", label: "允许删除已有考勤的排课" },
+    { key: "allowDeleteWithCharges", label: "允许删除已有扣费的排课" },
+    { key: "reverseChargesOnDelete", label: "自动取消已确认扣费" },
+    { key: "resetAttendanceOnDelete", label: "自动重置已签到考勤" },
+    { key: "requireDeleteReason", label: "必须填写删除原因" }
+  ] : [];
+  const section = courseDeleteSwitches.length ? { ...baseSection, switches: [...(baseSection.switches ?? []), ...courseDeleteSwitches] } : baseSection;
 
   const patch = (key: string, nextValue: unknown) => onChange(cleanEmpty({ ...rule, [key]: nextValue }));
 
