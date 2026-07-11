@@ -80,6 +80,18 @@ function businessRuleTypeLabel(type: string) {
   return systemDictionaryLabel("business_type", type) ?? type;
 }
 
+const DEPRECATED_RULE_CATEGORIES = new Set(["approval_trigger", "workflow"]);
+
+function businessRuleCategories(ruleJson: Record<string, unknown>, options: { includeDeprecated?: boolean } = {}) {
+  const values = Array.isArray(ruleJson.categories) ? ruleJson.categories : [ruleJson.category];
+  const categories = values.map((item) => String(item ?? "")).filter(Boolean);
+  return options.includeDeprecated ? categories : categories.filter((category) => !DEPRECATED_RULE_CATEGORIES.has(category));
+}
+
+function businessRuleCategoryLabels(ruleJson: Record<string, unknown>) {
+  return businessRuleCategories(ruleJson).map((category) => businessRuleCategoryLabel(category)).join("、");
+}
+
 // 模块中文名以 module_registry 为准（租户可定制模块），带短 TTL 缓存；查不到回落模块编码
 let moduleLabelCache: { labels: Record<string, string>; expiresAt: number } | null = null;
 
@@ -283,6 +295,11 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
   const values: unknown[] = [schemaName];
   const where = [`status = 'active'`, "deleted = false", `((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`];
   if (filters.rule_name) { values.push(`%${filters.rule_name}%`); where.push(`rule_name ilike $${values.length}`); }
+  if (filters.business_type) { values.push(String(filters.business_type).split(".").pop()); where.push(`coalesce(rule_json->>'businessType', rule_json->>'business_type') = $${values.length}`); }
+  if (filters.category) {
+    values.push(String(filters.category).split(".").pop());
+    where.push(`(rule_json->>'category' = $${values.length} or rule_json->'categories' ? $${values.length})`);
+  }
   const page = Math.max(Number(params.page ?? 1), 1);
   const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
   values.push(pageSize, (page - 1) * pageSize);
@@ -294,18 +311,34 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
      limit $${values.length - 1} offset $${values.length}`,
     values
   );
-  return {
-    rows: rows.map(({ __total, ...row }) => ({
-      ...row,
-      source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
-      rule_json: asObject(row.rule_json),
-      category_label: businessRuleCategoryLabel(String(asObject(row.rule_json).category ?? "")),
-      business_type_label: businessRuleTypeLabel(String(asObject(row.rule_json).businessType ?? "")),
-    })),
-    total: Number(rows[0]?.__total ?? 0),
-    page,
-    pageSize,
-  };
+  const grouped = new Map<string, Record<string, unknown>>();
+  for (const { __total, ...row } of rows) {
+    const ruleJson = asObject(row.rule_json);
+    const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
+    const groupKey = businessType || String(row.rule_code);
+    const categories = businessRuleCategories(ruleJson);
+    if (!categories.length && businessRuleCategories(ruleJson, { includeDeprecated: true }).length) continue;
+    const existing = grouped.get(groupKey);
+    if (existing) {
+      const mergedCategories = Array.from(new Set([...(existing.categories as string[]), ...categories]));
+      existing.category_label = mergedCategories.map((category) => businessRuleCategoryLabel(category)).join("、");
+      existing.categories = mergedCategories;
+      existing.rule_json = { ...(existing.rule_json as Record<string, unknown>), categories: mergedCategories, category: mergedCategories[0] };
+      existing.rule_count = Number(existing.rule_count ?? 1) + 1;
+    } else {
+      grouped.set(groupKey, {
+        ...row,
+        source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
+        rule_json: ruleJson,
+        categories,
+        category_label: businessRuleCategoryLabels(ruleJson),
+        business_type_label: businessRuleTypeLabel(businessType),
+        rule_count: 1
+      });
+    }
+  }
+  const groupedRows = Array.from(grouped.values());
+  return { rows: groupedRows, total: groupedRows.length, page, pageSize };
 }
 
 async function getBusinessRuleDetail(schemaName: string, params: Record<string, unknown>) {
@@ -322,13 +355,28 @@ async function getBusinessRuleDetail(schemaName: string, params: Record<string, 
   );
   const row = rows[0];
   if (!row) throw Object.assign(new Error("规则不存在或已删除"), { statusCode: 404 });
-  const ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  let ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  if (!businessRuleCategories(ruleJson).length && businessRuleCategories(ruleJson, { includeDeprecated: true }).length) {
+    throw Object.assign(new Error("规则已迁移到统一审批/业务动作配置"), { statusCode: 404 });
+  }
+  const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
+  if (businessType) {
+    const peerRows = await pool.query(
+      `select rule_json from admin.business_rule
+       where status = 'active' and deleted = false
+         and coalesce(rule_json->>'businessType', rule_json->>'business_type') = $1
+         and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`,
+      [businessType, schemaName]
+    );
+    const mergedCategories = Array.from(new Set(peerRows.rows.flatMap((peer) => businessRuleCategories(asObject(peer.rule_json)))));
+    if (mergedCategories.length) ruleJson = { ...ruleJson, category: mergedCategories[0], categories: mergedCategories };
+  }
   return {
     ...row,
     rule_json: ruleJson,
     business_type: ruleJson.businessType ?? "",
     source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
-    category_label: businessRuleCategoryLabel(String(ruleJson.category ?? "")),
+    category_label: businessRuleCategoryLabels(ruleJson),
     business_type_label: businessRuleTypeLabel(String(ruleJson.businessType ?? ""))
   };
 }

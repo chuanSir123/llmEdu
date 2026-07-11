@@ -351,6 +351,8 @@ export function GenericFormRenderer({
               <BusinessRuleEditor
                 value={value[field.key]}
                 valueLabels={presentation?.valueLabels}
+                editorSchema={field.editorSchema}
+                lockBusinessType={Boolean(value.id)}
                 onChange={(next) => onChange({ ...value, [field.key]: next })}
               />
             ) : field.type === "permission_editor" ? (
@@ -366,7 +368,7 @@ export function GenericFormRenderer({
             ) : (
               <input
                 className={`${token.input} w-full min-w-0 ${isReadonly ? "bg-[#f5f7fa] text-[#8b95a7] cursor-default" : ""}`}
-                type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "number" ? "number" : "text"}
+                type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "time" ? "time" : field.type === "number" ? "number" : "text"}
                 value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}

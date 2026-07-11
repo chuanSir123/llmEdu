@@ -76,7 +76,7 @@ export function ModalRenderer({
                   </div>
                   {field.type === "business_rule_editor" ? (
                     <div className="border border-[#dde3ee] bg-white p-3">
-                      <BusinessRuleEditor value={value[field.key]} valueLabels={presentation?.valueLabels} readonly onChange={() => undefined} />
+                      <BusinessRuleEditor value={value[field.key]} valueLabels={presentation?.valueLabels} editorSchema={field.editorSchema} lockBusinessType readonly onChange={() => undefined} />
                     </div>
                   ) : (
                     <div
