@@ -4,7 +4,7 @@ import { dictionaryOptionEntries, firstDictionaryOptionValue, preferredDictionar
 type RuleValue = Record<string, unknown>;
 type ConditionRow = { field?: string; operator?: string; value?: unknown; valueField?: string; message?: string };
 type RuleField = { key: string; label: string; dictCode?: string; options?: Record<string, string>; suffix?: string };
-type RuleSection = { selects?: RuleField[]; switches?: RuleField[]; numbers?: RuleField[]; rows?: Array<"conditions" | "validations"> };
+type RuleSection = { businessTypes?: string[]; selects?: RuleField[]; switches?: RuleField[]; numbers?: RuleField[]; rows?: Array<"conditions" | "validations"> };
 type RuleEditorSchema = { sections?: Record<string, RuleSection> };
 
 function asEditorSchema(value: unknown): RuleEditorSchema {
@@ -55,6 +55,22 @@ function categoryLabels(values: string[], options: Record<string, string>) {
   return values.map((value) => options[value] ?? options[preferredDictionaryValue(options, value)] ?? value).join("、") || "未设置";
 }
 
+function sectionValues(rule: RuleValue, categoryKey: string): RuleValue {
+  const sections = toObject(rule.sections);
+  return { ...rule, ...toObject(sections[categoryKey]) };
+}
+
+function sectionRows(rule: RuleValue, categoryKey: string, key: "conditions" | "validations") {
+  return toRows(sectionValues(rule, categoryKey)[key]);
+}
+
+function previewItems(rule: RuleValue, selectedCategories: string[], categoryOptions: Record<string, string>, businessTypeOptions: Record<string, string>) {
+  const businessType = String(rule.businessType ?? "");
+  const businessLabel = businessTypeOptions[businessType] ?? businessTypeOptions[preferredDictionaryValue(businessTypeOptions, businessType)] ?? (businessType || "未设置业务类型");
+  const categoryText = categoryLabels(selectedCategories, categoryOptions);
+  return [`业务类型：${businessLabel}`, `规则分类：${categoryText}`, `保存后将按所选分类生成/更新同一业务类型下的规则设置`];
+}
+
 function displayValue(key: string, value: unknown, ruleSections: ReturnType<typeof buildRuleSections>) {
   if (value === undefined || value === null || value === "") return "未设置";
   const section = Object.values(ruleSections).find((item) => item.selects?.some((select) => select.key === key));
@@ -67,56 +83,74 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
   const rule = toObject(value);
   const ruleSections = buildRuleSections(valueLabels, editorSchema);
   const selectedCategories = categoryValues(rule);
+  const selectedBusinessType = dictionaryItemValue(rule.businessType);
   const conditionFieldOptions = valueLabels.rule_condition_field ?? {};
   const systemValueOptions = valueLabels.rule_system_value ?? {};
   const operatorOptions = valueLabels.rule_operator ?? {};
-  const categoryOptions = Object.fromEntries(Object.entries(valueLabels.business_rule_category ?? {}).filter(([value]) => Boolean(ruleSections[dictionaryItemValue(value)])));
+  const categoryOptions = Object.fromEntries(Object.entries(valueLabels.business_rule_category ?? {}).filter(([value]) => {
+    const section = ruleSections[dictionaryItemValue(value)];
+    return Boolean(section) && (!selectedBusinessType || !section.businessTypes?.length || section.businessTypes.includes(selectedBusinessType));
+  }));
   const businessTypeOptions = valueLabels.business_type ?? {};
 
   const patch = (key: string, nextValue: unknown) => onChange(cleanEmpty({ ...rule, [key]: nextValue }));
+  const patchSection = (categoryKey: string, key: string, nextValue: unknown) => {
+    const sections = toObject(rule.sections);
+    const nextSection = cleanEmpty({ ...toObject(sections[categoryKey]), [key]: nextValue });
+    onChange(cleanEmpty({ ...rule, [key]: nextValue, sections: cleanEmpty({ ...sections, [categoryKey]: nextSection }) }));
+  };
   const patchCategories = (next: string[]) => onChange(cleanEmpty({ ...rule, category: next[0] ?? "", categories: next }));
 
-  const renderSelect = (field: RuleField) => (
+  const renderSelect = (categoryKey: string, field: RuleField) => {
+    const values = sectionValues(rule, categoryKey);
+    return (
     <label key={field.key} className="flex flex-col gap-1 text-sm">
       <span className="text-[#5f6b7a]">{field.label}</span>
       {readonly ? (
-        <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{displayValue(field.key, rule[field.key], ruleSections)}</div>
+        <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{displayValue(field.key, values[field.key], ruleSections)}</div>
       ) : (
-        <select className={token.input} value={preferredDictionaryValue(field.options ?? {}, rule[field.key])} onChange={(event) => patch(field.key, event.target.value)}>
+        <select className={token.input} value={preferredDictionaryValue(field.options ?? {}, values[field.key])} onChange={(event) => patchSection(categoryKey, field.key, event.target.value)}>
           <option value="">不设置</option>
           {optionEntries(field.options ?? {}).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}
         </select>
       )}
     </label>
   );
+  };
 
-  const renderSwitch = (field: RuleField) => (
+  const renderSwitch = (categoryKey: string, field: RuleField) => {
+    const values = sectionValues(rule, categoryKey);
+    return (
     <label key={field.key} className="flex items-center gap-2 border border-[#e8edf5] px-3 py-2 text-sm">
-      <input type="checkbox" checked={Boolean(rule[field.key])} disabled={readonly} onChange={(event) => patch(field.key, event.target.checked)} />
+      <input type="checkbox" checked={Boolean(values[field.key])} disabled={readonly} onChange={(event) => patchSection(categoryKey, field.key, event.target.checked)} />
       <span>{field.label}</span>
     </label>
   );
+  };
 
-  const renderNumber = (field: RuleField) => (
+  const renderNumber = (categoryKey: string, field: RuleField) => {
+    const values = sectionValues(rule, categoryKey);
+    return (
     <label key={field.key} className="flex flex-col gap-1 text-sm">
       <span className="text-[#5f6b7a]">{field.label}</span>
       <div className="flex items-center gap-2">
-        <input className={token.input} type="number" readOnly={readonly} value={String(rule[field.key] ?? "")} onChange={(event) => patch(field.key, event.target.value === "" ? "" : Number(event.target.value))} />
+        <input className={token.input} type="number" readOnly={readonly} value={String(values[field.key] ?? "")} onChange={(event) => patchSection(categoryKey, field.key, event.target.value === "" ? "" : Number(event.target.value))} />
         {field.suffix && <span className="text-xs text-[#8b95a7]">{field.suffix}</span>}
       </div>
     </label>
   );
+  };
 
-  const renderRows = (key: "conditions" | "validations", label: string) => {
-    const rows = toRows(rule[key]);
+  const renderRows = (categoryKey: string, key: "conditions" | "validations", label: string) => {
+    const rows = sectionRows(rule, categoryKey, key);
     const updateRow = (idx: number, patchRow: Partial<ConditionRow>) => {
-      patch(key, rows.map((row, rowIdx) => rowIdx === idx ? cleanEmpty({ ...row, ...patchRow }) : row));
+      patchSection(categoryKey, key, rows.map((row, rowIdx) => rowIdx === idx ? cleanEmpty({ ...row, ...patchRow }) : row));
     };
     return (
       <section className="border border-[#e8edf5]">
         <div className="flex items-center justify-between border-b border-[#e8edf5] bg-[#f8fafc] px-3 py-2">
           <div className="text-sm font-medium text-[#263445]">{label}</div>
-          {!readonly && <button type="button" className="text-xs text-[#2f80ed]" onClick={() => patch(key, [...rows, { field: "", operator: firstOptionValue(operatorOptions), value: "" }])}>新增</button>}
+          {!readonly && <button type="button" className="text-xs text-[#2f80ed]" onClick={() => patchSection(categoryKey, key, [...rows, { field: "", operator: firstOptionValue(operatorOptions), value: "" }])}>新增</button>}
         </div>
         <div className="divide-y divide-[#eef2f7]">
           {rows.map((row, idx) => (
@@ -147,7 +181,7 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
                 <input className={token.input} readOnly={readonly} placeholder="填写数值，例如 0" value={String(row.value ?? "")} onChange={(event) => updateRow(idx, { value: event.target.value })} />
               )}
               <input className={token.input} readOnly={readonly} placeholder="提示语" value={String(row.message ?? "")} onChange={(event) => updateRow(idx, { message: event.target.value })} />
-              {!readonly && <button type="button" className="text-xs text-[#d92d20]" onClick={() => patch(key, rows.filter((_, rowIdx) => rowIdx !== idx))}>删除</button>}
+              {!readonly && <button type="button" className="text-xs text-[#d92d20]" onClick={() => patchSection(categoryKey, key, rows.filter((_, rowIdx) => rowIdx !== idx))}>删除</button>}
             </div>
           ))}
           {!rows.length && <div className="px-3 py-5 text-center text-sm text-[#8b95a7]">暂无{label}</div>}
@@ -195,17 +229,24 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
         </label>
       </div>
 
+      <section className="rounded-lg border border-[#e8edf5] bg-[#f8fafc] p-3 text-xs text-[#5f6b7a]">
+        <div className="mb-1 font-medium text-[#263445]">规则影响预览</div>
+        <div className="flex flex-wrap gap-2">
+          {previewItems(rule, selectedCategories, categoryOptions, businessTypeOptions).map((item) => <span key={item} className="rounded bg-white px-2 py-1">{item}</span>)}
+        </div>
+      </section>
+
       {selectedCategories.map((categoryKey) => {
         const section = ruleSections[categoryKey];
         if (!section) return null;
         return (
           <section key={categoryKey} className="space-y-4 rounded-lg border border-[#e8edf5] p-4">
             <div className="text-sm font-semibold text-[#263445]">{categoryLabels([categoryKey], categoryOptions)}</div>
-            {section.selects?.length ? <div><div className="mb-2 text-sm font-medium text-[#263445]">业务规则</div><div className="grid gap-4 md:grid-cols-3">{section.selects.map(renderSelect)}</div></div> : null}
-            {section.numbers?.length ? <div><div className="mb-2 text-sm font-medium text-[#263445]">数值设置</div><div className="grid gap-4 md:grid-cols-3">{section.numbers.map(renderNumber)}</div></div> : null}
-            {section.switches?.length ? <div><div className="mb-2 text-sm font-medium text-[#263445]">规则开关</div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{section.switches.map(renderSwitch)}</div></div> : null}
-            {section.rows?.includes("conditions") && renderRows("conditions", "触发条件")}
-            {section.rows?.includes("validations") && renderRows("validations", "校验条件")}
+            {section.selects?.length ? <div><div className="mb-2 text-sm font-medium text-[#263445]">业务规则</div><div className="grid gap-4 md:grid-cols-3">{section.selects.map((field) => renderSelect(categoryKey, field))}</div></div> : null}
+            {section.numbers?.length ? <div><div className="mb-2 text-sm font-medium text-[#263445]">数值设置</div><div className="grid gap-4 md:grid-cols-3">{section.numbers.map((field) => renderNumber(categoryKey, field))}</div></div> : null}
+            {section.switches?.length ? <div><div className="mb-2 text-sm font-medium text-[#263445]">规则开关</div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{section.switches.map((field) => renderSwitch(categoryKey, field))}</div></div> : null}
+            {section.rows?.includes("conditions") && renderRows(categoryKey, "conditions", "触发条件")}
+            {section.rows?.includes("validations") && renderRows(categoryKey, "validations", "校验条件")}
           </section>
         );
       })}

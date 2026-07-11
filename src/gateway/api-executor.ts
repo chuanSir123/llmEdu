@@ -80,9 +80,12 @@ function businessRuleTypeLabel(type: string) {
   return systemDictionaryLabel("business_type", type) ?? type;
 }
 
-function businessRuleCategories(ruleJson: Record<string, unknown>) {
+const DEPRECATED_RULE_CATEGORIES = new Set(["approval_trigger", "workflow"]);
+
+function businessRuleCategories(ruleJson: Record<string, unknown>, options: { includeDeprecated?: boolean } = {}) {
   const values = Array.isArray(ruleJson.categories) ? ruleJson.categories : [ruleJson.category];
-  return values.map((item) => String(item ?? "")).filter(Boolean);
+  const categories = values.map((item) => String(item ?? "")).filter(Boolean);
+  return options.includeDeprecated ? categories : categories.filter((category) => !DEPRECATED_RULE_CATEGORIES.has(category));
 }
 
 function businessRuleCategoryLabels(ruleJson: Record<string, unknown>) {
@@ -292,6 +295,11 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
   const values: unknown[] = [schemaName];
   const where = [`status = 'active'`, "deleted = false", `((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`];
   if (filters.rule_name) { values.push(`%${filters.rule_name}%`); where.push(`rule_name ilike $${values.length}`); }
+  if (filters.business_type) { values.push(String(filters.business_type).split(".").pop()); where.push(`coalesce(rule_json->>'businessType', rule_json->>'business_type') = $${values.length}`); }
+  if (filters.category) {
+    values.push(String(filters.category).split(".").pop());
+    where.push(`(rule_json->>'category' = $${values.length} or rule_json->'categories' ? $${values.length})`);
+  }
   const page = Math.max(Number(params.page ?? 1), 1);
   const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
   values.push(pageSize, (page - 1) * pageSize);
@@ -309,6 +317,7 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
     const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
     const groupKey = businessType || String(row.rule_code);
     const categories = businessRuleCategories(ruleJson);
+    if (!categories.length && businessRuleCategories(ruleJson, { includeDeprecated: true }).length) continue;
     const existing = grouped.get(groupKey);
     if (existing) {
       const mergedCategories = Array.from(new Set([...(existing.categories as string[]), ...categories]));
@@ -347,6 +356,9 @@ async function getBusinessRuleDetail(schemaName: string, params: Record<string, 
   const row = rows[0];
   if (!row) throw Object.assign(new Error("规则不存在或已删除"), { statusCode: 404 });
   let ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  if (!businessRuleCategories(ruleJson).length && businessRuleCategories(ruleJson, { includeDeprecated: true }).length) {
+    throw Object.assign(new Error("规则已迁移到统一审批/业务动作配置"), { statusCode: 404 });
+  }
   const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
   if (businessType) {
     const peerRows = await pool.query(

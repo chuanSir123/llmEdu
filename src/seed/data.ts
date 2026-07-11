@@ -1331,6 +1331,8 @@ export const pages: PageSeed[] = [
     group: "配置中心",
     fields: [
       { key: "rule_name", label: "规则名称", filter: true },
+      { key: "category", label: "规则分类", filter: true, dictCode: "business_rule_category", hidden: true },
+      { key: "business_type", label: "业务类型", filter: true, dictCode: "business_type", hidden: true },
       { key: "category_label", label: "规则分类" },
       { key: "business_type_label", label: "业务类型" },
       { key: "source_label", label: "来源" },
@@ -3785,60 +3787,6 @@ export const businessRules = [
     }
   },
   {
-    rule_code: "discount_approval_threshold_rule",
-    rule_name: "优惠审批阈值规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "contract_create",
-      targetAction: "contract_list.create",
-      triggerApprovalFlow: "contract_discount_approval",
-      thresholdAmount: 0,
-      conditions: [
-        { field: "promotion_amount", operator: ">", value: 0, message: "合同存在优惠时进入优惠审批" }
-      ]
-    }
-  },
-  {
-    rule_code: "refund_approval_threshold_rule",
-    rule_name: "退费审批阈值规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "refund_create",
-      targetAction: "refund_record.create",
-      triggerApprovalFlow: "refund_create_approval",
-      thresholdAmount: 0,
-      conditions: [
-        { field: "refund_real_amount", operator: ">", value: 0, message: "发起退费时进入退费审批" }
-      ]
-    }
-  },
-  {
-    rule_code: "product_price_approval_rule",
-    rule_name: "产品改价审批规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "product_price",
-      targetAction: "product_list.edit",
-      triggerApprovalFlow: "product_price_approval",
-      conditions: [
-        { field: "unit_price", operator: "!=", valueField: "old_unit_price", message: "产品单价变更时进入价格审批" }
-      ]
-    }
-  },
-  {
-    rule_code: "charge_reverse_approval_rule",
-    rule_name: "取消扣费审批规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "charge_reverse",
-      targetAction: "charge_record.reverse",
-      triggerApprovalFlow: "charge_reverse_approval",
-      conditions: [
-        { field: "charge_amount", operator: ">", value: 0, message: "撤销已扣费记录时进入冲销审批" }
-      ]
-    }
-  },
-  {
     rule_code: "prestore_funds_rule",
     rule_name: "预存款入账规则",
     rule_json: {
@@ -3852,21 +3800,6 @@ export const businessRules = [
       validations: [
         { field: "transaction_amount", operator: ">", value: 0, message: "预存金额必须大于 0" }
       ]
-    }
-  },
-
-  {
-    rule_code: "holiday_course_impact_rule",
-    rule_name: "停课影响课程处理规则",
-    rule_json: {
-      category: "workflow",
-      businessType: "holiday_course_impact",
-      targetAction: "course_holiday_calendar.cancelCourses",
-      defaultAction: "cancel",
-      postponeDays: 7,
-      includeFinished: false,
-      blockAttendedOrCharged: true,
-      description: "停课日历批量处理仅影响待上课课程；默认拦截已有考勤或已确认扣费课程，支持批量取消或按天数顺延。"
     }
   },
   {
@@ -3896,23 +3829,8 @@ export const businessRules = [
       updateContractPaidStatus: true,
       requireDeleteReason: true
     }
-  },
-  {
-    rule_code: "course_delete_rule",
-    rule_name: "删除排课规则",
-    rule_json: {
-      category: "workflow",
-      businessType: "course_delete",
-      targetAction: "course_list.delete",
-      allowAfterFinished: false,
-      allowDeleteWithAttendance: true,
-      allowDeleteWithCharges: true,
-      reverseChargesOnDelete: true,
-      resetAttendanceOnDelete: true,
-      requireDeleteReason: false,
-      requireApprovalFlow: "course_delete_approval"
-    }
   }
+
 ];
 
 export const printTemplates = [

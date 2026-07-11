@@ -1,6 +1,7 @@
 export const businessRuleEditorSchema = {
   sections: {
     funds_allocation: {
+      businessTypes: ["funds_create", "funds_delete"],
       selects: [
         { key: "fundsAllocation", label: "资金分配方式", dictCode: "funds_allocation_method" },
         { key: "splitBy", label: "拆分维度", dictCode: "allocation_split_by" },
@@ -14,6 +15,7 @@ export const businessRuleEditorSchema = {
       rows: ["validations"]
     },
     promotion_allocation: {
+      businessTypes: ["contract_create", "funds_create"],
       selects: [
         { key: "promotionAllocation", label: "优惠分配方式", dictCode: "promotion_allocation_method" },
         { key: "splitBy", label: "拆分维度", dictCode: "allocation_split_by" },
@@ -26,6 +28,7 @@ export const businessRuleEditorSchema = {
       ]
     },
     performance_allocation: {
+      businessTypes: ["funds_create", "funds_delete", "performance", "performance_adjust"],
       selects: [
         { key: "performanceAllocation", label: "业绩分配方式", dictCode: "performance_allocation_method" },
         { key: "organizationPerformanceOwner", label: "校区业绩归属", dictCode: "organization_performance_owner" },
@@ -43,9 +46,9 @@ export const businessRuleEditorSchema = {
         { key: "classCourseWeight", label: "班课权重", suffix: "%" }
       ]
     },
-    validation: { selects: [{ key: "targetApi", label: "校验接口", dictCode: "business_action_code" }], switches: [{ key: "preventTeacherTimeConflict", label: "防止老师时间冲突" }, { key: "preventStudentTimeConflict", label: "防止学员时间冲突" }, { key: "preventInvalidTimeRange", label: "防止无效时间范围" }], rows: ["validations"] },
-    refund: { selects: [{ key: "refundAllocation", label: "退费冲减方式", dictCode: "refund_allocation_method" }], switches: [{ key: "allowRefundOverBalance", label: "允许超过余额退费" }, { key: "updateContractProductBalance", label: "自动更新产品余额" }, { key: "updateContractPaidStatus", label: "自动更新合同收款状态" }, { key: "autoRefundToEleAccount", label: "退回电子账户" }], rows: ["validations"] },
-    charge: { selects: [{ key: "defaultChargeType", label: "默认扣费类型", dictCode: "charge_type" }], switches: [{ key: "allowNegativeBalance", label: "允许负余额扣费" }, { key: "updateContractProductBalance", label: "自动更新产品余额" }, { key: "autoCalculateChargeAmount", label: "自动计算扣费金额" }], rows: ["validations"] },
-    attendance: { switches: [{ key: "requireCheckInBeforeCharge", label: "签到后才允许扣费" }, { key: "autoCalculateChargeAmount", label: "按课时自动计算扣费" }, { key: "allowAfterFinished", label: "允许课后补签" }], rows: ["validations"] }
+    validation: { businessTypes: ["course_create", "makeup", "product_price"], selects: [{ key: "targetApi", label: "校验接口", dictCode: "business_action_code" }], switches: [{ key: "preventTeacherTimeConflict", label: "防止老师时间冲突" }, { key: "preventStudentTimeConflict", label: "防止学员时间冲突" }, { key: "preventInvalidTimeRange", label: "防止无效时间范围" }], rows: ["validations"] },
+    refund: { businessTypes: ["refund_create", "refund_delete", "contract_refund"], selects: [{ key: "refundAllocation", label: "退费冲减方式", dictCode: "refund_allocation_method" }], switches: [{ key: "allowRefundOverBalance", label: "允许超过余额退费" }, { key: "updateContractProductBalance", label: "自动更新产品余额" }, { key: "updateContractPaidStatus", label: "自动更新合同收款状态" }, { key: "autoRefundToEleAccount", label: "退回电子账户" }], rows: ["validations"] },
+    charge: { businessTypes: ["charge", "charge_reverse"], selects: [{ key: "defaultChargeType", label: "默认扣费类型", dictCode: "charge_type" }], switches: [{ key: "allowNegativeBalance", label: "允许负余额扣费" }, { key: "updateContractProductBalance", label: "自动更新产品余额" }, { key: "autoCalculateChargeAmount", label: "自动计算扣费金额" }], rows: ["validations"] },
+    attendance: { businessTypes: ["attendance", "leave"], switches: [{ key: "requireCheckInBeforeCharge", label: "签到后才允许扣费" }, { key: "autoCalculateChargeAmount", label: "按课时自动计算扣费" }, { key: "allowAfterFinished", label: "允许课后补签" }], rows: ["validations"] }
   }
 };
