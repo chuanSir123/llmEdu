@@ -48,7 +48,7 @@ function cleanEmpty(next: RuleValue) {
 
 function categoryValues(rule: RuleValue) {
   const values = Array.isArray(rule.categories) ? rule.categories : [rule.category];
-  return values.map((item) => dictionaryItemValue(item)).filter(Boolean);
+  return Array.from(new Set(values.map((item) => dictionaryItemValue(item)).filter(Boolean)));
 }
 
 function categoryLabels(values: string[], options: Record<string, string>) {
@@ -165,16 +165,19 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
             <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{categoryLabels(selectedCategories, categoryOptions)}</div>
           ) : (
             <div className="grid gap-2 rounded border border-[#dde3ee] bg-white p-3 md:grid-cols-2">
-              {optionEntries(categoryOptions).map(([optionValue, label]) => (
-                <label key={optionValue} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selectedCategories.includes(optionValue)}
-                    onChange={(event) => patchCategories(event.target.checked ? [...selectedCategories, optionValue] : selectedCategories.filter((item) => item !== optionValue))}
-                  />
-                  <span>{label}</span>
-                </label>
-              ))}
+              {optionEntries(categoryOptions).map(([optionValue, label]) => {
+                const categoryValue = dictionaryItemValue(optionValue);
+                return (
+                  <label key={optionValue} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedCategories.includes(categoryValue)}
+                      onChange={(event) => patchCategories(event.target.checked ? [...selectedCategories, categoryValue] : selectedCategories.filter((item) => item !== categoryValue))}
+                    />
+                    <span>{label}</span>
+                  </label>
+                );
+              })}
               {!optionEntries(categoryOptions).length && <div className="text-xs text-[#8b95a7]">当前页面 DSL 未配置可编辑规则分类</div>}
             </div>
           )}
