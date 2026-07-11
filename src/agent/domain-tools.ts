@@ -920,15 +920,16 @@ function inferRuleCategory(text: string, featureCode: string) {
 
 function inferBusinessType(category: string, featureCode: string, text: string) {
   if (category === "performance_allocation") return "performance";
-  if (category === "funds_allocation") return "funds";
-  if (category === "promotion_allocation") return "contract";
-  if (category === "refund") return text.includes("合同") ? "contract_refund" : "refund";
+  if (category === "funds_allocation") return "funds_create";
+  if (category === "promotion_allocation") return "contract_create";
+  if (category === "refund") return text.includes("合同") ? "contract_refund" : "refund_create";
   if (category === "charge") return "charge";
   if (category === "attendance") return "attendance";
   if (category === "approval_trigger" && text.includes("产品")) return "product_price";
-  if (category === "workflow" && text.includes("取消")) return "course_cancel";
-  if (/course|排课/.test(`${featureCode} ${text}`)) return "course";
-  return "contract";
+  if (category === "workflow" && /删除排课|删除课程/.test(text)) return "course_delete";
+  if (category === "workflow" && /停课|取消课程|顺延课程/.test(text)) return "holiday_course_impact";
+  if (/course|排课/.test(`${featureCode} ${text}`)) return "course_create";
+  return "contract_create";
 }
 
 function defaultRuleName(category: string) {
@@ -937,7 +938,7 @@ function defaultRuleName(category: string) {
 }
 
 function moduleCodeForBusinessType(businessType: string) {
-  if (["funds", "refund", "contract_refund", "product_price", "performance"].includes(businessType)) return "finance";
-  if (["course", "course_cancel", "attendance", "charge", "charge_reverse"].includes(businessType)) return "education";
+  if (["funds_create", "refund_create", "contract_refund", "product_price", "performance", "performance_adjust", "contract_create", "contract_update"].includes(businessType)) return "finance";
+  if (["course_create", "course_delete", "holiday_course_impact", "attendance", "charge", "charge_reverse", "leave", "makeup"].includes(businessType)) return "education";
   return "finance";
 }

@@ -132,7 +132,7 @@ function commandApprovalHint(command: CommandDsl["command"]) {
     "funds.create": { flowCode: "funds_create_approval", businessType: "funds_create", event: "funds_create_submit", pageCode: "funds_history", actionCode: "funds_history.create" },
     "refund.create": { flowCode: "refund_create_approval", businessType: "refund_create", event: "refund_create_submit", pageCode: "refund_record", actionCode: "refund_record.create" },
     "course.create": { flowCode: "course_create_approval", businessType: "course_create", event: "course_create_submit", pageCode: "course_list", actionCode: "course_list.create" },
-    "course.cancel": { flowCode: "course_cancel_approval", businessType: "course_cancel", event: "course_cancel_submit", pageCode: "course_list", actionCode: "course_list.cancel", require: true },
+    "course.delete": { flowCode: "course_delete_approval", businessType: "course_delete", event: "course_delete_submit", pageCode: "course_list", actionCode: "course_list.delete", require: true },
     "chargeRecord.reverse": { flowCode: "charge_reverse_approval", businessType: "charge_reverse", event: "charge_reverse_submit", pageCode: "charge_record", actionCode: "charge_record.reverse" },
   };
   return map[command];
@@ -250,8 +250,8 @@ async function runCommandInTransaction(client: pg.PoolClient, schemaName: string
       ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || "course_create_rule"))
       : dsl.command === "chargeRecord.reverse"
           ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || "charge_create_rule"))
-        : ["leave.create", "makeup.create", "classStudent.transfer", "holiday.apply"].includes(dsl.command)
-          ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || (dsl.command === "leave.create" ? "leave_create_rule" : dsl.command === "holiday.apply" ? "holiday_course_impact_rule" : "makeup_create_rule")))
+        : ["leave.create", "makeup.create", "classStudent.transfer", "holiday.apply", "course.delete"].includes(dsl.command)
+          ? await (simpleFn as unknown as (c: pg.PoolClient, s: string, p: Record<string, unknown>, r: BusinessRule) => Promise<unknown>)(client, schemaName, params, await loadRule(client, schemaName, dsl.ruleCode || (dsl.command === "leave.create" ? "leave_create_rule" : dsl.command === "holiday.apply" ? "holiday_course_impact_rule" : dsl.command === "course.delete" ? "course_delete_rule" : "makeup_create_rule")))
           : await simpleFn(client, schemaName, params);
   }
   const rule = await loadRule(client, schemaName, dsl.ruleCode);
@@ -1595,7 +1595,7 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
   return { deleted: true, refundId };
 }
 
-async function course_delete(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+async function course_delete(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
   const courseId = str(params.id ?? (dataOf(params)).course_id);
   if (!courseId) throw new Error("缺少课程 ID");
   const course = await one(client, `select * from ${table(schemaName, "generic_course")} where id = $1 and deleted = false for update`, [courseId]);
@@ -1606,16 +1606,23 @@ async function course_delete(client: pg.PoolClient, schemaName: string, params: 
     `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and charge_status = 'CONFIRMED' and deleted = false for update`,
     [courseId]
   );
-  for (const charge of charges) {
-    await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: str(dataOf(params).cancel_reason ?? dataOf(params).reason, "删除课程同步取消扣费"), __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
+  if (charges.length && rule.allowDeleteWithCharges === false) throw new Error("该排课已有确认扣费，不允许删除");
+  const deleteReason = str(dataOf(params).cancel_reason ?? dataOf(params).reason ?? dataOf(params).delete_reason);
+  if (rule.requireDeleteReason === true && !deleteReason) throw new Error("删除排课必须填写原因");
+  if (rule.reverseChargesOnDelete !== false) {
+    for (const charge of charges) {
+      await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: str(deleteReason, "删除排课同步取消扣费"), __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
+    }
   }
 
   const { rows: students } = await client.query(
     `select * from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false`,
     [courseId]
   );
-  for (const student of students) {
-    if (str(student.attendance_status) === "PRESENT") {
+  const attendedStudents = students.filter((student) => str(student.attendance_status) === "PRESENT");
+  if (attendedStudents.length && rule.allowDeleteWithAttendance === false) throw new Error("该排课已有考勤记录，不允许删除");
+  if (rule.resetAttendanceOnDelete !== false) {
+    for (const student of attendedStudents) {
       await client.query(
         `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`,
         [student.id]
@@ -1626,7 +1633,7 @@ async function course_delete(client: pg.PoolClient, schemaName: string, params: 
   await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where course_id = $1 and deleted = false`, [courseId]);
   await client.query(`update ${table(schemaName, "generic_course")} set course_status = 'CANCELLED', deleted = true, updated_at = now() where id = $1`, [courseId]);
 
-  return { deleted: true, courseId, reversedCharges: charges.length, resetAttendance: students.filter((s) => str(s.attendance_status) === "PRESENT").length };
+  return { deleted: true, courseId, reversedCharges: rule.reverseChargesOnDelete === false ? 0 : charges.length, resetAttendance: rule.resetAttendanceOnDelete === false ? 0 : attendedStudents.length };
 }
 
 async function attendance_check_in(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
