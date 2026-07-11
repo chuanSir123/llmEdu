@@ -79,7 +79,7 @@ function displayValue(key: string, value: unknown, ruleSections: ReturnType<type
   return options[String(value)] ?? options[preferredDictionaryValue(options, value)] ?? String(value);
 }
 
-export function BusinessRuleEditor({ value, onChange, readonly = false, valueLabels = {}, editorSchema }: { value: unknown; onChange: (next: RuleValue) => void; readonly?: boolean; valueLabels?: Record<string, Record<string, string>>; editorSchema?: unknown }) {
+export function BusinessRuleEditor({ value, onChange, readonly = false, valueLabels = {}, editorSchema, lockBusinessType = false }: { value: unknown; onChange: (next: RuleValue) => void; readonly?: boolean; valueLabels?: Record<string, Record<string, string>>; editorSchema?: unknown; lockBusinessType?: boolean }) {
   const rule = toObject(value);
   const ruleSections = buildRuleSections(valueLabels, editorSchema);
   const selectedCategories = categoryValues(rule);
@@ -100,6 +100,14 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
     onChange(cleanEmpty({ ...rule, [key]: nextValue, sections: cleanEmpty({ ...sections, [categoryKey]: nextSection }) }));
   };
   const patchCategories = (next: string[]) => onChange(cleanEmpty({ ...rule, category: next[0] ?? "", categories: next }));
+
+  const defaultCategoriesForBusinessType = (businessType: string) => Object.entries(ruleSections)
+    .filter(([, section]) => !businessType || !section.businessTypes?.length || section.businessTypes.includes(businessType))
+    .map(([categoryKey]) => categoryKey);
+  const patchBusinessType = (nextBusinessType: string) => {
+    const nextCategories = defaultCategoriesForBusinessType(dictionaryItemValue(nextBusinessType));
+    onChange(cleanEmpty({ ...rule, businessType: nextBusinessType, category: nextCategories[0] ?? "", categories: nextCategories, sections: {} }));
+  };
 
   const renderSelect = (categoryKey: string, field: RuleField) => {
     const values = sectionValues(rule, categoryKey);
@@ -221,7 +229,7 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
           {readonly ? (
             <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{businessTypeOptions[String(rule.businessType)] ?? businessTypeOptions[preferredDictionaryValue(businessTypeOptions, rule.businessType)] ?? String(rule.businessType ?? "未设置")}</div>
           ) : (
-            <select className={token.input} value={preferredDictionaryValue(businessTypeOptions, rule.businessType)} onChange={(event) => patch("businessType", event.target.value)}>
+            <select className={token.input} value={preferredDictionaryValue(businessTypeOptions, rule.businessType)} disabled={lockBusinessType} onChange={(event) => patchBusinessType(event.target.value)}>
               <option value="">请选择</option>
               {optionEntries(businessTypeOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}
             </select>
