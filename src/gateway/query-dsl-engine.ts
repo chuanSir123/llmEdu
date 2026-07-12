@@ -132,6 +132,13 @@ async function selectColumns(schemaName: string, dsl: ApiDsl) {
   const selectedForeignKeys = new Set<string>();
   for (const field of dsl.allowedFields ?? []) {
     const safeField = assertField(field);
+    if (dsl.table === "generic_course" && safeField === "student_names") {
+      if (!selectedAliases.has(safeField)) {
+        cols.push(`(select string_agg(coalesce(s.name, gcs.student_id), ', ' order by coalesce(s.name, gcs.student_id)) from ${tableExpr(schemaName, "generic_course_student")} gcs left join ${tableExpr(schemaName, "student")} s on s.id = gcs.student_id and coalesce(s.deleted, false) = false where gcs.course_id = t.id and coalesce(gcs.deleted, false) = false) as ${qIdent(safeField)}`);
+        selectedAliases.add(safeField);
+      }
+      continue;
+    }
     if (!selectedAliases.has(safeField)) {
       cols.push(`${fieldExpr(safeField, tableColumns)} as ${qIdent(safeField)}`);
       selectedAliases.add(safeField);
