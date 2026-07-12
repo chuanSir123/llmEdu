@@ -717,13 +717,13 @@ async function seedTenantData() {
       { id: "channel_referral", channel_name: "老带新转介绍", channel_type: "REFERRAL", owner_user_id: "user_004", cost_amount: 300, lead_count: 1, conversion_count: 0, roi_amount: 0, status: "ACTIVE", remark: "家长转介绍奖励" }
     ]],
     ["lead_stage_record", [
-      { id: "lead_001", student_id: "stu_004", stage: "TRIAL_SCHEDULED", owner_user_id: "user_004", channel_id: "channel_online", next_action: "试听后回访并确认报名意向", next_follow_time: "2026-06-13T16:00:00+08:00", status: "PRIVATE", remark: "线上咨询数学提升" },
-      { id: "lead_002", student_id: "stu_005", stage: "FOLLOWING", owner_user_id: "user_004", channel_id: "channel_referral", next_action: "发送暑期衔接课程方案", next_follow_time: "2026-06-14T10:00:00+08:00", status: "PRIVATE", remark: "转介绍线索，需重点跟进" }
+      { id: "lead_001", student_id: "stu_004", stage: "TRIAL_SCHEDULED", owner_user_id: "user_004", channel_id: "channel_online", next_action: "试听后回访并确认报名意向", next_follow_time: "2026-07-13T16:00:00+08:00", status: "PRIVATE", remark: "线上咨询数学提升" },
+      { id: "lead_002", student_id: "stu_005", stage: "FOLLOWING", owner_user_id: "user_004", channel_id: "channel_referral", next_action: "发送暑期衔接课程方案", next_follow_time: "2026-07-14T10:00:00+08:00", status: "PRIVATE", remark: "转介绍线索，需重点跟进" }
     ]],
     ["student_followup", [
-      { id: "follow_001", student_id: "stu_004", follow_user_id: "user_004", follow_type: "PHONE", follow_content: "首次电话沟通，家长关注数学提升", next_follow_time: "2026-06-12T10:00:00+08:00" },
+      { id: "follow_001", student_id: "stu_004", follow_user_id: "user_004", follow_type: "PHONE", follow_content: "首次电话沟通，家长关注数学提升", next_follow_time: "2026-07-12T10:00:00+08:00" },
       { id: "follow_002", student_id: "stu_001", follow_user_id: "user_003", follow_type: "VISIT", follow_content: "课后回访，反馈良好" },
-      { id: "follow_003", student_id: "stu_005", lead_stage_id: "lead_002", follow_user_id: "user_004", follow_type: "WECHAT", follow_content: "已添加微信，发送暑期班介绍", follow_result: "CONTACTED", next_follow_time: "2026-06-14T10:00:00+08:00" }
+      { id: "follow_003", student_id: "stu_005", lead_stage_id: "lead_002", follow_user_id: "user_004", follow_type: "WECHAT", follow_content: "已添加微信，发送暑期班介绍", follow_result: "CONTACTED", next_follow_time: "2026-07-14T10:00:00+08:00" }
     ]],
     ["product", [
       { id: "prod_001", name: "一对一数学 20 课时", unit_price: 200, default_course_hour: 20, total_amount: 4000, product_type: "ONE_ON_ONE_COURSE", subject_ids: JSON.stringify(["数学"]), grade_ids: JSON.stringify(["三年级", "四年级"]), status: "ACTIVE" },
@@ -735,8 +735,8 @@ async function seedTenantData() {
       { id: "promo_discount_9", name: "新生 9 折", type: "DISCOUNT", value: 9, status: "ACTIVE" }
     ]],
     ["contract", [
-      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "NEW_SIGN", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-05T10:00:00+08:00", total_amount: 7000, paid_amount: 3500, promotion_amount: 300, contract_status: "ACTIVE" },
-      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "RENEWAL", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-06-06T11:00:00+08:00", total_amount: 5880, paid_amount: 5880, promotion_amount: 0, contract_status: "ACTIVE" }
+      { id: "contract_001", student_id: "stu_001", paid_status: "PART_PAID", contract_type: "NEW_SIGN", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-07-05T10:00:00+08:00", total_amount: 7000, paid_amount: 3500, promotion_amount: 300, contract_status: "ACTIVE" },
+      { id: "contract_002", student_id: "stu_002", paid_status: "PAID", contract_type: "RENEWAL", organization_id: "org_001", sign_staff_id: "user_004", sign_time: "2026-07-06T11:00:00+08:00", total_amount: 5880, paid_amount: 5880, promotion_amount: 0, contract_status: "ACTIVE" }
     ]],
     ["contract_product", [
       { id: "cp_001", contract_id: "contract_001", product_id: "prod_001", plan_real_hour: 20, plan_promotion_hour: 1.14, plan_real_amount: 4000, plan_promotion_amount: 171.43, paid_real_hour: 10, paid_promotion_hour: 1.14, paid_real_amount: 2000, paid_promotion_amount: 171.43, consumed_real_hour: 1, remaining_real_hour: 9, remaining_promotion_hour: 1.14, remaining_real_amount: 1800, remaining_promotion_amount: 171.43 },
@@ -747,36 +747,36 @@ async function seedTenantData() {
     ["mini_class", [{ id: "mc_001", name: "三年级语文小班", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", product_id: "prod_002", grade: "三年级", subject: "语文", capacity: 12, status: "ACTIVE" }]],
     ["one_on_n_group", [{ id: "ong_001", name: "英语一对三 A 组", organization_id: "org_001", teacher_id: "user_002", study_manager_id: "user_003", grade: "三年级", subject: "英语", capacity: 3, status: "ACTIVE" }]],
     ["generic_course", [
-      { id: "course_001", course_type: "ONE_ON_ONE_COURSE", course_date: "2026-06-30", start_time: "09:00", end_time: "10:00", teacher_id: "user_002", study_manager_id: "user_003", course_status: "FINISHED", organization_id: "org_001", course_title: "姚锦鹏一对一数学", course_hour: 1 },
-      { id: "course_002", course_type: "SMALL_CLASS", course_date: "2026-06-30", start_time: "14:00", end_time: "15:30", teacher_id: "user_002", study_manager_id: "user_003", course_status: "SCHEDULED", organization_id: "org_001", mini_class_id: "mc_001", course_title: "三年级语文小班", course_hour: 1.5 }
+      { id: "course_001", course_type: "ONE_ON_ONE_COURSE", course_date: "2026-07-30", start_time: "09:00", end_time: "10:00", teacher_id: "user_002", study_manager_id: "user_003", course_status: "FINISHED", organization_id: "org_001", course_title: "姚锦鹏一对一数学", course_hour: 1 },
+      { id: "course_002", course_type: "SMALL_CLASS", course_date: "2026-07-30", start_time: "14:00", end_time: "15:30", teacher_id: "user_002", study_manager_id: "user_003", course_status: "SCHEDULED", organization_id: "org_001", mini_class_id: "mc_001", course_title: "三年级语文小班", course_hour: 1.5 }
     ]],
     ["generic_course_student", [
       { id: "cs_001", course_id: "course_001", student_id: "stu_001", attendance_status: "PRESENT", contract_product_id: "cp_001" },
       { id: "cs_002", course_id: "course_002", student_id: "stu_002", attendance_status: "PENDING", contract_product_id: "cp_003" }
     ]],
     ["trial_lesson", [
-      { id: "trial_001", student_id: "stu_004", course_title: "李小明数学试听课", trial_time: "2026-06-13T15:00:00+08:00", teacher_id: "user_002", sales_user_id: "user_004", trial_status: "SCHEDULED", conversion_status: "PENDING", remark: "体验一对一数学" }
+      { id: "trial_001", student_id: "stu_004", course_title: "李小明数学试听课", trial_time: "2026-07-13T15:00:00+08:00", teacher_id: "user_002", sales_user_id: "user_004", trial_status: "SCHEDULED", conversion_status: "PENDING", remark: "体验一对一数学" }
     ]],
     ["sales_task", [
-      { id: "task_001", task_title: "跟进李小明试听反馈", student_id: "stu_004", owner_user_id: "user_004", task_type: "TRIAL_FOLLOWUP", due_time: "2026-06-13T17:00:00+08:00", task_status: "PENDING", remark: "试听结束后 2 小时内回访" },
-      { id: "task_002", task_title: "发送周若曦暑期方案", student_id: "stu_005", owner_user_id: "user_004", task_type: "FOLLOWUP", due_time: "2026-06-14T10:00:00+08:00", task_status: "PENDING", remark: "转介绍线索重点跟进" }
+      { id: "task_001", task_title: "跟进李小明试听反馈", student_id: "stu_004", owner_user_id: "user_004", task_type: "TRIAL_FOLLOWUP", due_time: "2026-07-13T17:00:00+08:00", task_status: "PENDING", remark: "试听结束后 2 小时内回访" },
+      { id: "task_002", task_title: "发送周若曦暑期方案", student_id: "stu_005", owner_user_id: "user_004", task_type: "FOLLOWUP", due_time: "2026-07-14T10:00:00+08:00", task_status: "PENDING", remark: "转介绍线索重点跟进" }
     ]],
     ["lead_assignment_history", [
       { id: "assign_001", student_id: "stu_004", from_user_id: null, to_user_id: "user_004", action_type: "ASSIGN", reason: "线上渠道自动分配", operator_id: "user_001" },
       { id: "assign_002", student_id: "stu_005", from_user_id: null, to_user_id: "user_004", action_type: "ASSIGN", reason: "转介绍线索分配", operator_id: "user_001" }
     ]],
     ["recruit_channel_cost", [
-      { id: "cost_001", channel_id: "channel_online", cost_date: "2026-06-01", cost_amount: 1200, cost_type: "ONLINE_ADS", remark: "六月落地页投放" },
-      { id: "cost_002", channel_id: "channel_referral", cost_date: "2026-06-03", cost_amount: 300, cost_type: "OTHER", remark: "老带新礼品卡" }
+      { id: "cost_001", channel_id: "channel_online", cost_date: "2026-07-01", cost_amount: 1200, cost_type: "ONLINE_ADS", remark: "七月落地页投放" },
+      { id: "cost_002", channel_id: "channel_referral", cost_date: "2026-07-03", cost_amount: 300, cost_type: "OTHER", remark: "老带新礼品卡" }
     ]],
     ["sales_target", [
-      { id: "target_202606_user004", owner_user_id: "user_004", target_month: "2026-06", target_leads: 20, target_trials: 8, target_contracts: 4, target_amount: 20000, status: "ACTIVE", remark: "顾问月度目标示例" }
+      { id: "target_202607_user004", owner_user_id: "user_004", target_month: "2026-07", target_leads: 20, target_trials: 8, target_contracts: 4, target_amount: 20000, status: "ACTIVE", remark: "顾问月度目标示例" }
     ]],
     ["account_charge_records", [{ id: "charge_001", course_id: "course_001", charge_type: "NORMAL", charge_hour: 1, charge_amount: 200, contract_product_id: "cp_001", organization_id: "org_001", student_id: "stu_001", charge_status: "CONFIRMED" }]],
     ["funds_change_history", [
-      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 3500, transaction_time: "2026-06-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
-      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 5880, transaction_time: "2026-06-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
-      { id: "fund_003", student_id: "stu_001", transaction_amount: 500, transaction_time: "2026-06-10T09:00:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "PRE_STORE", organization_id: "org_001" }
+      { id: "fund_001", contract_id: "contract_001", student_id: "stu_001", transaction_amount: 3500, transaction_time: "2026-07-05T10:30:00+08:00", pay_way_config_id: "pay_cash", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_002", contract_id: "contract_002", student_id: "stu_002", transaction_amount: 5880, transaction_time: "2026-07-06T11:30:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "CONTRACT_PAY", organization_id: "org_001" },
+      { id: "fund_003", student_id: "stu_001", transaction_amount: 500, transaction_time: "2026-07-10T09:00:00+08:00", pay_way_config_id: "pay_wechat", funds_type: "PRE_STORE", organization_id: "org_001" }
     ]],
     ["pay_way_config", [
       { id: "pay_cash", name: "现金", pay_way_type: "CASH", status: "ACTIVE" },
@@ -791,22 +791,22 @@ async function seedTenantData() {
       { id: "sear_001", student_id: "stu_001", account_id: "sea_001", change_type: "PRESTORE_IN", change_amount: 500, balance_after: 500, source_funds_id: "fund_003", remark: "初始化预存" }
     ]],
     ["ele_account", [{ id: "ele_001", name: "默认电子账户", account_type: "DEFAULT", status: "ACTIVE" }]],
-    ["refund_record", [{ id: "refund_001", student_id: "stu_001", contract_product_id: "cp_001", refund_real_hour: 0, refund_real_amount: 0, refund_promotion_amount: 0, refund_promotion_hour: 0, refund_way_config_id: "pay_wechat", refund_time: "2026-06-20T10:00:00+08:00", remark: "测试空退费记录" }]],
+    ["refund_record", [{ id: "refund_001", student_id: "stu_001", contract_product_id: "cp_001", refund_real_hour: 0, refund_real_amount: 0, refund_promotion_amount: 0, refund_promotion_hour: 0, refund_way_config_id: "pay_wechat", refund_time: "2026-07-20T10:00:00+08:00", remark: "测试空退费记录" }]],
 
     ["wechat_account_binding", [{ id: "wx_bind_public", account_name: "小墨斗教育公有服务号", appid: "wx_public_demo", authorizer_appid: "wx_public_demo", service_type: "SERVICE_ACCOUNT", binding_type: "PUBLIC", authorized_status: "AUTHORIZED", public_account_id: "wx_public_default", component_appid: "wx_component_demo", oauth_domain: "edu.example.com", is_default: true, menu_json: JSON.stringify({ button: [{ type: "view", name: "主页", url: "https://edu.example.com/wx/home" }, { type: "view", name: "商城", url: "https://edu.example.com/wx/mall" }] }) }]],
-    ["wechat_menu_config", [{ id: "wx_menu_default", binding_id: "wx_bind_public", menu_name: "默认双入口菜单", publish_status: "PUBLISHED", last_published_at: "2026-06-01T10:00:00+08:00", menu_json: JSON.stringify({ button: [{ type: "view", name: "主页", url: "https://edu.example.com/wx/home" }, { type: "view", name: "商城", url: "https://edu.example.com/wx/mall" }] }) }]],
+    ["wechat_menu_config", [{ id: "wx_menu_default", binding_id: "wx_bind_public", menu_name: "默认双入口菜单", publish_status: "PUBLISHED", last_published_at: "2026-07-01T10:00:00+08:00", menu_json: JSON.stringify({ button: [{ type: "view", name: "主页", url: "https://edu.example.com/wx/home" }, { type: "view", name: "商城", url: "https://edu.example.com/wx/mall" }] }) }]],
     ["wechat_student_fan", [{ id: "fan_001", binding_id: "wx_bind_public", student_id: "stu_001", openid: "openid_stu_001", nickname: "锦鹏家长", avatar_url: "https://example.com/avatar/stu_001.png", subscribe_status: "SUBSCRIBED" }]],
     ["mall_goods", [{ id: "goods_001", goods_name: "一对一数学体验包", product_id: "prod_001", sale_price: 199, stock_qty: 100, goods_status: "ON_SALE", activity_type: "SECKILL", detail_json: JSON.stringify({ modules: ["课程介绍", "适合年级", "购买须知"] }) }]],
-    ["mall_activity", [{ id: "act_001", activity_name: "暑期秒杀体验课", activity_type: "SECKILL", goods_id: "goods_001", start_time: "2026-06-01T10:00:00+08:00", end_time: "2026-08-31T23:59:59+08:00", activity_price: 99, quota_qty: 50, sold_qty: 1, status: "ACTIVE", rule_json: JSON.stringify({ limitPerStudent: 1 }) }]],
-    ["mall_group_buy", [{ id: "gb_001", activity_id: "act_001", goods_id: "goods_001", leader_student_id: "stu_001", group_status: "SUCCESS", group_size: 2, joined_count: 2, success_at: "2026-06-01T10:05:00+08:00" }]],
+    ["mall_activity", [{ id: "act_001", activity_name: "暑期秒杀体验课", activity_type: "SECKILL", goods_id: "goods_001", start_time: "2026-07-01T10:00:00+08:00", end_time: "2026-08-31T23:59:59+08:00", activity_price: 99, quota_qty: 50, sold_qty: 1, status: "ACTIVE", rule_json: JSON.stringify({ limitPerStudent: 1 }) }]],
+    ["mall_group_buy", [{ id: "gb_001", activity_id: "act_001", goods_id: "goods_001", leader_student_id: "stu_001", group_status: "SUCCESS", group_size: 2, joined_count: 2, success_at: "2026-07-01T10:05:00+08:00" }]],
     ["mall_group_member", [{ id: "gbm_001", group_id: "gb_001", order_id: "mall_order_001", student_id: "stu_001", member_status: "JOINED" }]],
-    ["mall_order", [{ id: "mall_order_001", order_no: "MO202606010001", student_id: "stu_001", goods_id: "goods_001", activity_id: "act_001", openid: "openid_stu_001", quantity: 1, pay_amount: 99, order_status: "PAID", payment_status: "PAID", payment_trade_no: "wxpay_demo_001", paid_at: "2026-06-01T10:05:00+08:00", contract_id: "contract_001", funds_change_history_id: "fund_001" }]],
+    ["mall_order", [{ id: "mall_order_001", order_no: "MO202607010001", student_id: "stu_001", goods_id: "goods_001", activity_id: "act_001", openid: "openid_stu_001", quantity: 1, pay_amount: 99, order_status: "PAID", payment_status: "PAID", payment_trade_no: "wxpay_demo_001", paid_at: "2026-07-01T10:05:00+08:00", contract_id: "contract_001", funds_change_history_id: "fund_001" }]],
     ["wechat_push_rule", [
       { id: "push_contract_paid", rule_name: "合同收款成功通知", business_event: "funds.created", template_id: "tmpl_contract_paid", receiver_scope: "student", status: "ACTIVE", rule_json: JSON.stringify({ triggerTables: ["funds_change_history"], eventTypes: ["合同", "收款"], url: "/wx/home/contracts" }) },
       { id: "push_charge_confirmed", rule_name: "课消扣费通知", business_event: "charge.confirmed", template_id: "tmpl_charge", receiver_scope: "student", status: "ACTIVE", rule_json: JSON.stringify({ triggerTables: ["account_charge_records"], eventTypes: ["扣费"] }) }
     ]],
     ["wechat_push_log", [{ id: "push_log_001", rule_id: "push_contract_paid", business_event: "funds.created", business_id: "fund_001", student_id: "stu_001", openid: "openid_stu_001", template_id: "tmpl_contract_paid", send_status: "SUCCESS", payload_json: JSON.stringify({ amount: 3500 }) }]],
-    ["notice", [{ id: "notice_001", title: "六月教务安排", content: "请各校区完成课消核对。", status: "PUBLISHED" }]],
+    ["notice", [{ id: "notice_001", title: "七月教务安排", content: "请各校区完成课消核对。", status: "PUBLISHED" }]],
     ["product_grant", [
       { id: "pg_001", product_id: "prod_001", organization_id: "org_001" },
       { id: "pg_002", product_id: "prod_001", organization_id: "org_002" },
