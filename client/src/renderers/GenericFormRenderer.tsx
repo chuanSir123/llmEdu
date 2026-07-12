@@ -399,12 +399,12 @@ export function GenericFormRenderer({
                                 <td className="px-2 py-3"><span className={`inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs ${statusClass}`}>{statusLabel}</span></td>
                                 <td className="px-2 py-3"><div className={`${token.input} truncate leading-8`} title={String(item.contract_product_name ?? item.contract_product_id ?? "")}>{String(item.contract_product_name ?? item.contract_product_id ?? "")}</div></td>
                                 <td className="px-2 py-3 whitespace-nowrap"><div>{String(item.remaining_real_hour ?? 0)}(赠:{String(item.remaining_promotion_hour ?? 0)})</div>{item.row_error ? <div className="text-xs text-[#d92d20] whitespace-normal">{String(item.row_error)}</div> : null}</td>
-                                <td className="px-2 py-3"><input className={`${token.input} max-w-[64px]`} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
+                                <td className="px-2 py-3"><input className={`${token.input} !min-w-0 !w-16`} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
                                 <td className="px-2 py-3 whitespace-nowrap">
                                   <label className="mr-2"><input type="radio" checked={currentStatus === "PRESENT" || currentStatus === "PENDING"} onChange={() => update({ attendance_status: "PRESENT" })} /> 出勤</label>
                                   <label><input type="radio" checked={currentStatus === "ABSENT"} onChange={() => update({ attendance_status: "ABSENT" })} /> 缺勤</label>
                                 </td>
-                                <td className="px-2 py-3"><input className={`${token.input} max-w-[120px]`} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
+                                <td className="px-2 py-3"><input className={`${token.input} !min-w-0 !w-28`} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
                               </tr>
                             );
                           })}
