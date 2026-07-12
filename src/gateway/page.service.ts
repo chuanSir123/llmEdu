@@ -3,6 +3,7 @@ import { visibleActionCodes, fieldPermissions, getDataPermissionScope } from "..
 import type { SessionUser } from "../types.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
 import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
+import { businessRuleEditorSchema } from "../business-rule-editor-schema.js";
 
 export async function loadPageDsl(scope: "admin" | "tenant", pageCode: string, schemaName?: string) {
   const { rows } = await pool.query(
@@ -64,7 +65,7 @@ export async function loadPageFullDsl(scope: "admin" | "tenant", pageCode: strin
     actionMap.set(action.action_code, action.dsl_json as Record<string, unknown>);
   }
   const pageDsl = await enrichImportConfigs(
-    normalizeForeignKeyFields(mergePageActions(page.dsl_json as Record<string, unknown>, actionMap)),
+    ensureBusinessRuleEditorSchema(normalizeForeignKeyFields(mergePageActions(page.dsl_json as Record<string, unknown>, actionMap))),
     scope,
     schemaName,
   );
@@ -78,6 +79,17 @@ export async function loadPageFullDsl(scope: "admin" | "tenant", pageCode: strin
     activeVersion: versionRows.rows[0] ?? null,
     tenantInfo: tenantInfo.rows[0] ?? null,
   };
+}
+
+function ensureBusinessRuleEditorSchema(pageDsl: Record<string, unknown>) {
+  if (String(pageDsl.pageCode ?? pageDsl.page_code ?? "") !== "business_rule_list") return pageDsl;
+  const modal = pageDsl.modal && typeof pageDsl.modal === "object" && !Array.isArray(pageDsl.modal) ? pageDsl.modal as Record<string, unknown> : {};
+  const fields = Array.isArray(modal.fields) ? modal.fields.map((field) => {
+    if (!field || typeof field !== "object" || Array.isArray(field)) return field;
+    const obj = field as Record<string, unknown>;
+    return obj.type === "business_rule_editor" ? { ...obj, editorSchema: obj.editorSchema ?? businessRuleEditorSchema } : obj;
+  }) : modal.fields;
+  return { ...pageDsl, modal: { ...modal, fields } };
 }
 
 function normalizeField(field: unknown) {

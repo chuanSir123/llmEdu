@@ -10,6 +10,15 @@ import { BusinessRuleEditor } from "./BusinessRuleEditor";
 import { JsonTextarea } from "./JsonTextarea";
 import { PermissionEditor } from "./PermissionEditor";
 
+function fieldVisible(field: FieldDsl, value: Record<string, unknown>) {
+  const visibleWhen = field.visibleWhen;
+  if (!visibleWhen) return true;
+  return Object.entries(visibleWhen).every(([key, expected]) => {
+    const actual = value[key];
+    return Array.isArray(expected) ? expected.map(String).includes(String(actual ?? "")) : String(actual ?? "") === String(expected ?? "");
+  });
+}
+
 export function GenericFormRenderer({
   scope,
   schemaName,
@@ -277,7 +286,7 @@ export function GenericFormRenderer({
 
   return (
     <div className={`grid grid-cols-1 gap-x-8 gap-y-4 ${gridClass}`}>
-      {sortWithOrder(fields).map((field) => {
+      {sortWithOrder(fields).filter((field) => fieldVisible(field, value)).map((field) => {
         const options = presentation?.valueLabels?.[field.key];
         const labelClass =
           labelAlign === "left" && field.type !== "textarea"
@@ -335,6 +344,78 @@ export function GenericFormRenderer({
                 ))}
                 <button type="button" className={token.defaultButton} onClick={() => { const rows = [...(Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : []), { performance_type: value.performance_type ?? "MANUAL_ADJUST", source_type: value.source_type ?? "MANUAL_ADJUSTMENT", contract_product_id: value.contract_product_id, funds_change_history_id: value.funds_change_history_id, adjustment_reason: value.adjustment_reason }]; onChange({ ...value, [field.key]: rows, items: rows }); }}>添加分摊行</button>
               </div>
+            ) : field.type === "attendance_table" ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-xs text-[#1d4ed8]">
+                  缺勤{(value.attendance_policy as Record<string, unknown> | undefined)?.absentCharge === false ? "不扣费" : "扣费"}；
+                  请假{(value.attendance_policy as Record<string, unknown> | undefined)?.leaveCharge === true ? "扣费" : "不扣费"}；
+                  考勤{(value.attendance_policy as Record<string, unknown> | undefined)?.deductCourseHourOnAttendance === true ? "即扣课时" : "不扣课时，点击扣费时扣课时和金额"}
+                </div>
+                {(() => {
+                  const rows = Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : [];
+                  const selectedIds = new Set((Array.isArray(value.__selectedStudentIds) ? value.__selectedStudentIds : []) as string[]);
+                  const rowIds = rows.map((item, idx) => String(item.student_id ?? idx));
+                  const allChecked = rowIds.length > 0 && rowIds.every((id) => selectedIds.has(id));
+                  const patchSelected = (ids: string[]) => onChange({ ...value, __selectedStudentIds: ids });
+                  const toggleAll = (checked: boolean) => patchSelected(checked ? rowIds : []);
+                  const toggleOne = (id: string, checked: boolean) => {
+                    const next = new Set(selectedIds);
+                    if (checked) next.add(id); else next.delete(id);
+                    patchSelected([...next]);
+                  };
+                  return (
+                    <div className="overflow-hidden rounded-xl border border-[#dbe5f2] bg-white shadow-sm">
+                      <table className="w-full table-fixed text-sm">
+                        <thead className="bg-[#f3f7fc] text-[#526075]">
+                          <tr>
+                            <th className="w-[4%] px-2 py-2 text-left"><input type="checkbox" checked={allChecked} onChange={(event) => toggleAll(event.target.checked)} /></th>
+                            <th className="w-[11%] px-2 py-2 text-left">学员姓名</th>
+                            <th className="w-[11%] px-2 py-2 text-left">考勤状态</th>
+                            <th className="w-[21%] px-2 py-2 text-left">扣费课程</th>
+                            <th className="w-[11%] px-2 py-2 text-left">剩余</th>
+                            <th className="w-[10%] px-2 py-2 text-left">扣课时</th>
+                            <th className="w-[16%] px-2 py-2 text-left">出勤情况</th>
+                            <th className="w-[16%] px-2 py-2 text-left">备注</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((item, idx) => {
+                            const id = String(item.student_id ?? idx);
+                            const savedStatus = String(item.original_attendance_status ?? item.attendance_status ?? "PENDING");
+                            const attended = savedStatus === "PRESENT" || savedStatus === "ABSENT" || savedStatus === "LEAVE";
+                            const charged = Number(item.charged_count ?? 0) > 0;
+                            const currentStatus = String(item.attendance_status ?? "PRESENT");
+                            const update = (patch: Record<string, unknown>) => {
+                              const next = [...rows];
+                              next[idx] = { ...next[idx], ...patch };
+                              onChange({ ...value, [field.key]: next });
+                            };
+                            return (
+                              <tr key={id} className={`border-t border-[#eef2f7] hover:bg-[#fbfdff] ${selectedIds.has(id) ? "bg-[#eaf2ff]" : ""}`}>
+                                <td className="px-2 py-3"><input type="checkbox" checked={selectedIds.has(id)} onChange={(event) => toggleOne(id, event.target.checked)} /></td>
+                                <td className="truncate px-2 py-3 font-medium text-[#2f80ed]" title={String(item.student_name ?? item.student_id ?? "-")}>{String(item.student_name ?? item.student_id ?? "-")}</td>
+                                <td className="px-2 py-3"><div className="flex flex-wrap gap-1">
+                                  <span className={`inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs ${attended ? "bg-[#e8fff4] text-[#087443]" : "bg-[#f2f4f7] text-[#526075]"}`}>{attended ? "已考勤" : "未考勤"}</span>
+                                  {charged && <span className="inline-flex whitespace-nowrap rounded bg-[#edf3ff] px-2 py-0.5 text-xs text-[#2f80ed]">已扣费</span>}
+                                </div></td>
+                                <td className="px-2 py-3"><div className={`${token.input} truncate leading-8`} title={String(item.contract_product_name ?? item.contract_product_id ?? "")}>{String(item.contract_product_name ?? item.contract_product_id ?? "")}</div></td>
+                                <td className="px-2 py-3 whitespace-nowrap"><div>{String(item.remaining_real_hour ?? 0)}(赠:{String(item.remaining_promotion_hour ?? 0)})</div>{item.row_error ? <div className="text-xs text-[#d92d20] whitespace-normal">{String(item.row_error)}</div> : null}</td>
+                                <td className="px-2 py-3"><input className={`${token.input} max-w-[76px]`} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
+                                <td className="px-2 py-3 whitespace-nowrap">
+                                  <label className="mr-2"><input type="radio" checked={currentStatus === "PRESENT" || currentStatus === "PENDING"} onChange={() => update({ attendance_status: "PRESENT" })} /> 出勤</label>
+                                  <label><input type="radio" checked={currentStatus === "ABSENT"} onChange={() => update({ attendance_status: "ABSENT" })} /> 缺勤</label>
+                                </td>
+                                <td className="px-2 py-3"><input className={token.input} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
+                              </tr>
+                            );
+                          })}
+                          {!rows.length && <tr><td className="px-3 py-6 text-center text-[#8b95a7]" colSpan={8}>暂无学员，请确认排课已关联学员</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
             ) : field.type === "json_textarea" ? (
               <JsonTextarea
                 value={value[field.key]}
@@ -351,6 +432,8 @@ export function GenericFormRenderer({
               <BusinessRuleEditor
                 value={value[field.key]}
                 valueLabels={presentation?.valueLabels}
+                editorSchema={field.editorSchema}
+                lockBusinessType={Boolean(value.id)}
                 onChange={(next) => onChange({ ...value, [field.key]: next })}
               />
             ) : field.type === "permission_editor" ? (
@@ -366,7 +449,7 @@ export function GenericFormRenderer({
             ) : (
               <input
                 className={`${token.input} w-full min-w-0 ${isReadonly ? "bg-[#f5f7fa] text-[#8b95a7] cursor-default" : ""}`}
-                type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "number" ? "number" : "text"}
+                type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "time" ? "time" : field.type === "number" ? "number" : "text"}
                 value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}
