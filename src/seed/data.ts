@@ -2983,7 +2983,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         fields: addStudentFields,
         mapRowToValue: { mini_class_id: "id" }
       },
-      { actionCode: "mini_class_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "班级排课", fields: courseCreateFields, defaultValues: { course_type: "SMALL_CLASS", course_status: "SCHEDULED", course_hour: 1, course_dates: [new Date().toISOString().slice(0, 10)] }, mapRowToValue: { mini_class_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
+      { actionCode: "mini_class_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "班级排课", fields: courseCreateFields, defaultValues: { course_type: "SMALL_CLASS", course_status: "SCHEDULED", course_hour: 1, course_dates: ["2026-07-12"] }, mapRowToValue: { mini_class_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
       { actionCode: "mini_class_list.transfer", label: "批量调班", type: "open_modal", apiCode: "classStudent.transfer", modalTitle: "批量调班", fields: classTransferFields, defaultValues: { target_type: "mini_class" }, mapRowToValue: { from_target_id: "id" } },
       { actionCode: "mini_class_list.markFull", label: "标记满班", type: "execute_api", apiCode: "class.changeStatus", defaultValues: { target_type: "mini_class", target_status: "FULL" } },
       { actionCode: "mini_class_list.close", label: "结班", type: "execute_api", apiCode: "class.changeStatus", confirm: "确认结班？结班后不建议继续排课。", defaultValues: { target_type: "mini_class", target_status: "CLOSED" } },
@@ -3005,7 +3005,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         fields: addStudentFields,
         mapRowToValue: { one_on_n_group_id: "id" }
       },
-      { actionCode: "one_on_n_group_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "1对N排课", fields: courseCreateFields, defaultValues: { course_type: "ONE_ON_N_GROUP", course_status: "SCHEDULED", course_hour: 1, course_dates: [new Date().toISOString().slice(0, 10)] }, mapRowToValue: { one_on_n_group_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
+      { actionCode: "one_on_n_group_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "1对N排课", fields: courseCreateFields, defaultValues: { course_type: "ONE_ON_N_GROUP", course_status: "SCHEDULED", course_hour: 1, course_dates: ["2026-07-12"] }, mapRowToValue: { one_on_n_group_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
       { actionCode: "one_on_n_group_list.transfer", label: "批量调组", type: "open_modal", apiCode: "classStudent.transfer", modalTitle: "批量调组", fields: classTransferFields, defaultValues: { target_type: "one_on_n_group" }, mapRowToValue: { from_target_id: "id" } },
       { actionCode: "one_on_n_group_list.markFull", label: "标记满组", type: "execute_api", apiCode: "class.changeStatus", defaultValues: { target_type: "one_on_n_group", target_status: "FULL" } },
       { actionCode: "one_on_n_group_list.close", label: "结组", type: "execute_api", apiCode: "class.changeStatus", confirm: "确认结组？结组后不建议继续排课。", defaultValues: { target_type: "one_on_n_group", target_status: "CLOSED" } },
@@ -3259,7 +3259,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   if (page.page === "recruit_channel_list") {
     baseDsl.table.rowActions = [
       { actionCode: "recruit_channel_list.detail", label: "详情", type: "open_modal" },
-      { actionCode: "recruit_channel_list.addCost", label: "登记成本", type: "open_modal", apiCode: "recruit_channel_cost_list.create", modalTitle: "登记渠道成本", fields: channelCostFields, defaultValues: { cost_date: new Date().toISOString().slice(0, 10) }, mapRowToValue: { channel_id: "id" } },
+      { actionCode: "recruit_channel_list.addCost", label: "登记成本", type: "open_modal", apiCode: "recruit_channel_cost_list.create", modalTitle: "登记渠道成本", fields: channelCostFields, defaultValues: { cost_date: "2026-07-12" }, mapRowToValue: { channel_id: "id" } },
       { actionCode: "recruit_channel_list.leads", label: "查看线索", type: "open_page", target: { pageCode: "lead_stage_list", title: "招生漏斗", filterField: "channel_id", rowField: "id" } },
       { actionCode: "recruit_channel_list.edit", label: "编辑", type: "open_modal" },
       { actionCode: "recruit_channel_list.delete", label: "删除", type: "execute_api", confirm: "确认删除该招生渠道？" }
