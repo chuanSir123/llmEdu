@@ -1375,6 +1375,11 @@ export function GenericPageRenderer({
           onSubmit={submitModal}
           presentation={presentationWithDictionaries}
           size={"action" in modal ? modal.action?.modalSize : undefined}
+          submitLabel={"action" in modal ? modal.action?.submitLabel : undefined}
+          submitActions={modalFields(modal).some((field) => field.type === "attendance_table") ? [
+            { label: "考勤", value: { __attendanceMode: "attendance" }, variant: "default" },
+            { label: "扣费", value: { __attendanceMode: "charge" }, variant: "primary" }
+          ] : undefined}
         />
       )}
       {customizationRecordId && (

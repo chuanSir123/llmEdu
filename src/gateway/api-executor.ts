@@ -446,8 +446,8 @@ async function prepareAttendance(schemaName: string, params: Record<string, unkn
     },
     students: rows.map((row) => ({
       ...row,
-      attendance_status: row.attendance_status === "PENDING" ? "PRESENT" : row.attendance_status,
-      cp_match_reason: row.contract_product_id ? "按同产品/同年级/同科目/最近收款优先自动匹配" : "未匹配到合同产品"
+      original_attendance_status: row.attendance_status,
+      attendance_status: row.attendance_status === "PENDING" ? "PRESENT" : row.attendance_status
     }))
   };
 }

@@ -358,7 +358,7 @@ export function GenericFormRenderer({
                       <th className="px-2 py-2 text-left">学员姓名</th>
                       <th className="px-2 py-2 text-left">考勤状态</th>
                       <th className="px-2 py-2 text-left">扣费课程</th>
-                      <th className="px-2 py-2 text-left">匹配说明/剩余</th>
+                      <th className="px-2 py-2 text-left">剩余</th>
                       <th className="px-2 py-2 text-left">扣课时</th>
                       <th className="px-2 py-2 text-left">出勤情况</th>
                       <th className="px-2 py-2 text-left">备注</th>
@@ -376,9 +376,9 @@ export function GenericFormRenderer({
                       return (
                         <tr key={String(item.student_id ?? idx)} className="border-t border-[#eef2f7] hover:bg-[#fbfdff]">
                           <td className="px-2 py-2 font-medium text-[#2f80ed]">{String(item.student_name ?? item.student_id ?? "-")}</td>
-                          <td className="px-2 py-2"><span className={`rounded px-2 py-0.5 text-xs ${String(item.attendance_status ?? "PRESENT") === "PRESENT" ? "bg-[#e8fff4] text-[#087443]" : String(item.attendance_status ?? "") === "ABSENT" ? "bg-[#fff4e5] text-[#b54708]" : "bg-[#f2f4f7] text-[#526075]"}`}>{String(item.attendance_status ?? "PRESENT") === "PRESENT" ? "已考勤" : String(item.attendance_status ?? "") === "ABSENT" ? "缺勤" : "未考勤"}</span>{Number(item.charged_count ?? 0) > 0 && <span className="ml-1 rounded bg-[#edf3ff] px-2 py-0.5 text-xs text-[#2f80ed]">已扣费</span>}</td>
+                          <td className="px-2 py-2"><span className={`rounded px-2 py-0.5 text-xs ${String(item.original_attendance_status ?? item.attendance_status ?? "PENDING") === "PRESENT" ? "bg-[#e8fff4] text-[#087443]" : String(item.original_attendance_status ?? item.attendance_status ?? "") === "ABSENT" ? "bg-[#fff4e5] text-[#b54708]" : "bg-[#f2f4f7] text-[#526075]"}`}>{String(item.original_attendance_status ?? item.attendance_status ?? "PENDING") === "PRESENT" ? "已考勤" : String(item.original_attendance_status ?? item.attendance_status ?? "") === "ABSENT" ? "缺勤" : "未考勤"}</span>{Number(item.charged_count ?? 0) > 0 && <span className="ml-1 rounded bg-[#edf3ff] px-2 py-0.5 text-xs text-[#2f80ed]">已扣费</span>}</td>
                           <td className="px-2 py-2"><input className={token.input} value={String(item.contract_product_name ?? item.contract_product_id ?? "")} readOnly /></td>
-                          <td className="px-2 py-2"><div>{String(item.cp_match_reason ?? "-")}</div><div className="text-xs text-[#8b95a7]">剩余 {String(item.remaining_real_hour ?? 0)}(赠:{String(item.remaining_promotion_hour ?? 0)})</div>{item.row_error ? <div className="text-xs text-[#d92d20]">{String(item.row_error)}</div> : null}</td>
+                          <td className="px-2 py-2"><div>{String(item.remaining_real_hour ?? 0)}(赠:{String(item.remaining_promotion_hour ?? 0)})</div>{item.row_error ? <div className="text-xs text-[#d92d20]">{String(item.row_error)}</div> : null}</td>
                           <td className="px-2 py-2"><input className={token.input} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
                           <td className="px-2 py-2 whitespace-nowrap">
                             <label className="mr-3"><input type="radio" checked={String(item.attendance_status ?? "PRESENT") === "PRESENT"} onChange={() => update({ attendance_status: "PRESENT" })} /> 出勤</label>
@@ -387,7 +387,7 @@ export function GenericFormRenderer({
                           <td className="px-2 py-2"><input className={token.input} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
                           <td className="px-2 py-2 text-right whitespace-nowrap">
                             {Number(item.charged_count ?? 0) > 0 && <button type="button" className="mr-2 text-xs text-[#d92d20]" onClick={() => { if (window.confirm("确认取消该学员扣费？将按规则回滚金额和课时")) update({ reverse_charge: true }); }}>取消扣费</button>}
-                            {String(item.attendance_status) === "PRESENT" && <button type="button" className="text-xs text-[#526075]" onClick={() => { if (window.confirm("确认取消该学员考勤？")) update({ attendance_status: "PENDING", cancel_attendance: true }); }}>取消考勤</button>}
+                            {String(item.original_attendance_status ?? item.attendance_status) === "PRESENT" && <button type="button" className="text-xs text-[#526075]" onClick={() => { if (window.confirm("确认取消该学员考勤？")) update({ attendance_status: "PENDING", original_attendance_status: "PENDING", cancel_attendance: true }); }}>取消考勤</button>}
                           </td>
                         </tr>
                       );
