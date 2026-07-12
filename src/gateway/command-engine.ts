@@ -1664,8 +1664,9 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     if (stu.reverse_charge === true) {
       const { rows: charges } = await client.query(`select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and deleted = false and coalesce(charge_status,'CONFIRMED') <> 'REVERSED'`, [courseId, studentId]);
       for (const charge of charges) await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: "考勤页取消扣费", __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
+      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`, [courseStudent.id]);
       if (stu.cancel_attendance !== true && str(stu.attendance_status) !== "PENDING") {
-        succeeded.push({ studentId, reversedChargeCount: charges.length });
+        succeeded.push({ studentId, reversedChargeCount: charges.length, attendanceStatus: "PENDING" });
         continue;
       }
     }

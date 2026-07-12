@@ -370,11 +370,11 @@ export function GenericFormRenderer({
                           <tr>
                             <th className="w-[4%] px-2 py-2 text-left"><input type="checkbox" checked={allChecked} onChange={(event) => toggleAll(event.target.checked)} /></th>
                             <th className="w-[11%] px-2 py-2 text-left">学员姓名</th>
-                            <th className="w-[11%] px-2 py-2 text-left">考勤状态</th>
-                            <th className="w-[21%] px-2 py-2 text-left">扣费课程</th>
-                            <th className="w-[11%] px-2 py-2 text-left">剩余</th>
-                            <th className="w-[10%] px-2 py-2 text-left">扣课时</th>
-                            <th className="w-[16%] px-2 py-2 text-left">出勤情况</th>
+                            <th className="w-[10%] px-2 py-2 text-left">考勤状态</th>
+                            <th className="w-[22%] px-2 py-2 text-left">扣费课程</th>
+                            <th className="w-[12%] px-2 py-2 text-left">剩余</th>
+                            <th className="w-[8%] px-2 py-2 text-left">扣课时</th>
+                            <th className="w-[17%] px-2 py-2 text-left">出勤情况</th>
                             <th className="w-[16%] px-2 py-2 text-left">备注</th>
                           </tr>
                         </thead>
@@ -385,6 +385,8 @@ export function GenericFormRenderer({
                             const attended = savedStatus === "PRESENT" || savedStatus === "ABSENT" || savedStatus === "LEAVE";
                             const charged = Number(item.charged_count ?? 0) > 0;
                             const currentStatus = String(item.attendance_status ?? "PRESENT");
+                            const statusLabel = charged ? "已扣费" : attended ? "已考勤" : "未考勤";
+                            const statusClass = charged ? "bg-[#edf3ff] text-[#2f80ed]" : attended ? "bg-[#e8fff4] text-[#087443]" : "bg-[#f2f4f7] text-[#526075]";
                             const update = (patch: Record<string, unknown>) => {
                               const next = [...rows];
                               next[idx] = { ...next[idx], ...patch };
@@ -394,18 +396,15 @@ export function GenericFormRenderer({
                               <tr key={id} className={`border-t border-[#eef2f7] hover:bg-[#fbfdff] ${selectedIds.has(id) ? "bg-[#eaf2ff]" : ""}`}>
                                 <td className="px-2 py-3"><input type="checkbox" checked={selectedIds.has(id)} onChange={(event) => toggleOne(id, event.target.checked)} /></td>
                                 <td className="truncate px-2 py-3 font-medium text-[#2f80ed]" title={String(item.student_name ?? item.student_id ?? "-")}>{String(item.student_name ?? item.student_id ?? "-")}</td>
-                                <td className="px-2 py-3"><div className="flex flex-wrap gap-1">
-                                  <span className={`inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs ${attended ? "bg-[#e8fff4] text-[#087443]" : "bg-[#f2f4f7] text-[#526075]"}`}>{attended ? "已考勤" : "未考勤"}</span>
-                                  {charged && <span className="inline-flex whitespace-nowrap rounded bg-[#edf3ff] px-2 py-0.5 text-xs text-[#2f80ed]">已扣费</span>}
-                                </div></td>
+                                <td className="px-2 py-3"><span className={`inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs ${statusClass}`}>{statusLabel}</span></td>
                                 <td className="px-2 py-3"><div className={`${token.input} truncate leading-8`} title={String(item.contract_product_name ?? item.contract_product_id ?? "")}>{String(item.contract_product_name ?? item.contract_product_id ?? "")}</div></td>
                                 <td className="px-2 py-3 whitespace-nowrap"><div>{String(item.remaining_real_hour ?? 0)}(赠:{String(item.remaining_promotion_hour ?? 0)})</div>{item.row_error ? <div className="text-xs text-[#d92d20] whitespace-normal">{String(item.row_error)}</div> : null}</td>
-                                <td className="px-2 py-3"><input className={`${token.input} max-w-[76px]`} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
+                                <td className="px-2 py-3"><input className={`${token.input} max-w-[64px]`} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
                                 <td className="px-2 py-3 whitespace-nowrap">
                                   <label className="mr-2"><input type="radio" checked={currentStatus === "PRESENT" || currentStatus === "PENDING"} onChange={() => update({ attendance_status: "PRESENT" })} /> 出勤</label>
                                   <label><input type="radio" checked={currentStatus === "ABSENT"} onChange={() => update({ attendance_status: "ABSENT" })} /> 缺勤</label>
                                 </td>
-                                <td className="px-2 py-3"><input className={token.input} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
+                                <td className="px-2 py-3"><input className={`${token.input} max-w-[120px]`} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
                               </tr>
                             );
                           })}

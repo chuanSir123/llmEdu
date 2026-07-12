@@ -368,10 +368,15 @@ export function GenericPageRenderer({
         toast.error("请先勾选要处理的学员");
         return;
       }
+      const attendanceStudents = Array.isArray(modal.value.students) ? modal.value.students as Array<Record<string, unknown>> : [];
+      const selectedAttendanceStudents = attendanceStudents.filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)));
+      if (hasAttendanceTable && extra.__attendanceMode === "cancel_attendance" && selectedAttendanceStudents.some((student) => Number(student.charged_count ?? 0) > 0)) {
+        toast.error("选中学员含有已扣费，请直接取消扣费");
+        return;
+      }
       const submitValue = hasAttendanceTable ? {
         ...modal.value,
-        students: (Array.isArray(modal.value.students) ? modal.value.students as Array<Record<string, unknown>> : [])
-          .filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)))
+        students: selectedAttendanceStudents
           .map((student) => extra.__attendanceMode === "cancel_attendance"
             ? { ...student, attendance_status: "PENDING", cancel_attendance: true }
             : extra.__attendanceMode === "cancel_charge"
