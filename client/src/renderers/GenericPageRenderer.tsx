@@ -540,7 +540,16 @@ export function GenericPageRenderer({
     }
     if (action.type === "open_modal" && action.fields?.length) {
       const mapped = mappedRowValues(action, row);
-      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped }, action });
+      let prepared: Record<string, unknown> = {};
+      if (action.fields.some((field) => field.type === "attendance_table")) {
+        try {
+          const result = await GatewayClient.executeApi({ scope, schemaName, pageCode: dsl.pageCode, apiCode: "attendance.prepare", params: { ...mapped, id: row.id } });
+          prepared = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data as Record<string, unknown> : {};
+        } catch {
+          prepared = {};
+        }
+      }
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped, ...prepared }, action });
       return;
     }
     if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {

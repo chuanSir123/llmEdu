@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { env } from "../config/env.js";
 import { dictionaryItemId, DICTIONARY_FIELD_ALIASES, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { businessRuleEditorSchema } from "../business-rule-editor-schema.js";
 
 export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
@@ -158,6 +159,7 @@ export function enhanceDictionaryFields(value: unknown): unknown {
   }
   return obj;
 }
+
 
 const studentSelect = { pageCode: "student_list", apiCode: "student_list.query", labelField: "name" };
 const allStudentSelect = { pageCode: "frontdesk_home", apiCode: "frontdesk_home.query", labelField: "name" };
@@ -403,12 +405,12 @@ const courseCreateFields = [
   { key: "course_type", label: "课程类型", type: "text" },
   { key: "course_dates", label: "上课日期", type: "multiDate", span: 2 as const, defaultFutureOnly: true },
   { key: "course_date", label: "单次日期", type: "date", hidden: true },
-  { key: "start_time", label: "开始时间", type: "text" },
-  { key: "end_time", label: "结束时间", type: "text" },
+  { key: "start_time", label: "开始时间", type: "time" },
+  { key: "end_time", label: "结束时间", type: "time" },
   { key: "teacher_id", label: "老师", type: "text", optionSource: userSelect },
   { key: "study_manager_id", label: "学管师", type: "text", optionSource: userSelect },
-  { key: "mini_class_id", label: "班级", type: "text", optionSource: miniClassSelect },
-  { key: "one_on_n_group_id", label: "1对N小组", type: "text", optionSource: oneOnNGroupSelect },
+  { key: "mini_class_id", label: "班级", type: "text", optionSource: miniClassSelect, visibleWhen: { course_type: "SMALL_CLASS" } },
+  { key: "one_on_n_group_id", label: "1对N小组", type: "text", optionSource: oneOnNGroupSelect, visibleWhen: { course_type: "ONE_ON_N_GROUP" } },
   { key: "product_id", label: "排课产品", type: "text", optionSource: productSelect },
   { key: "grade", label: "年级", type: "text" },
   { key: "subject", label: "科目", type: "text" },
@@ -615,8 +617,8 @@ const makeupCreateFields = [
   { key: "student_id", label: "补课学员", type: "text", optionSource: studentSelect, required: true },
   { key: "course_title", label: "补课标题", type: "text", defaultValue: "补课" },
   { key: "course_date", label: "补课日期", type: "date", defaultFutureOnly: true, required: true },
-  { key: "start_time", label: "开始时间", type: "text", required: true },
-  { key: "end_time", label: "结束时间", type: "text", required: true },
+  { key: "start_time", label: "开始时间", type: "time", required: true },
+  { key: "end_time", label: "结束时间", type: "time", required: true },
   { key: "teacher_id", label: "授课老师", type: "text", optionSource: userSelect },
   { key: "contract_product_id", label: "合同产品", type: "text", optionSource: contractProductSelect },
   { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect },
@@ -1329,6 +1331,8 @@ export const pages: PageSeed[] = [
     group: "配置中心",
     fields: [
       { key: "rule_name", label: "规则名称", filter: true },
+      { key: "category", label: "规则分类", filter: true, dictCode: "business_rule_category", hidden: true },
+      { key: "business_type", label: "业务类型", filter: true, dictCode: "business_type", hidden: true },
       { key: "category_label", label: "规则分类" },
       { key: "business_type_label", label: "业务类型" },
       { key: "source_label", label: "来源" },
@@ -1619,7 +1623,8 @@ export const pages: PageSeed[] = [
       { key: "organization_id", label: "上课校区", filter: true },
       { key: "teacher_id", label: "授课老师" },
       { key: "study_manager_id", label: "班主任" },
-      { key: "course_status", label: "状态", filter: true }
+      { key: "course_status", label: "状态", filter: true },
+      { key: "student_names", label: "上课学员", hidden: true }
     ]
   },
   {
@@ -2195,8 +2200,8 @@ export const modalDslSeeds: Array<{ actionCode: string; actionName: string; page
   { actionCode: "course_detail_modal", actionName: "课程详情弹窗", pageCode: "course_list", module: "education", feature: "course_list", dsl: { modalCode: "course_detail_modal", modalName: "课程详情", size: "large", columns: 3, labelAlign: "left", readOnly: true, fields: [
     { key: "course_title", label: "课程名称", type: "text", span: 2 }, { key: "course_type", label: "课程类型", type: "text" },
     { key: "course_dates", label: "上课日期", type: "multiDate", span: 2 as const, defaultFutureOnly: true },
-  { key: "course_date", label: "单次日期", type: "date", hidden: true }, { key: "start_time", label: "开始时间", type: "text" },
-    { key: "end_time", label: "结束时间", type: "text" }, { key: "teacher_id", label: "老师", type: "text", optionSource: userSelect },
+  { key: "course_date", label: "单次日期", type: "date", hidden: true }, { key: "start_time", label: "开始时间", type: "time" },
+    { key: "end_time", label: "结束时间", type: "time" }, { key: "teacher_id", label: "老师", type: "text", optionSource: userSelect },
     { key: "study_manager_id", label: "学管师", type: "text", optionSource: userSelect }, { key: "student_ids", label: "上课学员", type: "multiSelect", optionSource: studentSelect, searchable: true },
     { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect }, { key: "course_hour", label: "课时", type: "number" },
     { key: "course_status", label: "状态", type: "text" }
@@ -2686,7 +2691,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     ];
     baseDsl.modal.fields = [
       { key: "rule_name", label: "规则名称", type: "text", required: true },
-      { key: "rule_json", label: "规则设置", type: "business_rule_editor", span: "full" }
+      { key: "rule_json", label: "规则设置", type: "business_rule_editor", span: "full", editorSchema: businessRuleEditorSchema }
     ];
     baseDsl.presentation.modal.size = "large";
     baseDsl.presentation.table.primaryRowActions = ["business_rule_list.detail", "business_rule_list.edit", "business_rule_list.delete"];
@@ -2898,6 +2903,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.table.columns = [
       { key: "course_title", title: "课程名称", width: 180 },
       { key: "course_type", title: "课程类型", width: 120 },
+      { key: "student_names", title: "上课学员", width: 180 },
       { key: "organization_id", title: "上课校区", width: 150, displayKey: "organization_name" },
       { key: "teacher_id", title: "授课老师", width: 130, displayKey: "teacher_name" },
       { key: "study_manager_id", title: "班主任", width: 130, displayKey: "study_manager_name" },
@@ -3539,6 +3545,7 @@ export const businessRules = [
     rule_name: "收款资金分配规则",
     rule_json: {
       category: "funds_allocation",
+      categories: ["funds_allocation", "promotion_allocation", "performance_allocation"],
       businessType: "funds_create",
       fundsAllocation: "byCpRemainingAmount",
       splitBy: "contract_product",
@@ -3546,6 +3553,13 @@ export const businessRules = [
       allowPreStoreWithoutContract: true,
       allowManualAdjust: false,
       generateLogTable: "money_arrange_log",
+      promotionAllocation: "byCpAmountRatio",
+      performanceAllocation: "byCpPaidRatio",
+      organizationPerformanceOwner: "contractOrganization",
+      personalPerformanceOwner: "signStaff",
+      productPriority: "none",
+      includePromotionAmount: false,
+      includeRefundDeduction: true,
       voidGeneratesPerformanceReverse: true,
       validations: [
         { field: "transaction_amount", operator: ">", value: 0, message: "收款金额必须大于 0" }
@@ -3562,6 +3576,23 @@ export const businessRules = [
       supportOrganizationAdjustment: true,
       supportPersonalOwnerAdjustment: true,
       supportMultiSplit: true
+    }
+  },
+  {
+    rule_code: "contract_update_rule",
+    rule_name: "编辑合同重算规则",
+    rule_json: {
+      category: "promotion_allocation",
+      categories: ["promotion_allocation", "funds_allocation", "performance_allocation"],
+      businessType: "contract_update",
+      promotionAllocation: "byCpAmountRatio",
+      fundsAllocation: "byCpRemainingAmount",
+      performanceAllocation: "byCpPaidRatio",
+      splitBy: "contract_product",
+      recalculateAfterPaid: true,
+      recalculatePromotionArrange: true,
+      recalculateMoneyArrange: true,
+      recalculatePerformanceArrange: true
     }
   },
   {
@@ -3596,12 +3627,15 @@ export const businessRules = [
       category: "charge",
       businessType: "charge",
       defaultChargeType: "NORMAL",
+      entranceChargeTypes: { attendance: "NORMAL", manualPromotion: "PROMOTION", giftHour: "PROMOTION_HOUR" },
+      giftHourChargeAmount: 0,
       allowNegativeBalance: false,
       updateContractProductBalance: true,
       autoCalculateChargeAmount: true,
       requireCancelReason: true,
       recordCancelOperator: true,
       cancelAttendanceOnChargeReverse: true,
+      rollbackContractProductBalanceOnReverse: true,
       validations: [
         { field: "charge_amount", operator: ">", value: 0, message: "扣费金额必须大于 0" }
       ]
@@ -3613,6 +3647,7 @@ export const businessRules = [
     rule_json: {
       category: "refund",
       businessType: "refund_create",
+      categories: ["refund"],
       refundAllocation: "byCpRemainingAmount",
       allowRefundOverBalance: false,
       updateContractProductBalance: true,
@@ -3668,6 +3703,8 @@ export const businessRules = [
       category: "attendance",
       businessType: "attendance",
       requireCheckInBeforeCharge: true,
+      deductCourseHourOnAttendance: true,
+      hourDeductionPriority: "promotion_first",
       autoCalculateChargeAmount: true,
       absentCharge: true,
       leaveCharge: false,
@@ -3712,10 +3749,10 @@ export const businessRules = [
   },
   {
     rule_code: "promotion_allocation_rule",
-    rule_name: "优惠分配通用规则",
+    rule_name: "收款优惠分配规则",
     rule_json: {
       category: "promotion_allocation",
-      businessType: "contract_create",
+      businessType: "funds_create",
       promotionAllocation: "byCpAmountRatio",
       splitBy: "contract_product",
       snapshotPromotion: true,
@@ -3725,10 +3762,10 @@ export const businessRules = [
   },
   {
     rule_code: "performance_allocation_rule",
-    rule_name: "业绩分配通用规则",
+    rule_name: "收款业绩分配规则",
     rule_json: {
       category: "performance_allocation",
-      businessType: "performance",
+      businessType: "funds_create",
       performanceAllocation: "byCpPaidRatio",
       organizationPerformanceOwner: "contractOrganization",
       personalPerformanceOwner: "signStaff",
@@ -3774,60 +3811,6 @@ export const businessRules = [
     }
   },
   {
-    rule_code: "discount_approval_threshold_rule",
-    rule_name: "优惠审批阈值规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "contract_create",
-      targetAction: "contract_list.create",
-      triggerApprovalFlow: "contract_discount_approval",
-      thresholdAmount: 0,
-      conditions: [
-        { field: "promotion_amount", operator: ">", value: 0, message: "合同存在优惠时进入优惠审批" }
-      ]
-    }
-  },
-  {
-    rule_code: "refund_approval_threshold_rule",
-    rule_name: "退费审批阈值规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "refund_create",
-      targetAction: "refund_record.create",
-      triggerApprovalFlow: "refund_create_approval",
-      thresholdAmount: 0,
-      conditions: [
-        { field: "refund_real_amount", operator: ">", value: 0, message: "发起退费时进入退费审批" }
-      ]
-    }
-  },
-  {
-    rule_code: "product_price_approval_rule",
-    rule_name: "产品改价审批规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "product_price",
-      targetAction: "product_list.edit",
-      triggerApprovalFlow: "product_price_approval",
-      conditions: [
-        { field: "unit_price", operator: "!=", valueField: "old_unit_price", message: "产品单价变更时进入价格审批" }
-      ]
-    }
-  },
-  {
-    rule_code: "charge_reverse_approval_rule",
-    rule_name: "取消扣费审批规则",
-    rule_json: {
-      category: "approval_trigger",
-      businessType: "charge_reverse",
-      targetAction: "charge_record.reverse",
-      triggerApprovalFlow: "charge_reverse_approval",
-      conditions: [
-        { field: "charge_amount", operator: ">", value: 0, message: "撤销已扣费记录时进入冲销审批" }
-      ]
-    }
-  },
-  {
     rule_code: "prestore_funds_rule",
     rule_name: "预存款入账规则",
     rule_json: {
@@ -3843,37 +3826,49 @@ export const businessRules = [
       ]
     }
   },
-
   {
-    rule_code: "holiday_course_impact_rule",
-    rule_name: "停课影响课程处理规则",
+    rule_code: "funds_delete_rule",
+    rule_name: "删除收款回滚规则",
     rule_json: {
-      category: "workflow",
-      businessType: "holiday_course_impact",
-      targetAction: "course_holiday_calendar.cancelCourses",
-      defaultAction: "cancel",
-      postponeDays: 7,
-      includeFinished: false,
-      blockAttendedOrCharged: true,
-      description: "停课日历批量处理仅影响待上课课程；默认拦截已有考勤或已确认扣费课程，支持批量取消或按天数顺延。"
+      category: "funds_allocation",
+      categories: ["funds_allocation", "performance_allocation", "promotion_allocation"],
+      businessType: "funds_delete",
+      fundsAllocation: "byCpRemainingAmount",
+      reverseMoneyArrangeOnDelete: true,
+      reversePerformanceOnDelete: true,
+      reversePromotionArrangeOnDelete: true,
+      updateContractPaidStatus: true,
+      requireDeleteReason: true,
+      generateLogTable: "money_arrange_log"
+    }
+  },
+  {
+    rule_code: "refund_delete_rule",
+    rule_name: "删除退费回滚规则",
+    rule_json: {
+      category: "refund",
+      categories: ["refund"],
+      businessType: "refund_delete",
+      refundAllocation: "originalPaymentReverse",
+      restoreContractProductBalance: true,
+      updateContractPaidStatus: true,
+      requireDeleteReason: true
     }
   },
   {
     rule_code: "course_delete_rule",
-    rule_name: "删除排课规则",
+    rule_name: "删除排课回滚规则",
     rule_json: {
-      category: "workflow",
+      category: "charge",
+      categories: ["charge", "attendance"],
       businessType: "course_delete",
-      targetAction: "course_list.delete",
-      allowAfterFinished: false,
-      allowDeleteWithAttendance: true,
-      allowDeleteWithCharges: true,
       reverseChargesOnDelete: true,
       resetAttendanceOnDelete: true,
-      requireDeleteReason: false,
-      requireApprovalFlow: "course_delete_approval"
+      restoreContractProductBalance: true,
+      requireDeleteReason: true
     }
   }
+
 ];
 
 export const printTemplates = [

@@ -1674,6 +1674,7 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     }
     if (!cpId) { failed.push({ studentId, reason: "未选择合同产品" }); continue; }
 
+    const rowCourseHour = num(stu.charge_hour, courseHour);
     const cp = await one(client, `select * from ${table(schemaName, "contract_product")} where id = $1 and deleted = false for update`, [cpId]);
     if (!cp) { failed.push({ studentId, reason: "合同产品不存在" }); continue; }
 
@@ -1681,12 +1682,12 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     if (str(cpContract?.student_id) !== studentId) { failed.push({ studentId, reason: "合同产品不属于该学员" }); continue; }
 
     const rawChargeAmount = num(cp.plan_real_amount) > 0 && num(cp.plan_real_hour) > 0
-      ? courseHour * (num(cp.plan_real_amount) / num(cp.plan_real_hour))
-      : courseHour * num(cp.unit_price ?? 0);
-    const isFinalRealHourCharge = num(cp.remaining_real_hour) <= courseHour;
+      ? rowCourseHour * (num(cp.plan_real_amount) / num(cp.plan_real_hour))
+      : rowCourseHour * num(cp.unit_price ?? 0);
+    const isFinalRealHourCharge = num(cp.remaining_real_hour) <= rowCourseHour;
     const chargeAmount = isFinalRealHourCharge ? num(cp.remaining_real_amount) : floorMoney(rawChargeAmount);
 
-    if (rule.allowNegativeBalance !== true && (num(cp.remaining_real_hour) < courseHour || num(cp.remaining_real_amount) < chargeAmount)) {
+    if (rule.allowNegativeBalance !== true && (num(cp.remaining_real_hour) < rowCourseHour || num(cp.remaining_real_amount) < chargeAmount)) {
       failed.push({ studentId, reason: "合同产品余额不足" }); continue;
     }
 
@@ -1698,7 +1699,7 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     await createCharge(client, schemaName, {
       course_id: courseId,
       charge_type: "NORMAL",
-      charge_hour: courseHour,
+      charge_hour: rowCourseHour,
       charge_amount: chargeAmount,
       contract_product_id: cpId,
       student_id: studentId,

@@ -10,6 +10,15 @@ import { BusinessRuleEditor } from "./BusinessRuleEditor";
 import { JsonTextarea } from "./JsonTextarea";
 import { PermissionEditor } from "./PermissionEditor";
 
+function fieldVisible(field: FieldDsl, value: Record<string, unknown>) {
+  const visibleWhen = field.visibleWhen;
+  if (!visibleWhen) return true;
+  return Object.entries(visibleWhen).every(([key, expected]) => {
+    const actual = value[key];
+    return Array.isArray(expected) ? expected.map(String).includes(String(actual ?? "")) : String(actual ?? "") === String(expected ?? "");
+  });
+}
+
 export function GenericFormRenderer({
   scope,
   schemaName,
@@ -277,7 +286,7 @@ export function GenericFormRenderer({
 
   return (
     <div className={`grid grid-cols-1 gap-x-8 gap-y-4 ${gridClass}`}>
-      {sortWithOrder(fields).map((field) => {
+      {sortWithOrder(fields).filter((field) => fieldVisible(field, value)).map((field) => {
         const options = presentation?.valueLabels?.[field.key];
         const labelClass =
           labelAlign === "left" && field.type !== "textarea"
@@ -335,6 +344,47 @@ export function GenericFormRenderer({
                 ))}
                 <button type="button" className={token.defaultButton} onClick={() => { const rows = [...(Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : []), { performance_type: value.performance_type ?? "MANUAL_ADJUST", source_type: value.source_type ?? "MANUAL_ADJUSTMENT", contract_product_id: value.contract_product_id, funds_change_history_id: value.funds_change_history_id, adjustment_reason: value.adjustment_reason }]; onChange({ ...value, [field.key]: rows, items: rows }); }}>添加分摊行</button>
               </div>
+            ) : field.type === "attendance_table" ? (
+              <div className="overflow-hidden rounded border border-[#e8edf5]">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#f8fafc] text-[#5f6b7a]">
+                    <tr>
+                      <th className="px-2 py-2 text-left">学员姓名</th>
+                      <th className="px-2 py-2 text-left">考勤状态</th>
+                      <th className="px-2 py-2 text-left">扣费课程</th>
+                      <th className="px-2 py-2 text-left">剩余</th>
+                      <th className="px-2 py-2 text-left">扣课时</th>
+                      <th className="px-2 py-2 text-left">出勤情况</th>
+                      <th className="px-2 py-2 text-left">备注</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : []).map((item, idx) => {
+                      const rows = Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : [];
+                      const update = (patch: Record<string, unknown>) => {
+                        const next = [...rows];
+                        next[idx] = { ...next[idx], ...patch };
+                        onChange({ ...value, [field.key]: next });
+                      };
+                      return (
+                        <tr key={String(item.student_id ?? idx)} className="border-t border-[#eef2f7]">
+                          <td className="px-2 py-2 text-[#2f80ed]">{String(item.student_name ?? item.student_id ?? "-")}</td>
+                          <td className="px-2 py-2">{String(item.attendance_status ?? "PRESENT") === "PRESENT" ? "出勤" : String(item.attendance_status ?? "") === "ABSENT" ? "缺勤" : "请假"}</td>
+                          <td className="px-2 py-2"><input className={token.input} value={String(item.contract_product_name ?? item.contract_product_id ?? "")} readOnly /></td>
+                          <td className="px-2 py-2">{String(item.remaining_real_hour ?? 0)}(赠:{String(item.remaining_promotion_hour ?? 0)})</td>
+                          <td className="px-2 py-2"><input className={token.input} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
+                          <td className="px-2 py-2 whitespace-nowrap">
+                            <label className="mr-3"><input type="radio" checked={String(item.attendance_status ?? "PRESENT") === "PRESENT"} onChange={() => update({ attendance_status: "PRESENT" })} /> 出勤</label>
+                            <label><input type="radio" checked={String(item.attendance_status) === "ABSENT"} onChange={() => update({ attendance_status: "ABSENT" })} /> 缺勤</label>
+                          </td>
+                          <td className="px-2 py-2"><input className={token.input} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
+                        </tr>
+                      );
+                    })}
+                    {!(Array.isArray(value[field.key]) && (value[field.key] as unknown[]).length) && <tr><td className="px-3 py-6 text-center text-[#8b95a7]" colSpan={7}>暂无学员，请确认排课已关联学员</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             ) : field.type === "json_textarea" ? (
               <JsonTextarea
                 value={value[field.key]}
@@ -351,6 +401,8 @@ export function GenericFormRenderer({
               <BusinessRuleEditor
                 value={value[field.key]}
                 valueLabels={presentation?.valueLabels}
+                editorSchema={field.editorSchema}
+                lockBusinessType={Boolean(value.id)}
                 onChange={(next) => onChange({ ...value, [field.key]: next })}
               />
             ) : field.type === "permission_editor" ? (
@@ -366,7 +418,7 @@ export function GenericFormRenderer({
             ) : (
               <input
                 className={`${token.input} w-full min-w-0 ${isReadonly ? "bg-[#f5f7fa] text-[#8b95a7] cursor-default" : ""}`}
-                type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "number" ? "number" : "text"}
+                type={field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : field.type === "time" ? "time" : field.type === "number" ? "number" : "text"}
                 value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}
