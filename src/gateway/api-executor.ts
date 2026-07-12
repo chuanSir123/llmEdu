@@ -80,6 +80,18 @@ function businessRuleTypeLabel(type: string) {
   return systemDictionaryLabel("business_type", type) ?? type;
 }
 
+const DEPRECATED_RULE_CATEGORIES = new Set(["approval_trigger", "workflow"]);
+
+function businessRuleCategories(ruleJson: Record<string, unknown>, options: { includeDeprecated?: boolean } = {}) {
+  const values = Array.isArray(ruleJson.categories) ? ruleJson.categories : [ruleJson.category];
+  const categories = values.map((item) => String(item ?? "")).filter(Boolean);
+  return options.includeDeprecated ? categories : categories.filter((category) => !DEPRECATED_RULE_CATEGORIES.has(category));
+}
+
+function businessRuleCategoryLabels(ruleJson: Record<string, unknown>) {
+  return businessRuleCategories(ruleJson).map((category) => businessRuleCategoryLabel(category)).join("、");
+}
+
 // 模块中文名以 module_registry 为准（租户可定制模块），带短 TTL 缓存；查不到回落模块编码
 let moduleLabelCache: { labels: Record<string, string>; expiresAt: number } | null = null;
 
@@ -283,6 +295,11 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
   const values: unknown[] = [schemaName];
   const where = [`status = 'active'`, "deleted = false", `((schema_scope = 'tenant' and schema_name = $1) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`];
   if (filters.rule_name) { values.push(`%${filters.rule_name}%`); where.push(`rule_name ilike $${values.length}`); }
+  if (filters.business_type) { values.push(String(filters.business_type).split(".").pop()); where.push(`coalesce(rule_json->>'businessType', rule_json->>'business_type') = $${values.length}`); }
+  if (filters.category) {
+    values.push(String(filters.category).split(".").pop());
+    where.push(`(rule_json->>'category' = $${values.length} or rule_json->'categories' ? $${values.length})`);
+  }
   const page = Math.max(Number(params.page ?? 1), 1);
   const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
   values.push(pageSize, (page - 1) * pageSize);
@@ -294,18 +311,34 @@ async function queryBusinessRules(schemaName: string, params: Record<string, unk
      limit $${values.length - 1} offset $${values.length}`,
     values
   );
-  return {
-    rows: rows.map(({ __total, ...row }) => ({
-      ...row,
-      source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
-      rule_json: asObject(row.rule_json),
-      category_label: businessRuleCategoryLabel(String(asObject(row.rule_json).category ?? "")),
-      business_type_label: businessRuleTypeLabel(String(asObject(row.rule_json).businessType ?? "")),
-    })),
-    total: Number(rows[0]?.__total ?? 0),
-    page,
-    pageSize,
-  };
+  const grouped = new Map<string, Record<string, unknown>>();
+  for (const { __total, ...row } of rows) {
+    const ruleJson = asObject(row.rule_json);
+    const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
+    const groupKey = businessType || String(row.rule_code);
+    const categories = businessRuleCategories(ruleJson);
+    if (!categories.length && businessRuleCategories(ruleJson, { includeDeprecated: true }).length) continue;
+    const existing = grouped.get(groupKey);
+    if (existing) {
+      const mergedCategories = Array.from(new Set([...(existing.categories as string[]), ...categories]));
+      existing.category_label = mergedCategories.map((category) => businessRuleCategoryLabel(category)).join("、");
+      existing.categories = mergedCategories;
+      existing.rule_json = { ...(existing.rule_json as Record<string, unknown>), categories: mergedCategories, category: mergedCategories[0] };
+      existing.rule_count = Number(existing.rule_count ?? 1) + 1;
+    } else {
+      grouped.set(groupKey, {
+        ...row,
+        source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
+        rule_json: ruleJson,
+        categories,
+        category_label: businessRuleCategoryLabels(ruleJson),
+        business_type_label: businessRuleTypeLabel(businessType),
+        rule_count: 1
+      });
+    }
+  }
+  const groupedRows = Array.from(grouped.values());
+  return { rows: groupedRows, total: groupedRows.length, page, pageSize };
 }
 
 async function getBusinessRuleDetail(schemaName: string, params: Record<string, unknown>) {
@@ -322,13 +355,28 @@ async function getBusinessRuleDetail(schemaName: string, params: Record<string, 
   );
   const row = rows[0];
   if (!row) throw Object.assign(new Error("规则不存在或已删除"), { statusCode: 404 });
-  const ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  let ruleJson = await normalizeDictionaryConfigValues(schemaName, asObject(row.rule_json)) as Record<string, unknown>;
+  if (!businessRuleCategories(ruleJson).length && businessRuleCategories(ruleJson, { includeDeprecated: true }).length) {
+    throw Object.assign(new Error("规则已迁移到统一审批/业务动作配置"), { statusCode: 404 });
+  }
+  const businessType = String(ruleJson.businessType ?? ruleJson.business_type ?? "");
+  if (businessType) {
+    const peerRows = await pool.query(
+      `select rule_json from admin.business_rule
+       where status = 'active' and deleted = false
+         and coalesce(rule_json->>'businessType', rule_json->>'business_type') = $1
+         and ((schema_scope = 'tenant' and schema_name = $2) or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))`,
+      [businessType, schemaName]
+    );
+    const mergedCategories = Array.from(new Set(peerRows.rows.flatMap((peer) => businessRuleCategories(asObject(peer.rule_json)))));
+    if (mergedCategories.length) ruleJson = { ...ruleJson, category: mergedCategories[0], categories: mergedCategories };
+  }
   return {
     ...row,
     rule_json: ruleJson,
     business_type: ruleJson.businessType ?? "",
     source_label: row.schema_name === TEMPLATE_SCHEMA ? "模板机构" : "租户自定义",
-    category_label: businessRuleCategoryLabel(String(ruleJson.category ?? "")),
+    category_label: businessRuleCategoryLabels(ruleJson),
     business_type_label: businessRuleTypeLabel(String(ruleJson.businessType ?? ""))
   };
 }
@@ -357,6 +405,51 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
     [id, schemaName, ruleCode, ruleName, JSON.stringify(ruleJson)]
   );
   return { id, ruleCode };
+}
+
+async function prepareAttendance(schemaName: string, params: Record<string, unknown>) {
+  const courseId = String(params.course_id ?? params.id ?? "");
+  if (!courseId) throw Object.assign(new Error("课程 ID 不能为空"), { statusCode: 400 });
+  const ruleRows = await pool.query(
+    `select rule_json
+       from admin.business_rule
+      where rule_code = 'attendance_check_in_rule' and status = 'active' and deleted = false
+        and ((schema_scope = 'tenant' and schema_name = $1)
+          or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+      order by case when schema_name = $1 then 0 else 1 end
+      limit 1`,
+    [schemaName]
+  );
+  const rule = asObject(ruleRows.rows[0]?.rule_json);
+  const { rows } = await pool.query(
+    `select gcs.student_id, coalesce(s.name, gcs.student_id) as student_name,
+            coalesce(gcs.attendance_status, 'PENDING') as attendance_status,
+            gcs.contract_product_id, coalesce(p.name, cp.product_id, gcs.contract_product_id) as contract_product_name,
+            coalesce(cp.remaining_real_hour, 0) as remaining_real_hour, coalesce(cp.remaining_promotion_hour, 0) as remaining_promotion_hour,
+            coalesce(gc.course_hour, 1) as charge_hour,
+            (select count(*)::int from ${qIdent(schemaName)}.account_charge_records acr where acr.course_id = gcs.course_id and acr.student_id = gcs.student_id and coalesce(acr.deleted, false) = false and coalesce(acr.charge_status, 'CONFIRMED') <> 'REVERSED') as charged_count
+       from ${qIdent(schemaName)}.generic_course_student gcs
+       join ${qIdent(schemaName)}.generic_course gc on gc.id = gcs.course_id and coalesce(gc.deleted, false) = false
+       left join ${qIdent(schemaName)}.student s on s.id = gcs.student_id and coalesce(s.deleted, false) = false
+       left join ${qIdent(schemaName)}.contract_product cp on cp.id = gcs.contract_product_id and coalesce(cp.deleted, false) = false
+       left join ${qIdent(schemaName)}.product p on p.id = cp.product_id and coalesce(p.deleted, false) = false
+      where gcs.course_id = $1 and coalesce(gcs.deleted, false) = false
+      order by coalesce(s.name, gcs.student_id)`,
+    [courseId]
+  );
+  return {
+    course_id: courseId,
+    attendance_policy: {
+      absentCharge: rule.absentCharge !== false,
+      leaveCharge: rule.leaveCharge === true,
+      deductCourseHourOnAttendance: rule.deductCourseHourOnAttendance === true
+    },
+    students: rows.map((row) => ({
+      ...row,
+      attendance_status: row.attendance_status === "PENDING" ? "PRESENT" : row.attendance_status,
+      cp_match_reason: row.contract_product_id ? "按同产品/同年级/同科目/最近收款优先自动匹配" : "未匹配到合同产品"
+    }))
+  };
 }
 
 async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>, user?: SessionUser) {
@@ -390,6 +483,7 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     return executeCommandDsl(schemaName, { operation: "command", ...businessCommand } as never, { ...params, __userId: user?.userId });
   }
   if (apiCode === "permission_config.meta") return listPermissionConfig(schemaName, String(params.roleId ?? params.id ?? ""));
+  if (apiCode === "attendance.prepare") return prepareAttendance(schemaName, params);
   if (apiCode === "dictionary.options") return listDictionaryOptions(schemaName, params.dictCode ?? asObject(params.filters).dictCode ?? asObject(params.filters).dict_code);
   if (apiCode === "dictionary_item.query") return queryDictionaryItems(schemaName, params);
   if (apiCode === "dictionary_item.create" || apiCode === "dictionary_item.update") return saveTenantDictionaryItem(schemaName, params);
