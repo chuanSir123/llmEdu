@@ -255,16 +255,18 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
    - 打印模板使用 print_template(create_print_template)，系统会自动或同时添加页面打印按钮；模板字段来自当前页面/业务对象，不要编造表字段。
    - 数据权限使用 permission_policy(modify_permission)，dataPermission 在 ${DATA_PERMISSION_ENUM_TEXT} 中选择，fieldPermission 形如 {"phone":"hidden"}。
    - 业务校验规则使用 business_rule(create_business_rule)，validations 只描述规则，不要直接修改资金/课时余额字段。
-   - 业务触发/监听使用 business_rule(create_business_event_listener)，必须配置 triggerEvent/trigger.event 和 actions；监听器只编排通知、待办、写入自定义表或调用既有安全业务动作，不要直接改财务/课时派生余额。新增业务枚举用 dictionary(create_dictionary_item)，系统字典项不可覆盖，页面字段可通过 dictCode/optionSource.dictionary 作为筛选和回显来源。
-   - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType。category 使用 business_rule_category 系统数据字典，businessType 使用 business_type 系统数据字典；如需新增分类/业务类型，先通过 dictionary(create_dictionary_item) 新增租户字典项，再在规则中引用。
+   - 新增业务枚举用 dictionary(create_dictionary_item)，系统字典项不可覆盖，页面字段可通过 dictCode/optionSource.dictionary 作为筛选和回显来源。
+   - 审批条件请优先使用统一审批设置 approval_flow，不要再用业务规则 category=approval_trigger；不清楚落地动作时也不要生成 workflow 规则。
+   - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType；需要多分类时增加 categories 数组，并让 category 等于 categories[0]。category/categories 使用 business_rule_category 系统数据字典，businessType 使用 business_type 系统数据字典；如需新增分类/业务类型，先通过 dictionary(create_dictionary_item) 新增租户字典项，再在规则中引用。
    - 排课冲突规则必须同时包含老师冲突和学员冲突：validations=[
      {field:"end_time",operator:">",valueField:"start_time",message:"结束时间必须晚于开始时间"},
      {field:"teacher_id",operator:"no_time_overlap",valueField:"teacher_course_date,start_time,end_time",message:"同一老师同一天同一时间段不能重复排课"},
      {field:"student_id",operator:"no_time_overlap",valueField:"student_course_date,start_time,end_time",message:"同一学员同一天同一时间段不能重复排课"}
    ]，并设置 preventTeacherTimeConflict/preventStudentTimeConflict/preventInvalidTimeRange=true。
-   - 资金分配规则使用 category=funds_allocation,businessType=funds，fundsAllocation 从 byCpRemainingAmount/byCpPaidRatio/oldestContractFirst/manual 选择，splitBy 通常是 contract_product，generateLogTable=money_arrange_log。
-   - 优惠分配规则使用 category=promotion_allocation,businessType=contract，promotionAllocation 从 byCpAmountRatio/byCpHourRatio/oneToOneFirst/classCourseFirst/manual 选择，签约优惠默认 snapshotPromotion=true。
-   - 业绩分配规则使用 category=performance_allocation,businessType=performance，performanceAllocation 从 byCpPaidRatio/byCpReceivableRatio/oneToOneFirst/classCourseFirst/salesOwnerOnly 选择；productPriority 从 none/oneToOneFirst/classCourseFirst/oneOnNFirst 选择；默认 organizationPerformanceOwner=contractOrganization，personalPerformanceOwner=signStaff，includeRefundDeduction=true，generateLogTable=performance_arrange_log。
+   - 同一个 businessType 可以设置多个 category；例如新增收款使用 businessType=funds_create 时，一条规则可设置 categories=["funds_allocation","promotion_allocation","performance_allocation"]，列表按业务类型聚合并用逗号展示分类，规则设置页按字典和编辑器 DSL 动态渲染，不要把展示文案或字段写死到代码。
+   - 资金分配规则使用 category=funds_allocation,businessType=funds_create，fundsAllocation 从 byCpRemainingAmount/byCpPaidRatio/oldestContractFirst/manual 选择，splitBy 通常是 contract_product，generateLogTable=money_arrange_log。
+   - 优惠分配规则可使用 category=promotion_allocation,businessType=funds_create 或 contract_create，promotionAllocation 从 byCpAmountRatio/byCpHourRatio/oneToOneFirst/classCourseFirst/manual 选择，签约优惠默认 snapshotPromotion=true，收款优惠分配默认 generateLogTable=promotion_arrange_log。
+   - 业绩分配规则可使用 category=performance_allocation,businessType=funds_create，performanceAllocation 从 byCpPaidRatio/byCpReceivableRatio/oneToOneFirst/classCourseFirst/salesOwnerOnly 选择；productPriority 从 none/oneToOneFirst/classCourseFirst/oneOnNFirst 选择；默认 organizationPerformanceOwner=contractOrganization，personalPerformanceOwner=signStaff，includeRefundDeduction=true，generateLogTable=performance_arrange_log。
 9. 优先使用增量 op（add_column 等），而非 modify 完整替换；但新页面、新功能允许用 modify 给完整 DSL。
 10. 字段名必须小写+下划线格式（如 parent_phone、home_address）
 11. sortOrder 指定插入位置：0=最前，省略=末尾

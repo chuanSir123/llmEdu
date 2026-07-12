@@ -357,18 +357,51 @@ export function GenericPageRenderer({
     void load(nextFilters, 1, nextPageSize);
   }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, dsl.presentation?.table?.pageSize]);
 
-  async function submitModal() {
+  async function submitModal(extra: Record<string, unknown> = {}) {
     if (!modal) return;
     const apiCode = "action" in modal && modal.action?.apiCode ? modal.action.apiCode : modal.type === "create" ? dsl.createApi : dsl.updateApi;
     const actionLabel = "action" in modal && modal.action?.label ? modal.action.label : modal.type === "create" ? `新增${dsl.title}` : modal.type === "edit" ? `编辑${dsl.title}` : dsl.title;
     try {
-      await GatewayClient.executeApi({
+      const hasAttendanceTable = modalFields(modal).some((field) => field.type === "attendance_table");
+      const selectedStudentIds = new Set((Array.isArray(modal.value.__selectedStudentIds) ? modal.value.__selectedStudentIds : []) as string[]);
+      if (hasAttendanceTable && (extra.__attendanceMode === "cancel_attendance" || extra.__attendanceMode === "cancel_charge") && selectedStudentIds.size === 0) {
+        toast.error("请先勾选要处理的学员");
+        return;
+      }
+      const submitValue = hasAttendanceTable ? {
+        ...modal.value,
+        students: (Array.isArray(modal.value.students) ? modal.value.students as Array<Record<string, unknown>> : [])
+          .filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)))
+          .map((student) => extra.__attendanceMode === "cancel_attendance"
+            ? { ...student, attendance_status: "PENDING", cancel_attendance: true }
+            : extra.__attendanceMode === "cancel_charge"
+              ? { ...student, reverse_charge: true }
+              : student)
+      } : modal.value;
+      const result = await GatewayClient.executeApi({
         scope,
         schemaName,
         pageCode: dsl.pageCode,
         apiCode,
-        params: { id: modal.value.id, data: modal.value }
+        params: { id: modal.value.id, data: { ...submitValue, ...extra } }
       });
+      const responseData = result.data as { failed?: Array<{ studentId?: unknown; reason?: unknown }> } | undefined;
+      if (hasAttendanceTable && responseData?.failed?.length) {
+        const failedByStudent = new Map(responseData.failed.map((item) => [String(item.studentId ?? ""), String(item.reason ?? "处理失败")]));
+        const students = Array.isArray(modal.value.students) ? modal.value.students as Array<Record<string, unknown>> : [];
+        setModal({
+          ...modal,
+          value: {
+            ...modal.value,
+            students: students.map((student) => ({
+              ...student,
+              row_error: failedByStudent.get(String(student.student_id ?? "")) ?? student.row_error
+            }))
+          }
+        });
+        toast.error("部分学员处理失败，请查看行内原因");
+        return;
+      }
       toast.success(`${actionLabel}成功`);
       setModal(null);
       await load(filters, page);
@@ -540,7 +573,16 @@ export function GenericPageRenderer({
     }
     if (action.type === "open_modal" && action.fields?.length) {
       const mapped = mappedRowValues(action, row);
-      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped }, action });
+      let prepared: Record<string, unknown> = {};
+      if (action.fields.some((field) => field.type === "attendance_table")) {
+        try {
+          const result = await GatewayClient.executeApi({ scope, schemaName, pageCode: dsl.pageCode, apiCode: "attendance.prepare", params: { ...mapped, id: row.id } });
+          prepared = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data as Record<string, unknown> : {};
+        } catch {
+          prepared = {};
+        }
+      }
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped, ...prepared }, action });
       return;
     }
     if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
@@ -1157,6 +1199,13 @@ export function GenericPageRenderer({
             onSubmit={submitModal}
             presentation={presentationWithDictionaries}
             size={"action" in modal ? modal.action?.modalSize : undefined}
+            submitLabel={"action" in modal ? modal.action?.submitLabel : undefined}
+            submitActions={modalFields(modal).some((field) => field.type === "attendance_table") ? [
+              { label: "取消考勤", value: { __attendanceMode: "cancel_attendance" }, variant: "default" },
+              { label: "取消扣费", value: { __attendanceMode: "cancel_charge" }, variant: "danger" },
+              { label: "考勤", value: { __attendanceMode: "attendance" }, variant: "default" },
+              { label: "扣费", value: { __attendanceMode: "charge" }, variant: "primary" }
+            ] : undefined}
           />
         )}
       </div>
@@ -1207,6 +1256,13 @@ export function GenericPageRenderer({
             onSubmit={submitModal}
             presentation={presentationWithDictionaries}
             size={"action" in modal ? modal.action?.modalSize : undefined}
+            submitLabel={"action" in modal ? modal.action?.submitLabel : undefined}
+            submitActions={modalFields(modal).some((field) => field.type === "attendance_table") ? [
+              { label: "取消考勤", value: { __attendanceMode: "cancel_attendance" }, variant: "default" },
+              { label: "取消扣费", value: { __attendanceMode: "cancel_charge" }, variant: "danger" },
+              { label: "考勤", value: { __attendanceMode: "attendance" }, variant: "default" },
+              { label: "扣费", value: { __attendanceMode: "charge" }, variant: "primary" }
+            ] : undefined}
           />
         )}
       </div>
@@ -1339,6 +1395,13 @@ export function GenericPageRenderer({
           onSubmit={submitModal}
           presentation={presentationWithDictionaries}
           size={"action" in modal ? modal.action?.modalSize : undefined}
+          submitLabel={"action" in modal ? modal.action?.submitLabel : undefined}
+          submitActions={modalFields(modal).some((field) => field.type === "attendance_table") ? [
+            { label: "取消考勤", value: { __attendanceMode: "cancel_attendance" }, variant: "default" },
+            { label: "取消扣费", value: { __attendanceMode: "cancel_charge" }, variant: "danger" },
+            { label: "考勤", value: { __attendanceMode: "attendance" }, variant: "default" },
+            { label: "扣费", value: { __attendanceMode: "charge" }, variant: "primary" }
+          ] : undefined}
         />
       )}
       {customizationRecordId && (
