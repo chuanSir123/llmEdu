@@ -1664,6 +1664,10 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     if (stu.reverse_charge === true) {
       const { rows: charges } = await client.query(`select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and deleted = false and coalesce(charge_status,'CONFIRMED') <> 'REVERSED'`, [courseId, studentId]);
       for (const charge of charges) await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: "考勤页取消扣费", __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
+      if (stu.cancel_attendance !== true && str(stu.attendance_status) !== "PENDING") {
+        succeeded.push({ studentId, reversedChargeCount: charges.length });
+        continue;
+      }
     }
     if (stu.cancel_attendance === true || str(stu.attendance_status) === "PENDING") {
       await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`, [courseStudent.id]);
@@ -1728,7 +1732,10 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
   }
 
   const pending = await one(client, `select count(*)::int as cnt from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false and coalesce(attendance_status,'PENDING') = 'PENDING'`, [courseId]);
-  if (num(pending?.cnt) === 0) await client.query(`update ${table(schemaName, "generic_course")} set course_status = 'FINISHED', updated_at = now() where id = $1 and course_status <> 'CANCELLED'`, [courseId]);
+  await client.query(
+    `update ${table(schemaName, "generic_course")} set course_status = $2, updated_at = now() where id = $1 and course_status <> 'CANCELLED'`,
+    [courseId, num(pending?.cnt) === 0 ? "FINISHED" : "SCHEDULED"]
+  );
   return { courseId, succeeded, failed };
 }
 
