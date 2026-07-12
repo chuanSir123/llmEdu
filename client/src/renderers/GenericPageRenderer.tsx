@@ -376,7 +376,9 @@ export function GenericPageRenderer({
             ? { ...student, attendance_status: "PENDING", cancel_attendance: true }
             : extra.__attendanceMode === "cancel_charge"
               ? { ...student, reverse_charge: true }
-              : student)
+              : (extra.__attendanceMode === "attendance" || extra.__attendanceMode === "charge") && String(student.attendance_status ?? "PRESENT") === "PENDING"
+                ? { ...student, attendance_status: "PRESENT" }
+                : student)
       } : modal.value;
       const result = await GatewayClient.executeApi({
         scope,
