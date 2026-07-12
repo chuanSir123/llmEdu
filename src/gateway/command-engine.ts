@@ -1646,6 +1646,7 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
 
   const courseHour = num(course.course_hour, 1);
   const students = Array.isArray(input.students) ? input.students as Record<string, unknown>[] : [];
+  const attendanceMode = str(input.__attendanceMode, "charge");
 
   const succeeded: Record<string, unknown>[] = [];
   const failed: Record<string, unknown>[] = [];
@@ -1660,10 +1661,27 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
       [courseId, studentId]
     );
     if (!courseStudent) { failed.push({ studentId, reason: "学员不在课程中" }); continue; }
-    if (str(courseStudent.attendance_status) === "PRESENT") { succeeded.push({ studentId, skipped: true }); continue; }
+    if (stu.reverse_charge === true) {
+      const { rows: charges } = await client.query(`select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and deleted = false and coalesce(charge_status,'CONFIRMED') <> 'REVERSED'`, [courseId, studentId]);
+      for (const charge of charges) await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: "考勤页取消扣费", __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
+    }
+    if (stu.cancel_attendance === true || str(stu.attendance_status) === "PENDING") {
+      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`, [courseStudent.id]);
+      succeeded.push({ studentId, attendanceStatus: "PENDING", canceled: true });
+      continue;
+    }
+    if (str(courseStudent.attendance_status) === "PRESENT" && stu.reverse_charge !== true) { succeeded.push({ studentId, skipped: true }); continue; }
     const targetStatus = str(stu.attendance_status ?? stu.status, "PRESENT");
     const shouldCharge = targetStatus === "PRESENT" || (targetStatus === "ABSENT" && rule.absentCharge !== false) || (targetStatus === "LEAVE" && rule.leaveCharge === true);
     if (!["PRESENT", "ABSENT", "LEAVE"].includes(targetStatus)) { failed.push({ studentId, reason: "不支持的考勤状态" }); continue; }
+    if (attendanceMode === "attendance" && rule.deductCourseHourOnAttendance !== true) {
+      await client.query(
+        `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), updated_at = now() where id = $2`,
+        [targetStatus, courseStudent.id]
+      );
+      succeeded.push({ studentId, attendanceStatus: targetStatus, chargeHour: 0, chargeAmount: 0, attendanceOnly: true });
+      continue;
+    }
     if (!shouldCharge) {
       await client.query(
         `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), updated_at = now() where id = $2`,

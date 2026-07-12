@@ -15,7 +15,9 @@ export function ModalRenderer({
   onClose,
   onSubmit,
   presentation,
-  size
+  size,
+  submitLabel,
+  submitActions
 }: {
   scope: "admin" | "tenant";
   schemaName?: string;
@@ -25,9 +27,11 @@ export function ModalRenderer({
   readonly?: boolean;
   onChange: (next: Record<string, unknown>) => void;
   onClose: () => void;
-  onSubmit?: () => void;
+  onSubmit?: (extra?: Record<string, unknown>) => void;
   presentation?: PageDsl["presentation"];
   size?: "default" | "large" | "fullscreen";
+  submitLabel?: string;
+  submitActions?: Array<{ label: string; value?: Record<string, unknown>; variant?: "primary" | "default" | "danger" }>;
 }) {
   const modalStyle = presentation?.modal?.style ?? "default";
   const visibleFields = fields.filter((field) => field.key !== "id" && !field.hidden);
@@ -108,9 +112,15 @@ export function ModalRenderer({
             <button className={`${token.button} ${token.defaultButton}`} onClick={onClose}>
               取消
             </button>
-            <button className={`${token.button} ${token.primaryButton}`} onClick={onSubmit}>
-              保存
-            </button>
+            {(submitActions?.length ? submitActions : [{ label: submitLabel ?? "保存", variant: "primary" as const }]).map((action) => (
+              <button
+                key={action.label}
+                className={`${token.button} ${action.variant === "danger" ? token.dangerButton : action.variant === "default" ? token.defaultButton : token.primaryButton}`}
+                onClick={() => onSubmit?.(action.value)}
+              >
+                {action.label}
+              </button>
+            ))}
           </div>
         )}
       </div>

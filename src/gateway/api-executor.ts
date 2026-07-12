@@ -410,12 +410,24 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
 async function prepareAttendance(schemaName: string, params: Record<string, unknown>) {
   const courseId = String(params.course_id ?? params.id ?? "");
   if (!courseId) throw Object.assign(new Error("课程 ID 不能为空"), { statusCode: 400 });
+  const ruleRows = await pool.query(
+    `select rule_json
+       from admin.business_rule
+      where rule_code = 'attendance_check_in_rule' and status = 'active' and deleted = false
+        and ((schema_scope = 'tenant' and schema_name = $1)
+          or (schema_scope = 'tenant' and schema_name = '${TEMPLATE_SCHEMA}'))
+      order by case when schema_name = $1 then 0 else 1 end
+      limit 1`,
+    [schemaName]
+  );
+  const rule = asObject(ruleRows.rows[0]?.rule_json);
   const { rows } = await pool.query(
     `select gcs.student_id, coalesce(s.name, gcs.student_id) as student_name,
             coalesce(gcs.attendance_status, 'PENDING') as attendance_status,
             gcs.contract_product_id, coalesce(p.name, cp.product_id, gcs.contract_product_id) as contract_product_name,
             coalesce(cp.remaining_real_hour, 0) as remaining_real_hour, coalesce(cp.remaining_promotion_hour, 0) as remaining_promotion_hour,
-            coalesce(gc.course_hour, 1) as charge_hour
+            coalesce(gc.course_hour, 1) as charge_hour,
+            (select count(*)::int from ${qIdent(schemaName)}.account_charge_records acr where acr.course_id = gcs.course_id and acr.student_id = gcs.student_id and coalesce(acr.deleted, false) = false and coalesce(acr.charge_status, 'CONFIRMED') <> 'REVERSED') as charged_count
        from ${qIdent(schemaName)}.generic_course_student gcs
        join ${qIdent(schemaName)}.generic_course gc on gc.id = gcs.course_id and coalesce(gc.deleted, false) = false
        left join ${qIdent(schemaName)}.student s on s.id = gcs.student_id and coalesce(s.deleted, false) = false
@@ -425,7 +437,19 @@ async function prepareAttendance(schemaName: string, params: Record<string, unkn
       order by coalesce(s.name, gcs.student_id)`,
     [courseId]
   );
-  return { course_id: courseId, students: rows.map((row) => ({ ...row, attendance_status: row.attendance_status === "PENDING" ? "PRESENT" : row.attendance_status })) };
+  return {
+    course_id: courseId,
+    attendance_policy: {
+      absentCharge: rule.absentCharge !== false,
+      leaveCharge: rule.leaveCharge === true,
+      deductCourseHourOnAttendance: rule.deductCourseHourOnAttendance === true
+    },
+    students: rows.map((row) => ({
+      ...row,
+      attendance_status: row.attendance_status === "PENDING" ? "PRESENT" : row.attendance_status,
+      cp_match_reason: row.contract_product_id ? "按同产品/同年级/同科目/最近收款优先自动匹配" : "未匹配到合同产品"
+    }))
+  };
 }
 
 async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>, user?: SessionUser) {

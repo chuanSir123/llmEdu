@@ -84,6 +84,7 @@ export type ActionDsl = {
   apiCode?: string;
   modalCode?: string;
   modalTitle?: string;
+  submitLabel?: string;
   fields?: FieldDsl[];
   defaultValues?: Record<string, unknown>;
   defaultParams?: Record<string, unknown>;

@@ -3703,7 +3703,7 @@ export const businessRules = [
       category: "attendance",
       businessType: "attendance",
       requireCheckInBeforeCharge: true,
-      deductCourseHourOnAttendance: true,
+      deductCourseHourOnAttendance: false,
       hourDeductionPriority: "promotion_first",
       autoCalculateChargeAmount: true,
       absentCharge: true,
