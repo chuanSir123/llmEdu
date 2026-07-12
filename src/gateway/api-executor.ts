@@ -407,6 +407,27 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
   return { id, ruleCode };
 }
 
+async function prepareAttendance(schemaName: string, params: Record<string, unknown>) {
+  const courseId = String(params.course_id ?? params.id ?? "");
+  if (!courseId) throw Object.assign(new Error("课程 ID 不能为空"), { statusCode: 400 });
+  const { rows } = await pool.query(
+    `select gcs.student_id, coalesce(s.name, gcs.student_id) as student_name,
+            coalesce(gcs.attendance_status, 'PENDING') as attendance_status,
+            gcs.contract_product_id, coalesce(p.name, cp.product_id, gcs.contract_product_id) as contract_product_name,
+            coalesce(cp.remaining_real_hour, 0) as remaining_real_hour, coalesce(cp.remaining_promotion_hour, 0) as remaining_promotion_hour,
+            coalesce(gc.course_hour, 1) as charge_hour
+       from ${qIdent(schemaName)}.generic_course_student gcs
+       join ${qIdent(schemaName)}.generic_course gc on gc.id = gcs.course_id and coalesce(gc.deleted, false) = false
+       left join ${qIdent(schemaName)}.student s on s.id = gcs.student_id and coalesce(s.deleted, false) = false
+       left join ${qIdent(schemaName)}.contract_product cp on cp.id = gcs.contract_product_id and coalesce(cp.deleted, false) = false
+       left join ${qIdent(schemaName)}.product p on p.id = cp.product_id and coalesce(p.deleted, false) = false
+      where gcs.course_id = $1 and coalesce(gcs.deleted, false) = false
+      order by coalesce(s.name, gcs.student_id)`,
+    [courseId]
+  );
+  return { course_id: courseId, students: rows.map((row) => ({ ...row, attendance_status: row.attendance_status === "PENDING" ? "PRESENT" : row.attendance_status })) };
+}
+
 async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, apiCode: string, params: Record<string, unknown>, user?: SessionUser) {
   params = await normalizeDictionaryInputValues(schemaName, params, Object.keys(params));
   if (params.data && typeof params.data === "object" && !Array.isArray(params.data)) {
@@ -438,6 +459,7 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     return executeCommandDsl(schemaName, { operation: "command", ...businessCommand } as never, { ...params, __userId: user?.userId });
   }
   if (apiCode === "permission_config.meta") return listPermissionConfig(schemaName, String(params.roleId ?? params.id ?? ""));
+  if (apiCode === "attendance.prepare") return prepareAttendance(schemaName, params);
   if (apiCode === "dictionary.options") return listDictionaryOptions(schemaName, params.dictCode ?? asObject(params.filters).dictCode ?? asObject(params.filters).dict_code);
   if (apiCode === "dictionary_item.query") return queryDictionaryItems(schemaName, params);
   if (apiCode === "dictionary_item.create" || apiCode === "dictionary_item.update") return saveTenantDictionaryItem(schemaName, params);

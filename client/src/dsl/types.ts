@@ -32,6 +32,7 @@ export type FieldDsl = {
   computeExpr?: string;
   required?: boolean;
   validation?: Record<string, unknown>;
+  visibleWhen?: Record<string, unknown>;
   options?: Array<{ label: string; value: string }>;
   defaultFutureOnly?: boolean;
   field?: string;
