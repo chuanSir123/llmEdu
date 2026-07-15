@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ActionDsl, FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
 import { dictionaryLabelFor } from "../dsl/dictionaryLabels";
 import { isDangerAction } from "../dsl/actionVariant";
+import { evaluateWhen } from "../dsl/conditions";
 
 type Presentation = NonNullable<PageDsl["presentation"]>;
 type BadgeTone = "green" | "blue" | "amber" | "red" | "gray";
@@ -27,28 +28,20 @@ function formatValue(value: unknown, type?: string, key?: string): string {
   if (type === "date") return String(value).slice(0, 10);
   if ((type === "number" || /amount|price|balance/i.test(key ?? "")) && Number.isFinite(Number(value))) return Number(value).toFixed(2);
   if (Array.isArray(value)) return value.map((item) => formatValue(item)).filter((item) => item !== "-").join(", ");
-  if (typeof value === "object") return typeof value === "string" ? value : JSON.stringify(value);
+  if (typeof value === "object") { try { return JSON.stringify(value); } catch { return String(value); } }
   return String(value);
 }
 
-function visibleWhenValue(value: unknown) {
-  if (value && typeof value === "object" && !Array.isArray(value) && "itemValue" in value) return String((value as Record<string, unknown>).itemValue ?? "");
-  return String(value ?? "");
+function isVisibleAction(action: ActionDsl, row: Record<string, unknown>): boolean {
+  return evaluateWhen(action.visibleWhen, row);
 }
 
-function isVisibleAction(action: ActionDsl, row: Record<string, unknown>): boolean {
-  if (!action.visibleWhen) return true;
-  if (action.visibleWhen.always === false) return false;
-  for (const [key, val] of Object.entries(action.visibleWhen)) {
-    if (key === "always" || key === "permission") continue;
-    const rowValue = String(row[key] ?? "");
-    if (Array.isArray(val)) {
-      if (!val.map(visibleWhenValue).includes(rowValue)) return false;
-      continue;
-    }
-    if (rowValue !== visibleWhenValue(val)) return false;
-  }
-  return true;
+function isEnabledAction(action: ActionDsl, row: Record<string, unknown>): boolean {
+  return evaluateWhen(action.enabledWhen, row);
+}
+
+function isNumericColumn(column: FieldDsl) {
+  return column.type === "number" || /(_amount|amount|hour|qty|count|total|price|balance)$/i.test(column.key);
 }
 
 function alignClass(align?: string) {
@@ -98,15 +91,25 @@ export function GenericTableRenderer({
 }) {
   const sortedColumns = sortWithOrder(columns);
   const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
+  const openMenuRef = useRef<HTMLSpanElement | null>(null);
   const stickyHeader = presentation?.table?.stickyHeader ?? true;
   const density = presentation?.table?.rowDensity ?? presentation?.density ?? "compact";
   const tdDensity = density === "compact" ? "py-1.5" : "py-2.5";
   const hasActions = rowActions.length > 0;
   const actionStyle = presentation?.table?.rowActionStyle ?? "button";
   const primaryRowActions = new Set(presentation?.table?.primaryRowActions ?? []);
-  const numericColumns = sortedColumns.filter((column) => column.type === "number" || /(_amount|amount|hour|qty|count|total|price|balance)$/i.test(column.key));
+  // 数值列未显式配置 align 时默认右对齐（表头/单元格/合计行一致）
+  const columnAlign = (column: FieldDsl) => column.align ?? (isNumericColumn(column) ? "right" : undefined);
+  const numericColumns = sortedColumns.filter(isNumericColumn);
   const hasSummary = rows.length > 0 && numericColumns.length > 0;
-  const summaryValue = (key: string) => rows.reduce((sum, row) => sum + Number(row[key] ?? 0), 0);
+  const cellNumericValue = (row: Record<string, unknown>, key: string) => {
+    const raw = row[key];
+    if (raw === null || raw === undefined || raw === "") return undefined;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+  const columnHasNumeric = (key: string) => rows.some((row) => cellNumericValue(row, key) !== undefined);
+  const summaryValue = (key: string) => rows.reduce((sum, row) => sum + (cellNumericValue(row, key) ?? 0), 0);
   const rowIds = rows.map((row) => String(row.id));
   const selectedSet = new Set(selectedRowIds);
   const allPageSelected = rowIds.length > 0 && rowIds.every((id) => selectedSet.has(id));
@@ -122,6 +125,15 @@ export function GenericTableRenderer({
     onSelectionChange?.([...next]);
   };
 
+  useEffect(() => {
+    if (!openMenuRowId) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (openMenuRef.current && !openMenuRef.current.contains(event.target as Node)) setOpenMenuRowId(null);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [openMenuRowId]);
+
   return (
     <div className="h-full overflow-auto bg-white">
       <table className="min-w-full border-collapse">
@@ -135,7 +147,7 @@ export function GenericTableRenderer({
             {sortedColumns.map((column) => (
               <th
                 key={column.key}
-                className={`${token.th} ${alignClass(column.align)} whitespace-nowrap`}
+                className={`${token.th} ${alignClass(columnAlign(column))} whitespace-nowrap`}
                 style={{ minWidth: column.width ? `${column.width}px` : 132 }}
               >
                 {column.title ?? column.label ?? column.key}
@@ -155,7 +167,7 @@ export function GenericTableRenderer({
               {sortedColumns.map((column) => (
                 <td
                   key={column.key}
-                  className={`${token.td} ${tdDensity} ${alignClass(column.align)} max-w-[300px] truncate`}
+                  className={`${token.td} ${tdDensity} ${alignClass(columnAlign(column))} max-w-[300px] truncate`}
                   title={String(renderPlainCellTitle(column, row, presentation))}
                 >
                   {renderCell(column, row, presentation)}
@@ -174,19 +186,26 @@ export function GenericTableRenderer({
                         const rowId = String(row.id);
                         return (
                           <>
-                            {visibleActions.map((action) => (
-                              <button
-                                key={action.actionCode}
-                                className={`whitespace-nowrap ${
-                                  isDangerAction(action) ? "text-[#ff4d64] hover:text-[#e63d52]" : "text-[#2f80ed] hover:text-[#1765d8]"
-                                }`}
-                                onClick={() => onAction(action, row)}
-                              >
-                                {action.label}
-                              </button>
-                            ))}
+                            {visibleActions.map((action) => {
+                              const enabled = isEnabledAction(action, row);
+                              return (
+                                <button
+                                  key={action.actionCode}
+                                  className={`whitespace-nowrap ${
+                                    !enabled
+                                      ? "cursor-not-allowed text-[#b9c2d0]"
+                                      : isDangerAction(action) ? "text-[#ff4d64] hover:text-[#e63d52]" : "text-[#2f80ed] hover:text-[#1765d8]"
+                                  }`}
+                                  disabled={!enabled}
+                                  title={!enabled ? "当前条件下不可操作" : undefined}
+                                  onClick={() => onAction(action, row)}
+                                >
+                                  {action.label}
+                                </button>
+                              );
+                            })}
                             {moreActions.length > 0 && (
-                              <span className="relative">
+                              <span className="relative" ref={(el) => { if (openMenuRowId === rowId) openMenuRef.current = el; }}>
                                 <button
                                   className="whitespace-nowrap text-[#2f80ed] hover:text-[#1765d8]"
                                   onClick={() => setOpenMenuRowId((current) => (current === rowId ? null : rowId))}
@@ -195,20 +214,27 @@ export function GenericTableRenderer({
                                 </button>
                                 {openMenuRowId === rowId && (
                                   <div className="absolute right-0 top-6 z-20 min-w-[92px] border border-[#dde3ee] bg-white py-1 shadow-[0_8px_20px_rgba(24,36,56,0.12)]">
-                                    {moreActions.map((action) => (
-                                      <button
-                                        key={action.actionCode}
-                                        className={`block h-8 w-full whitespace-nowrap px-3 text-left text-[13px] ${
-                                          isDangerAction(action) ? "text-[#ff4d64] hover:bg-[#fff1f3]" : "text-[#2f80ed] hover:bg-[#f2f7ff]"
-                                        }`}
-                                        onClick={() => {
-                                          setOpenMenuRowId(null);
-                                          onAction(action, row);
-                                        }}
-                                      >
-                                        {action.label}
-                                      </button>
-                                    ))}
+                                    {moreActions.map((action) => {
+                                      const enabled = isEnabledAction(action, row);
+                                      return (
+                                        <button
+                                          key={action.actionCode}
+                                          className={`block h-8 w-full whitespace-nowrap px-3 text-left text-[13px] ${
+                                            !enabled
+                                              ? "cursor-not-allowed text-[#b9c2d0]"
+                                              : isDangerAction(action) ? "text-[#ff4d64] hover:bg-[#fff1f3]" : "text-[#2f80ed] hover:bg-[#f2f7ff]"
+                                          }`}
+                                          disabled={!enabled}
+                                          title={!enabled ? "当前条件下不可操作" : undefined}
+                                          onClick={() => {
+                                            setOpenMenuRowId(null);
+                                            onAction(action, row);
+                                          }}
+                                        >
+                                          {action.label}
+                                        </button>
+                                      );
+                                    })}
                                   </div>
                                 )}
                               </span>
@@ -219,15 +245,20 @@ export function GenericTableRenderer({
                     </div>
                   ) : (
                     <div className="flex flex-nowrap items-center justify-center gap-1.5">
-                      {rowActions.filter((action) => isVisibleAction(action, row)).map((action) => (
-                        <button
-                          key={action.actionCode}
-                          className={`${token.button} ${isDangerAction(action) ? token.dangerButton : token.defaultButton} h-7 px-2.5`}
-                          onClick={() => onAction(action, row)}
-                        >
-                          {action.label}
-                        </button>
-                      ))}
+                      {rowActions.filter((action) => isVisibleAction(action, row)).map((action) => {
+                        const enabled = isEnabledAction(action, row);
+                        return (
+                          <button
+                            key={action.actionCode}
+                            className={`${token.button} ${isDangerAction(action) ? token.dangerButton : token.defaultButton} h-7 px-2.5 ${!enabled ? "cursor-not-allowed opacity-50" : ""}`}
+                            disabled={!enabled}
+                            title={!enabled ? "当前条件下不可操作" : undefined}
+                            onClick={() => onAction(action, row)}
+                          >
+                            {action.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </td>
@@ -245,8 +276,12 @@ export function GenericTableRenderer({
             <tr className="sticky bottom-0 z-10 border-t border-[#d9e3ed] bg-white font-semibold text-[#172033] shadow-[0_-1px_0_#e5e8ef]">
               {selectable && <td className={`${token.td} ${tdDensity}`} />}
               {sortedColumns.map((column, index) => (
-                <td key={column.key} className={`${token.td} ${tdDensity} ${alignClass(column.align)} whitespace-nowrap`}>
-                  {index === 0 ? "合计" : numericColumns.some((item) => item.key === column.key) ? summaryValue(column.key).toFixed(2) : ""}
+                <td key={column.key} className={`${token.td} ${tdDensity} ${alignClass(columnAlign(column))} whitespace-nowrap`}>
+                  {index === 0
+                    ? "本页合计"
+                    : numericColumns.some((item) => item.key === column.key) && columnHasNumeric(column.key)
+                      ? summaryValue(column.key).toFixed(2)
+                      : ""}
                 </td>
               ))}
               {hasActions && <td className={`${token.td} ${tdDensity}`} />}

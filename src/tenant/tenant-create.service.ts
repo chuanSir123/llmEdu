@@ -52,11 +52,19 @@ async function loadSelectedCatalog(client: import("pg").PoolClient, selectedModu
        and (feature_code = any($1::text[]) or module_code = any($2::text[]))`,
     [selectedFeatures, selectedModules]
   );
-  const features = featureRows.map((row) => ({
-    moduleCode: String(row.module_code),
-    featureCode: String(row.feature_code),
-    pageCode: String(row.page_code),
-  }));
+  // 模块下有明确勾选的功能时，只订阅勾选的功能；模块整选（未勾选任何该模块功能）才订阅全模块功能
+  const explicitModules = new Set(
+    featureRows
+      .filter((row) => selectedFeatures.includes(String(row.feature_code)))
+      .map((row) => String(row.module_code))
+  );
+  const features = featureRows
+    .filter((row) => selectedFeatures.includes(String(row.feature_code)) || !explicitModules.has(String(row.module_code)))
+    .map((row) => ({
+      moduleCode: String(row.module_code),
+      featureCode: String(row.feature_code),
+      pageCode: String(row.page_code),
+    }));
   const modules = unique([...selectedModules, ...features.map((feature) => feature.moduleCode)]);
   return { modules, features };
 }

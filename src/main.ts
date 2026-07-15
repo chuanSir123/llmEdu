@@ -16,7 +16,7 @@ import { loadAdminMenu, loadTenantMenu } from "./gateway/menu.service.js";
 import { loadPageFullDsl } from "./gateway/page.service.js";
 import { executeGatewayApi } from "./gateway/api-executor.js";
 import { executeAction } from "./gateway/action-executor.js";
-import { canAccessPage, listManagementOrganizations } from "./permission/permission.service.js";
+import { canAccessPage, canExecuteApiOnPage, listManagementOrganizations } from "./permission/permission.service.js";
 import { publishVersion, publishVersionAndSyncSkillMd, rollbackVersion, rejectVersion, initializeTenantVersion, listTenantVersions, tenantRollbackVersion } from "./version/version.service.js";
 import { tenantAgentChat, tenantAgentPreview, tenantAgentPublish, tenantAgentReject, listTenantDrafts, getActiveChatSession } from "./tenant/tenant-agent.service.js";
 import { tenantAssistantChat } from "./tenant/tenant-assistant.service.js";
@@ -33,6 +33,13 @@ import { bindWechatOpenid, completeWechatAuthorization, completeWechatOauth, cla
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
+
+// 变更类接口判定：最后一段以写操作动词开头（create/update/delete/…）。AI 定制版本接口有独立流程，不在此列
+function isMutationApiCode(apiCode: string) {
+  if (apiCode.startsWith("dsl_version.")) return false;
+  const lastSegment = apiCode.split(".").pop() ?? "";
+  return /^(create|update|delete|save|reverse|refund|cancel|checkin|approve|reject|apply|transfer|assign|claim|recycle|grant|import|publish)/i.test(lastSegment);
+}
 
 async function audit(input: {
   schemaName?: string;
@@ -328,6 +335,11 @@ export async function buildServer() {
       const isDictionaryOptionLookup = body.apiCode === "dictionary.options" && body.pageCode === "__dictionary__";
       if (body.scope === "tenant" && body.pageCode && !isDictionaryOptionLookup && !(await canAccessPage(user, schema, body.pageCode))) {
         throw httpError(403, "无接口权限");
+      }
+      // 变更类接口在页面权限之外再做按钮级权限校验（与 AI 助手 canExecuteApiOnPage 同口径）；未配置按钮资源的角色默认放行
+      if (body.scope === "tenant" && body.pageCode && !isDictionaryOptionLookup && isMutationApiCode(body.apiCode)
+        && !(await canExecuteApiOnPage(user, schema, body.pageCode, body.apiCode))) {
+        throw httpError(403, "无该操作的按钮权限");
       }
       const data = await executeGatewayApi(body.scope, schema, body.apiCode, body.params, user);
       await audit({ schemaName: schema, userId: user?.userId, pageCode: body.pageCode, apiCode: body.apiCode, inputSummary: body.params, outputSummary: { ok: true }, costMs: Date.now() - started });

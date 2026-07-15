@@ -7,7 +7,7 @@ import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 type ActionDslRow = {
   actionCode: string;
   actionName: string;
-  actionType: "open_page" | "execute_api" | "open_modal" | "dropdown" | "input" | "display" | "tab" | "export" | "import";
+  actionType: "open_page" | "execute_api" | "open_modal" | "dropdown" | "input" | "display" | "tab" | "export" | "import" | "open_ai_customization";
   modalCode?: string;
   apiCode?: string;
   afterSuccess?: Array<{ type: "toast" | "redirect" | "refreshPage"; message?: string; to?: string }>;

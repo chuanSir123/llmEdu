@@ -329,6 +329,13 @@ async function seedAdmin() {
     });
   }
 
+  await pool.query(
+    `update admin.feature_registry set deleted = true, status = 'INACTIVE', updated_at = now() where feature_code = 'tenant_customization_record' and deleted = false`
+  );
+  await pool.query(
+    `update admin.page_dsl set deleted = true, status = 'archived', updated_at = now() where page_code = 'tenant_customization_record' and deleted = false`
+  );
+
   for (const [module_code] of modules) {
     await upsert("admin.tenant_module_subscription", "id", {
       id: id("sub_demo_school", module_code),

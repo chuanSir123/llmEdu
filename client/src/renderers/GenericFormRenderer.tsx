@@ -5,18 +5,14 @@ import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
 import { dictionaryDisplayFor, dictionaryOptionEntries } from "../dsl/dictionaryLabels";
 import { effectiveOptionSource } from "../dsl/dictionarySource";
+import { evaluateWhen } from "../dsl/conditions";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
 import { BusinessRuleEditor } from "./BusinessRuleEditor";
 import { JsonTextarea } from "./JsonTextarea";
 import { PermissionEditor } from "./PermissionEditor";
 
 function fieldVisible(field: FieldDsl, value: Record<string, unknown>) {
-  const visibleWhen = field.visibleWhen;
-  if (!visibleWhen) return true;
-  return Object.entries(visibleWhen).every(([key, expected]) => {
-    const actual = value[key];
-    return Array.isArray(expected) ? expected.map(String).includes(String(actual ?? "")) : String(actual ?? "") === String(expected ?? "");
-  });
+  return evaluateWhen(field.visibleWhen, value);
 }
 
 export function GenericFormRenderer({
@@ -42,6 +38,7 @@ export function GenericFormRenderer({
   const [searchText, setSearchText] = useState<Record<string, string>>({});
   const [openField, setOpenField] = useState<string | null>(null);
   const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const lastRemoteSearchRef = useRef<Record<string, string>>({});
   const gridClass = columns === 3 ? "md:grid-cols-3" : "md:grid-cols-2";
   const today = new Date().toISOString().slice(0, 10);
   const asStringArray = (raw: unknown) => Array.isArray(raw) ? raw.map((item) => String(item)).filter(Boolean) : String(raw ?? "").split(",").map((item) => item.trim()).filter(Boolean);
@@ -101,6 +98,49 @@ export function GenericFormRenderer({
       cancelled = true;
     };
   }, [scope, schemaName, JSON.stringify(fields.map((field) => effectiveOptionSource(field) ?? null))]);
+
+  // 下拉远程搜索：输入 debounce 300ms 后带 label 过滤参数重查选项接口；
+  // 目标接口未声明该过滤器时结果不变（保留前端过滤兜底），已选中值对应的选项保留在列表里不消失。
+  useEffect(() => {
+    if (!openField) return;
+    const field = fields.find((item) => item.key === openField);
+    const source = field ? effectiveOptionSource(field) : undefined;
+    if (!field || !source) return;
+    const query = String(searchText[openField] ?? "").trim();
+    if ((lastRemoteSearchRef.current[field.key] ?? "") === query) return;
+    const timer = window.setTimeout(() => {
+      lastRemoteSearchRef.current[field.key] = query;
+      const valueField = source.valueField ?? "id";
+      const labelField = source.labelField ?? "name";
+      GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: source.pageCode,
+        apiCode: source.apiCode,
+        params: { filters: { ...(source.filters ?? {}), ...(query ? { [labelField]: query } : {}) }, page: 1, pageSize: source.pageSize ?? 100 }
+      })
+        .then((result) => {
+          const data = result.data as { rows: Record<string, unknown>[] };
+          const fetched = (data.rows ?? []).map((row) => ({
+            value: String(row[valueField] ?? ""),
+            label: String(row[labelField] ?? row[valueField] ?? ""),
+            row
+          }));
+          setRemoteOptions((current) => {
+            const previous = current[field.key] ?? [];
+            const selectedValues = normalizeSelectedValues(value[field.key]);
+            const kept = previous.filter((option) =>
+              selectedValues.some((item) => optionMatchesRaw(option, item)) && !fetched.some((item) => item.value === option.value)
+            );
+            return { ...current, [field.key]: [...kept, ...fetched] };
+          });
+        })
+        .catch(() => {
+          // 远程搜索失败时保留现有选项，走前端过滤兜底
+        });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [openField, openField ? searchText[openField] ?? "" : ""]);
 
   const applySelectValue = (field: FieldDsl, selectedValue: string | string[]) => {
     const next: Record<string, unknown> = { ...value, [field.key]: selectedValue };
@@ -192,6 +232,15 @@ export function GenericFormRenderer({
   const parseInputValue = (field: FieldDsl, raw: string) => {
     if (field.type === "number") return raw === "" ? "" : Number(raw);
     return raw;
+  };
+
+  // 金额/课时/单价类数字字段默认 min=0；DSL 显式配置 validation.min/max 时优先
+  const numberBounds = (field: FieldDsl): { min?: number; max?: number } => {
+    if (field.type !== "number") return {};
+    const validation = (field.validation ?? {}) as Record<string, unknown>;
+    const min = typeof validation.min === "number" ? validation.min : /(amount|hour|price)/i.test(field.key) ? 0 : undefined;
+    const max = typeof validation.max === "number" ? validation.max : undefined;
+    return { min, max };
   };
 
   const selectedLabel = (field: FieldDsl, options?: Record<string, string>) => {
@@ -295,7 +344,10 @@ export function GenericFormRenderer({
         const isReadonly = field.computed && !field.editable;
         return (
           <label key={field.key} className={`${labelClass} ${spanClass(field)}`}>
-            <span className="text-sm text-[#5f6b7a]">{field.label ?? field.title ?? field.key}</span>
+            <span className="text-sm text-[#5f6b7a]">
+              {field.required && <span className="mr-0.5 text-[#d92d20]">*</span>}
+              {field.label ?? field.title ?? field.key}
+            </span>
             {field.type === "textarea" ? (
               <textarea
                 className={`${token.input} min-h-[96px] w-full min-w-0 resize-y py-2 leading-5`}
@@ -399,10 +451,11 @@ export function GenericFormRenderer({
                                 <td className="px-2 py-3"><span className={`inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs ${statusClass}`}>{statusLabel}</span></td>
                                 <td className="px-2 py-3"><div className={`${token.input} truncate leading-8`} title={String(item.contract_product_name ?? item.contract_product_id ?? "")}>{String(item.contract_product_name ?? item.contract_product_id ?? "")}</div></td>
                                 <td className="px-2 py-3 whitespace-nowrap"><div>{String(item.remaining_real_hour ?? 0)}(赠:{String(item.remaining_promotion_hour ?? 0)})</div>{item.row_error ? <div className="text-xs text-[#d92d20] whitespace-normal">{String(item.row_error)}</div> : null}</td>
-                                <td className="px-2 py-3"><input className={`${token.input} !min-w-0 !w-16`} type="number" value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Number(event.target.value || 0) })} /></td>
+                                <td className="px-2 py-3"><input className={`${token.input} !min-w-0 !w-16`} type="number" min={0} value={String(item.charge_hour ?? 1)} onChange={(event) => update({ charge_hour: Math.max(0, Number(event.target.value || 0)) })} /></td>
                                 <td className="px-2 py-3 whitespace-nowrap">
                                   <label className="mr-2"><input type="radio" checked={currentStatus === "PRESENT" || currentStatus === "PENDING"} onChange={() => update({ attendance_status: "PRESENT" })} /> 出勤</label>
-                                  <label><input type="radio" checked={currentStatus === "ABSENT"} onChange={() => update({ attendance_status: "ABSENT" })} /> 缺勤</label>
+                                  <label className="mr-2"><input type="radio" checked={currentStatus === "ABSENT"} onChange={() => update({ attendance_status: "ABSENT" })} /> 缺勤</label>
+                                  <label><input type="radio" checked={currentStatus === "LEAVE"} onChange={() => update({ attendance_status: "LEAVE" })} /> 请假</label>
                                 </td>
                                 <td className="px-2 py-3"><input className={`${token.input} !min-w-0 !w-28`} value={String(item.remark ?? "")} onChange={(event) => update({ remark: event.target.value })} /></td>
                               </tr>
@@ -452,7 +505,17 @@ export function GenericFormRenderer({
                 value={isReadonly ? dictionaryDisplayFor(field.key, value[field.key], presentation?.valueLabels) : formatInputValue(field, value[field.key])}
                 placeholder={field.placeholder}
                 readOnly={isReadonly}
-                onChange={(event) => onChange({ ...value, [field.key]: parseInputValue(field, event.target.value) })}
+                min={numberBounds(field).min}
+                max={numberBounds(field).max}
+                onChange={(event) => {
+                  let parsed = parseInputValue(field, event.target.value);
+                  const { min, max } = numberBounds(field);
+                  if (typeof parsed === "number") {
+                    if (min !== undefined && parsed < min) parsed = min;
+                    if (max !== undefined && parsed > max) parsed = max;
+                  }
+                  onChange({ ...value, [field.key]: parsed });
+                }}
               />
             )}
           </label>

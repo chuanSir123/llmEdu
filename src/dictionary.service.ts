@@ -31,7 +31,8 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   subject: { CHINESE: { label: "语文" }, MATH: { label: "数学" }, ENGLISH: { label: "英语" }, PHYSICS: { label: "物理" }, CHEMISTRY: { label: "化学" }, BIOLOGY: { label: "生物" }, HISTORY: { label: "历史" }, GEOGRAPHY: { label: "地理" }, POLITICS: { label: "政治" }, SCIENCE: { label: "科学" }, ART: { label: "美术" }, MUSIC: { label: "音乐" }, SPORTS: { label: "体育" }, OTHER: { label: "其他" } },
   gender: { MALE: { label: "男" }, FEMALE: { label: "女" }, UNKNOWN: { label: "未知" } },
   organization_type: { HEAD: { label: "总部" }, BRANCH: { label: "校区" }, DEPARTMENT: { label: "部门" }, TENANT: { label: "机构" }, CAMPUS: { label: "校区" }, COMPANY: { label: "分公司" }, CUSTOM: { label: "自定义架构" } },
-  contract_type: { NEW_SIGN: { label: "新签" }, RENEWAL: { label: "续费" }, REFERRAL: { label: "引流" } },
+  // 合同类型实际会兜底取产品类型（createContract 默认 product_type），故同时收录课程形态值，保证导入映射与列表显示
+  contract_type: { NEW_SIGN: { label: "新签" }, RENEWAL: { label: "续费" }, REFERRAL: { label: "引流" }, ONE_ON_ONE_COURSE: { label: "一对一" }, SMALL_CLASS: { label: "小班" }, ONE_ON_N_GROUP: { label: "一对N" } },
   course_type: { ONE_ON_ONE_COURSE: { label: "一对一" }, SMALL_CLASS: { label: "小班" }, ONE_ON_N_GROUP: { label: "一对N" } },
   product_type: { ONE_ON_ONE_COURSE: { label: "一对一" }, SMALL_CLASS: { label: "小班" }, ONE_ON_N_GROUP: { label: "一对N" } },
   funds_type: { CONTRACT_PAY: { label: "合同收款" }, PRE_STORE: { label: "预存" } },

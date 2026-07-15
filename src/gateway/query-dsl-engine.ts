@@ -312,11 +312,14 @@ function appendDynamicFilters(where: string[], values: unknown[], filterDsl: Fil
     const expr = fieldExpr(field, tableColumns);
     const op = filter.op ?? (filter.type === "date_range" || filter.type === "daterange" ? "between" : filter.type === "text" ? "ilike" : "eq");
     if ((filter.type === "date_range" || filter.type === "daterange") && op === "between") {
+      // 兼容跨页跳转传入的标量日期：视为单日区间
       const range = Array.isArray(value)
         ? value
         : value && typeof value === "object"
           ? [(value as Record<string, unknown>).start, (value as Record<string, unknown>).end]
-          : [];
+          : typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)
+            ? [value.slice(0, 10), value.slice(0, 10)]
+            : [];
       const [start, end] = range;
       if (!isEmptyFilterValue(start)) {
         values.push(start);
@@ -367,7 +370,7 @@ function appendDataPermissionScope(where: string[], values: unknown[], tableColu
   values.push(...scope.params);
 }
 
-async function executeAggregateQuery(schemaName: string, dsl: ApiDsl, params: Record<string, unknown>, user: SessionUser | undefined, table: string, tableColumns: Set<string>) {
+async function executeAggregateQuery(effectiveSchema: string, dsl: ApiDsl, params: Record<string, unknown>, user: SessionUser | undefined, table: string, tableColumns: Set<string>, authorizedSchema?: string) {
   const dimensions = [...new Set([...(dsl.groupBy ?? []), ...(dsl.dimensions ?? [])])].filter(Boolean);
   const metrics = dsl.metrics ?? [];
   if (!dimensions.length && !metrics.length) return undefined;
@@ -375,7 +378,8 @@ async function executeAggregateQuery(schemaName: string, dsl: ApiDsl, params: Re
   const values: unknown[] = [];
   const where = dsl.softDelete === false ? [] : ["t.deleted = false"];
   for (const fixed of dsl.fixedFilters ?? []) {
-    const val = fixed.valueFromParam ? params[fixed.valueFromParam] : fixed.value;
+    let val = fixed.valueFromParam ? params[fixed.valueFromParam] : fixed.value;
+    if (fixed.valueFromParam === "schemaName" && effectiveSchema !== authorizedSchema && authorizedSchema) val = authorizedSchema;
     if (val === undefined || val === null) continue;
     values.push(val);
     const op = fixed.op === "ne" ? "<>" : "=";
@@ -387,7 +391,7 @@ async function executeAggregateQuery(schemaName: string, dsl: ApiDsl, params: Re
     where.push(...fragments);
   }
   if (dsl.security?.dataPermission && user) {
-    const scope = await getOrganizationScope(user, schemaName);
+    const scope = await getOrganizationScope(user, authorizedSchema ?? effectiveSchema);
     appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
   }
 
@@ -405,7 +409,7 @@ async function executeAggregateQuery(schemaName: string, dsl: ApiDsl, params: Re
   const primarySort = sortItems(dsl)[0] ?? (metrics[0] ? { field: String(metrics[0].as ?? metrics[0].field ?? ""), direction: "desc" as const } : undefined);
   const rankOrderExpr = aggregateOrderExpr(primarySort, dimensions, metrics, tableColumns);
   const rankSelect = dsl.rank && rankOrderExpr ? [`row_number() over(order by ${rankOrderExpr}) as rank`] : [];
-  const displaySelects = await foreignKeyDisplayColumns(schemaName, tableColumns, new Set(dimensions), selectedAliases);
+  const displaySelects = await foreignKeyDisplayColumns(effectiveSchema, tableColumns, new Set(dimensions), selectedAliases);
   const selectList = [...rankSelect, ...dimensionSelects, ...displaySelects, ...metricSelects];
   if (!selectList.length) selectList.push("count(*) as count");
 
@@ -420,7 +424,7 @@ async function executeAggregateQuery(schemaName: string, dsl: ApiDsl, params: Re
   const sql = `
     select ${selectList.join(", ")}, count(*) over() as __total
     from ${table} t
-    ${joinSql(schemaName, dsl.joins, dsl.softDelete !== false)}
+    ${joinSql(effectiveSchema, dsl.joins, dsl.softDelete !== false)}
     ${whereClause}
     ${groupClause}
     ${orderClause}
@@ -518,13 +522,14 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
   const table = tableExpr(effectiveSchema, dsl.table);
   const tableColumns = await getTableColumns(effectiveSchema, dsl.table);
   if (dsl.operation === "query") {
-    const aggregateResult = await executeAggregateQuery(effectiveSchema, dsl, params, user, table, tableColumns);
+    const aggregateResult = await executeAggregateQuery(effectiveSchema, dsl, params, user, table, tableColumns, schemaName);
     if (aggregateResult) return aggregateResult;
 
     const values: unknown[] = [];
     const where = dsl.softDelete === false ? [] : ["t.deleted = false"];
     for (const fixed of dsl.fixedFilters ?? []) {
-      const val = fixed.valueFromParam ? params[fixed.valueFromParam] : fixed.value;
+      let val = fixed.valueFromParam ? params[fixed.valueFromParam] : fixed.value;
+      if (fixed.valueFromParam === "schemaName" && effectiveSchema !== schemaName) val = schemaName;
       if (val === undefined || val === null) continue;
       const op = fixed.op === "ne" ? "<>" : "=";
       appendEqFilter(where, values, fieldExpr(fixed.field, tableColumns), fixed.field, val, op);

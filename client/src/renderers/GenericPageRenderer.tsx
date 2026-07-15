@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { GatewayClient } from "../api/GatewayClient";
-import type { ActionDsl, PageDsl, PageTargetDsl } from "../dsl/types";
+import type { ActionDsl, ActionResult, AfterSuccessDsl, FieldDsl, ModalDsl as ModalActionDsl, PageDsl, PageTargetDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
+import { evaluateWhen } from "../dsl/conditions";
+import { isDangerAction } from "../dsl/actionVariant";
+import { dictionaryLabelFor } from "../dsl/dictionaryLabels";
 import { useToast } from "../context/ToastContext";
 import { token } from "../styles/designTokens";
 import { ActionRenderer } from "./ActionRenderer";
@@ -66,7 +69,8 @@ export function GenericPageRenderer({
   refreshKey,
   onOpenPage,
   onOpenAiCustomization,
-  onContinueAiCustomization
+  onContinueAiCustomization,
+  onDataChanged
 }: {
   scope: "admin" | "tenant";
   schemaName?: string;
@@ -76,6 +80,8 @@ export function GenericPageRenderer({
   onOpenPage?: (pageCode: string, title: string, initialFilters?: Record<string, unknown>) => void;
   onOpenAiCustomization?: () => void;
   onContinueAiCustomization?: (sessionId?: string) => void;
+  /** 变更类操作成功后回调，LayoutRenderer 借此联动刷新其它已打开 tab */
+  onDataChanged?: () => void;
 }) {
   const filtersDsl = dsl.filters ?? [];
   const toolbarDsl = dsl.toolbar ?? [];
@@ -86,11 +92,16 @@ export function GenericPageRenderer({
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const configuredPageSize = Number(dsl.presentation?.table?.pageSize ?? 10);
+  // 日历布局默认用大 pageSize，避免整周课表被分页截断
+  const isCalendarLayout = dsl.layout === "calendar" || dsl.presentation?.type === "calendar";
+  const configuredPageSize = Number(dsl.presentation?.table?.pageSize ?? (isCalendarLayout ? 500 : 10));
   const [pageSize, setPageSize] = useState(configuredPageSize);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modal, setModal] = useState<ModalState>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const actionInFlightRef = useRef(false);
+  const modalDslCacheRef = useRef<Record<string, ModalActionDsl>>({});
   const [customizationRecordId, setCustomizationRecordId] = useState("");
   const [importConfig, setImportConfig] = useState<Record<string, unknown> | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
@@ -296,7 +307,12 @@ export function GenericPageRenderer({
       if (field.type !== "date_range" && field.type !== "daterange") continue;
       const fallback = field.defaultRange === "current_month" || field.required ? currentMonthRange() : [];
       const rawValue = next[field.key];
-      const raw = Array.isArray(rawValue) ? rawValue.map(String) : [];
+      // 跨页跳转（如停课日历→影响课程）可能传入标量日期，视为单日区间而不是回落默认范围
+      const raw = Array.isArray(rawValue)
+        ? rawValue.map(String)
+        : typeof rawValue === "string" && /^\d{4}-\d{2}-\d{2}/.test(rawValue)
+          ? [rawValue.slice(0, 10), rawValue.slice(0, 10)]
+          : [];
       let start = raw[0] && /^\d{4}-\d{2}-\d{2}$/.test(raw[0]) ? raw[0] : fallback[0];
       let end = raw[1] && /^\d{4}-\d{2}-\d{2}$/.test(raw[1]) ? raw[1] : fallback[1];
       if (start && end && start > end) [start, end] = [end, start];
@@ -336,9 +352,20 @@ export function GenericPageRenderer({
         params: { filters: effectiveFilters, page: nextPage, pageSize: nextPageSize, schemaName }
       });
       const data = result.data as { rows: Record<string, unknown>[]; total: number };
-      setRows(data.rows);
-      setTotal(data.total);
-      setSelectedRowIds((current) => current.filter((id) => data.rows.some((row) => String(row.id) === id)));
+      const nextRows = data.rows ?? [];
+      const nextTotal = data.total ?? 0;
+      // 页码越界（删除后当前页为空等）时自动回退到最后一页重查
+      if (nextPage > 1 && nextRows.length === 0 && nextTotal > 0) {
+        const lastPage = Math.max(1, Math.ceil(nextTotal / nextPageSize));
+        if (lastPage < nextPage) {
+          setPage(lastPage);
+          await load(effectiveFilters, lastPage, nextPageSize);
+          return;
+        }
+      }
+      setRows(nextRows);
+      setTotal(nextTotal);
+      // 跨页多选不清空：selectedRowIds 保留非当前页的选中项，批量动作只依赖 id 集合
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -350,30 +377,120 @@ export function GenericPageRenderer({
     const nextFilters = initialFilters ?? (dsl.pageCode === "course_week_schedule" ? { course_date: currentWeekRange() } : {});
     setFilters(nextFilters);
     setPage(1);
-    const nextPageSize = Number(dsl.presentation?.table?.pageSize ?? 10);
+    const nextPageSize = Number(dsl.presentation?.table?.pageSize ?? (isCalendarLayout ? 500 : 10));
     setPageSize(nextPageSize);
     setEnrollmentValue({});
     setImportConfig(null);
     void load(nextFilters, 1, nextPageSize);
   }, [dsl.pageCode, JSON.stringify(initialFilters ?? {}), refreshKey, dsl.presentation?.table?.pageSize]);
 
-  async function submitModal(extra: Record<string, unknown> = {}) {
-    if (!modal) return;
-    const apiCode = "action" in modal && modal.action?.apiCode ? modal.action.apiCode : modal.type === "create" ? dsl.createApi : dsl.updateApi;
-    const actionLabel = "action" in modal && modal.action?.label ? modal.action.label : modal.type === "create" ? `新增${dsl.title}` : modal.type === "edit" ? `编辑${dsl.title}` : dsl.title;
+  function afterSuccessList(action?: ActionDsl): AfterSuccessDsl[] {
+    const raw = action?.afterSuccess;
+    return Array.isArray(raw) ? raw : raw ? [raw] : [];
+  }
+
+  /** 变更类操作成功后的统一收尾：afterSuccess（toast/refreshPage/redirect）+ 跨 tab 联动 + 当前列表刷新 */
+  async function finishSuccess(action: ActionDsl | undefined, defaultMessage: string) {
+    const list = afterSuccessList(action);
+    const toastEntry = list.find((item) => item.type === "toast");
+    toast.success(toastEntry?.message ?? defaultMessage);
+    onDataChanged?.();
+    await load(filters, page);
+    const redirect = list.find((item) => item.type === "redirect");
+    const redirectPage = redirect?.pageCode ?? redirect?.to;
+    if (redirectPage) onOpenPage?.(redirectPage, redirect?.title ?? dsl.title, redirect?.filters);
+  }
+
+  /** 提交前校验可见 required 字段：null/undefined/""/空数组视为空（数字 0 有效） */
+  function missingRequiredLabels(fields: FieldDsl[], value: Record<string, unknown>) {
+    return fields
+      .filter((field) => field.required && field.key !== "id" && !field.hidden && evaluateWhen(field.visibleWhen, value))
+      .filter((field) => {
+        const raw = value[field.key];
+        return raw === null || raw === undefined || raw === "" || (Array.isArray(raw) && raw.length === 0);
+      })
+      .map((field) => field.label ?? field.title ?? field.key);
+  }
+
+  /**
+   * open_modal 动作缺 fields 时按 modalCode 经 action-executor 拉取 modal DSL（按 modalCode 缓存）；
+   * 拉不到或既无 fields 也无 modalCode 时报配置缺失，绝不落入直接执行 apiCode 的分支。
+   */
+  async function resolveModalAction(action: ActionDsl): Promise<ActionDsl | null> {
+    if (action.fields?.length) return action;
+    if (!action.modalCode) {
+      toast.error(`弹窗配置缺失：${action.label ?? action.actionCode}`);
+      return null;
+    }
     try {
-      const hasAttendanceTable = modalFields(modal).some((field) => field.type === "attendance_table");
-      const selectedStudentIds = new Set((Array.isArray(modal.value.__selectedStudentIds) ? modal.value.__selectedStudentIds : []) as string[]);
-      if (hasAttendanceTable && (extra.__attendanceMode === "cancel_attendance" || extra.__attendanceMode === "cancel_charge") && selectedStudentIds.size === 0) {
+      let modalDsl = modalDslCacheRef.current[action.modalCode];
+      if (!modalDsl) {
+        const result = await GatewayClient.executeAction({
+          scope,
+          schemaName,
+          actionCode: action.actionCode,
+          params: { pageCode: dsl.pageCode, modalCode: action.modalCode }
+        });
+        const data = result.data as ActionResult | undefined;
+        const fetched = data?.modalDsl as ModalActionDsl | undefined;
+        if (fetched?.fields?.length) {
+          modalDsl = fetched;
+          modalDslCacheRef.current[action.modalCode] = fetched;
+        }
+      }
+      if (!modalDsl?.fields?.length) {
+        toast.error(`弹窗配置缺失：${action.label ?? action.actionCode}`);
+        return null;
+      }
+      return {
+        ...action,
+        fields: modalDsl.fields,
+        apiCode: action.apiCode ?? modalDsl.submitApiCode,
+        modalTitle: action.modalTitle ?? modalDsl.title ?? modalDsl.modalName,
+        modalSize: action.modalSize ?? modalDsl.size
+      };
+    } catch (err) {
+      toast.error(`加载弹窗配置失败：${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  async function submitModal(extra: Record<string, unknown> = {}) {
+    if (!modal || submitting) return;
+    const action = "action" in modal ? modal.action : undefined;
+    const apiCode = action?.apiCode ? action.apiCode : modal.type === "create" ? dsl.createApi : dsl.updateApi;
+    const actionLabel = action?.label ? action.label : modal.type === "create" ? `新增${dsl.title}` : modal.type === "edit" ? `编辑${dsl.title}` : dsl.title;
+    const fields = modalFields(modal);
+    const hasAttendanceTable = fields.some((field) => field.type === "attendance_table");
+    const attendanceMode = String(extra.__attendanceMode ?? "");
+    if (modal.type !== "detail") {
+      const missing = missingRequiredLabels(fields, modal.value);
+      if (missing.length) {
+        toast.error(`请填写必填项：${missing.join("、")}`);
+        return;
+      }
+    }
+    const selectedStudentIds = new Set((Array.isArray(modal.value.__selectedStudentIds) ? modal.value.__selectedStudentIds : []) as string[]);
+    const attendanceStudents = Array.isArray(modal.value.students) ? modal.value.students as Array<Record<string, unknown>> : [];
+    if (hasAttendanceTable && (attendanceMode === "cancel_attendance" || attendanceMode === "cancel_charge")) {
+      if (selectedStudentIds.size === 0) {
         toast.error("请先勾选要处理的学员");
         return;
       }
-      const attendanceStudents = Array.isArray(modal.value.students) ? modal.value.students as Array<Record<string, unknown>> : [];
-      const selectedAttendanceStudents = attendanceStudents.filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)));
-      if (hasAttendanceTable && extra.__attendanceMode === "cancel_attendance" && selectedAttendanceStudents.some((student) => Number(student.charged_count ?? 0) > 0)) {
-        toast.error("选中学员含有已扣费，请直接取消扣费");
-        return;
-      }
+      const modeLabel = attendanceMode === "cancel_attendance" ? "取消考勤" : "取消扣费";
+      if (!window.confirm(`确认执行「${modeLabel}」？`)) return;
+    }
+    // 考勤/扣费模式未勾选学员时不再静默全选，先确认
+    if (hasAttendanceTable && (attendanceMode === "attendance" || attendanceMode === "charge") && selectedStudentIds.size === 0 && attendanceStudents.length > 0) {
+      if (!window.confirm(`未勾选学员，将对全部 ${attendanceStudents.length} 名学员执行，是否继续？`)) return;
+    }
+    const selectedAttendanceStudents = attendanceStudents.filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)));
+    if (hasAttendanceTable && attendanceMode === "cancel_attendance" && selectedAttendanceStudents.some((student) => Number(student.charged_count ?? 0) > 0)) {
+      toast.error("选中学员含有已扣费，请直接取消扣费");
+      return;
+    }
+    setSubmitting(true);
+    try {
       const submitValue = hasAttendanceTable ? {
         ...modal.value,
         students: selectedAttendanceStudents
@@ -407,20 +524,27 @@ export function GenericPageRenderer({
           }
         });
         toast.error("部分学员处理失败，请查看行内原因");
+        onDataChanged?.();
         return;
       }
-      toast.success(`${actionLabel}成功`);
       setModal(null);
-      await load(filters, page);
+      await finishSuccess(action, `${actionLabel}成功`);
     } catch (err) {
       toast.error(`${actionLabel}失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSubmitting(false);
     }
   }
 
   async function submitEnrollment() {
-    if (!createAction) return;
+    if (!createAction || submitting) return;
     const apiCode = createAction.apiCode ?? dsl.createApi;
     const submitData: Record<string, unknown> = { ...(resolveDictionaryDefaults(createAction.defaultValues) ?? {}), ...enrollmentValue };
+    const missing = missingRequiredLabels(visibleModalFields(enrollmentFields), submitData);
+    if (missing.length) {
+      toast.error(`请填写必填项：${missing.join("、")}`);
+      return;
+    }
     const productIds = (Array.isArray(submitData[productIdsField]) ? submitData[productIdsField] : []) as string[];
     if (productIds.length) {
       const contractProducts = productIds.map((pid) => {
@@ -445,6 +569,7 @@ export function GenericPageRenderer({
         submitData.promotion_amount = contractProducts.reduce((sum: number, cp: Record<string, unknown>) => sum + Number(cp.plan_promotion_amount ?? 0), 0);
       }
     }
+    setSubmitting(true);
     try {
       await GatewayClient.executeApi({
         scope,
@@ -453,11 +578,12 @@ export function GenericPageRenderer({
         apiCode,
         params: { data: submitData }
       });
-      toast.success(`${createAction.label ?? "保存"}成功`);
       setEnrollmentValue({});
-      await load(filters, page);
+      await finishSuccess(createAction, `${createAction.label ?? "保存"}成功`);
     } catch (err) {
       toast.error(`${createAction.label ?? "保存"}失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -485,10 +611,22 @@ export function GenericPageRenderer({
         return;
       }
       const selectedRows = rows.filter((row) => selectedRowIds.includes(String(row.id)));
-      const selectedValues = action.mapSelectedToValue && selectedRows.length
-        ? Object.fromEntries(Object.entries(action.mapSelectedToValue).map(([targetKey, sourceKey]) => [targetKey, selectedRows.map((row) => row[String(sourceKey)]).filter((value) => value !== undefined && value !== null && value !== "")]))
+      // 跨页多选：sourceKey 为 id 时直接用选中 id 集合，避免翻页后丢失非当前页的选中行
+      const selectedValues = action.mapSelectedToValue && selectedRowIds.length
+        ? Object.fromEntries(Object.entries(action.mapSelectedToValue).map(([targetKey, sourceKey]) => [
+            targetKey,
+            String(sourceKey) === "id"
+              ? [...selectedRowIds]
+              : selectedRows.map((row) => row[String(sourceKey)]).filter((value) => value !== undefined && value !== null && value !== "")
+          ]))
         : {};
       setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...selectedValues }, action });
+      return;
+    }
+    if (action.type === "open_modal" || action.actionType === "open_modal") {
+      const resolved = await resolveModalAction(action);
+      if (!resolved) return;
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(resolved.defaultValues) ?? {}) }, action: resolved });
       return;
     }
     if (isImportToolbarAction(action)) {
@@ -499,7 +637,41 @@ export function GenericPageRenderer({
       await exportToExcel(dsl, rows);
       return;
     }
-    await load();
+    if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
+      if (action.requiresSelection && selectedRowIds.length === 0) {
+        toast.error(action.requiresSelectionMessage ?? "请先选择数据");
+        return;
+      }
+      if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
+      if (!action.confirm && isDangerAction(action) && !window.confirm(`确认执行「${action.label ?? action.actionCode}」？`)) return;
+      if (actionInFlightRef.current) return;
+      actionInFlightRef.current = true;
+      try {
+        await GatewayClient.executeApi({
+          scope,
+          schemaName,
+          pageCode: dsl.pageCode,
+          apiCode: action.apiCode ?? action.actionCode,
+          params: {
+            ...(resolveDictionaryDefaults(action.defaultValues) ?? {}),
+            ...(action.defaultParams ?? {}),
+            ...(action.requiresSelection || selectedRowIds.length ? { ids: [...selectedRowIds] } : {})
+          }
+        });
+        await finishSuccess(action, `${action.label ?? "操作"}成功`);
+      } catch (err) {
+        toast.error(`${action.label ?? "操作"}失败：${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        actionInFlightRef.current = false;
+      }
+      return;
+    }
+    // 仅刷新语义兜底 load()，其余未匹配类型明确提示，不再静默假装刷新
+    if (`${action.type ?? ""}|${action.actionType ?? ""}|${action.actionCode}`.includes("refresh")) {
+      await load();
+      return;
+    }
+    toast.error(`该操作类型暂不支持: ${action.type ?? action.actionType ?? action.actionCode}`);
   }
 
   async function loadDetailValue(row: Record<string, unknown>) {
@@ -545,6 +717,12 @@ export function GenericPageRenderer({
 
   async function onRowAction(action: ActionDsl, row: Record<string, unknown>) {
     if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
+    // danger 语义且未配 confirm 的兜底确认
+    if (!action.confirm && isDangerAction(action) && !window.confirm(`确认执行「${action.label ?? action.actionCode}」？`)) return;
+    if (action.type === "open_ai_customization" || action.actionType === "open_ai_customization") {
+      onOpenAiCustomization?.();
+      return;
+    }
     if (action.actionCode.endsWith(".detail")) {
       if (dsl.pageCode === "customization_record_list" || dsl.pageCode === "assistant_record_list") {
         setCustomizationRecordId(String(row.id ?? ""));
@@ -578,21 +756,30 @@ export function GenericPageRenderer({
       openTarget(target, action.label ?? "打开页面", targetFilters(target, row));
       return;
     }
-    if (action.type === "open_modal" && action.fields?.length) {
-      const mapped = mappedRowValues(action, row);
+    if (action.type === "open_modal" || action.actionType === "open_modal") {
+      const resolved = await resolveModalAction(action);
+      if (!resolved) return;
+      const mapped = mappedRowValues(resolved, row);
       let prepared: Record<string, unknown> = {};
-      if (action.fields.some((field) => field.type === "attendance_table")) {
+      if (resolved.fields?.some((field) => field.type === "attendance_table")) {
         try {
           const result = await GatewayClient.executeApi({ scope, schemaName, pageCode: dsl.pageCode, apiCode: "attendance.prepare", params: { ...mapped, id: row.id } });
           prepared = result.data && typeof result.data === "object" && !Array.isArray(result.data) ? result.data as Record<string, unknown> : {};
-        } catch {
-          prepared = {};
+        } catch (err) {
+          toast.error(`加载考勤学员失败：${err instanceof Error ? err.message : String(err)}`);
+          return;
         }
       }
-      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped, ...prepared }, action });
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(resolved.defaultValues) ?? {}), ...mapped, ...prepared }, action: resolved });
+      return;
+    }
+    if (action.type === "display" || action.actionType === "display") {
+      await printRow(action, row);
       return;
     }
     if (action.type === "execute_api" || action.actionType === "execute_api" || action.apiCode) {
+      if (actionInFlightRef.current) return;
+      actionInFlightRef.current = true;
       const mapped = mappedRowValues(action, row);
       const data = { ...row, ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...mapped };
       const params = (action.apiCode ?? action.actionCode).endsWith(".update")
@@ -606,14 +793,17 @@ export function GenericPageRenderer({
           apiCode: action.apiCode ?? action.actionCode,
           params
         });
-        toast.success(`${action.label ?? "操作"}成功`);
-        await load(filters, page);
+        await finishSuccess(action, `${action.label ?? "操作"}成功`);
       } catch (err) {
         toast.error(`${action.label ?? "操作"}失败：${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        actionInFlightRef.current = false;
       }
       return;
     }
     if (action.actionCode.endsWith(".delete")) {
+      if (actionInFlightRef.current) return;
+      actionInFlightRef.current = true;
       try {
         await GatewayClient.executeApi({
           scope,
@@ -622,12 +812,78 @@ export function GenericPageRenderer({
           apiCode: dsl.deleteApi,
           params: { id: row.id }
         });
-        toast.success("删除成功");
-        await load(filters, page);
+        await finishSuccess(action, "删除成功");
       } catch (err) {
         toast.error(`删除失败：${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        actionInFlightRef.current = false;
+      }
+      return;
+    }
+    toast.error(`该操作类型暂不支持: ${action.type ?? action.actionType ?? action.actionCode}`);
+  }
+
+  /** display/打印：优先经 action-executor 拉模板 DSL 字段，失败退回当前页 columns，渲染进新窗口打印 */
+  async function printRow(action: ActionDsl, row: Record<string, unknown>) {
+    let printFields: FieldDsl[] = [];
+    if (action.printTemplateCode) {
+      try {
+        const result = await GatewayClient.executeAction({
+          scope,
+          schemaName,
+          actionCode: action.printTemplateCode,
+          params: { pageCode: dsl.pageCode, id: row.id }
+        });
+        const data = result.data as ActionResult | undefined;
+        const template = data?.modalDsl as ModalActionDsl | undefined;
+        if (template?.fields?.length) printFields = template.fields;
+      } catch {
+        // 模板拉取失败时退回当前页 columns 渲染
       }
     }
+    if (!printFields.length) printFields = (tableDsl.columns ?? []).filter((column) => !column.hidden);
+    if (!printFields.length) {
+      toast.error(`打印配置缺失：${action.label ?? action.actionCode}`);
+      return;
+    }
+    const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const cellText = (field: FieldDsl) => {
+      const raw = field.displayKey && row[field.displayKey] !== undefined && row[field.displayKey] !== null && row[field.displayKey] !== ""
+        ? row[field.displayKey]
+        : row[field.key];
+      if (raw === null || raw === undefined || raw === "") return "-";
+      const text = Array.isArray(raw) ? raw.map(String).join(", ") : String(raw);
+      return dictionaryLabelFor(field.key, text, presentationWithDictionaries.valueLabels) ?? text;
+    };
+    const printWindow = window.open("", "_blank", "width=760,height=900");
+    if (!printWindow) {
+      toast.error("浏览器拦截了打印窗口，请允许弹窗后重试");
+      return;
+    }
+    const rowsHtml = printFields
+      .map((field) => `<tr><td class="label">${escapeHtml(String(field.label ?? field.title ?? field.key))}</td><td>${escapeHtml(cellText(field))}</td></tr>`)
+      .join("");
+    printWindow.document.write(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(action.label ?? dsl.title)}</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; color: #172033; padding: 32px; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { border: 1px solid #d9e3ed; padding: 8px 12px; }
+  td.label { width: 140px; background: #f7f8fa; color: #5f6b7a; }
+</style>
+</head>
+<body>
+<h1>${escapeHtml(`${dsl.title} - ${action.label ?? "打印"}`)}</h1>
+<table><tbody>${rowsHtml}</tbody></table>
+</body>
+</html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
   }
 
   function isTodayValue(value: unknown) {
@@ -658,7 +914,8 @@ export function GenericPageRenderer({
   }
 
   function metricLabel(metric: MetricDsl) {
-    return metric.label;
+    // total 走接口返回的总数，其余口径由当前页 rows 计算，标注"（本页）"避免误读为全量统计
+    return metric.source === "total" ? metric.label : `${metric.label}（本页）`;
   }
 
   function openTarget(target: PageTargetDsl | undefined, fallbackTitle: string, initialFilters = target?.filters) {
@@ -1101,16 +1358,16 @@ export function GenericPageRenderer({
                             </div>
                           </td>
                           <td className="px-3 py-2">
-                            <input type="number" step="0.01" className={`${token.input} w-full text-center`} value={cp.courseHour || ""} onChange={(e) => updateCpField(cp.productId, "course_hour", e.target.value)} />
+                            <input type="number" step="0.01" min={0} className={`${token.input} w-full text-center`} value={Number.isFinite(cp.courseHour) ? cp.courseHour : ""} onChange={(e) => updateCpField(cp.productId, "course_hour", e.target.value)} />
                           </td>
                           <td className="px-3 py-2">
-                            <input type="number" step="0.01" className={`${token.input} w-full text-center`} value={cp.unitPrice || ""} onChange={(e) => updateCpField(cp.productId, "unit_price", e.target.value)} />
+                            <input type="number" step="0.01" min={0} className={`${token.input} w-full text-center`} value={Number.isFinite(cp.unitPrice) ? cp.unitPrice : ""} onChange={(e) => updateCpField(cp.productId, "unit_price", e.target.value)} />
                           </td>
                           <td className="px-3 py-2">
-                            <input type="number" step="0.01" className={`${token.input} w-full text-center`} value={cp.totalAmount || ""} onChange={(e) => updateCpField(cp.productId, "total_amount", e.target.value)} />
+                            <input type="number" step="0.01" min={0} className={`${token.input} w-full text-center`} value={Number.isFinite(cp.totalAmount) ? cp.totalAmount : ""} onChange={(e) => updateCpField(cp.productId, "total_amount", e.target.value)} />
                           </td>
                           <td className="px-3 py-2">
-                            <input type="number" step="0.01" className={`${token.input} w-full text-center bg-[#f5f7fa]`} value={cp.promotionAmount || ""} readOnly />
+                            <input type="number" step="0.01" className={`${token.input} w-full text-center bg-[#f5f7fa]`} value={Number.isFinite(cp.promotionAmount) ? cp.promotionAmount : ""} readOnly />
                           </td>
                         </tr>
                       ))}
@@ -1188,8 +1445,8 @@ export function GenericPageRenderer({
             )}
           </div>
           <div className="sticky bottom-0 flex justify-end border border-[#d9e3ed] bg-white px-5 py-4 shadow-[0_-8px_20px_rgba(24,36,56,0.06)]">
-            <button className={`${token.button} ${token.primaryButton} h-9 px-8`} onClick={() => void submitEnrollment()}>
-              {settlementLabels.save ?? "保存合同"}
+            <button className={`${token.button} ${token.primaryButton} h-9 px-8 ${submitting ? "cursor-not-allowed opacity-60" : ""}`} disabled={submitting} onClick={() => void submitEnrollment()}>
+              {submitting ? "提交中…" : settlementLabels.save ?? "保存合同"}
             </button>
           </div>
         </div>
@@ -1207,6 +1464,7 @@ export function GenericPageRenderer({
             presentation={presentationWithDictionaries}
             size={"action" in modal ? modal.action?.modalSize : undefined}
             submitLabel={"action" in modal ? modal.action?.submitLabel : undefined}
+            submitting={submitting}
             submitActions={modalFields(modal).some((field) => field.type === "attendance_table") ? [
               { label: "取消考勤", value: { __attendanceMode: "cancel_attendance" }, variant: "default" },
               { label: "取消扣费", value: { __attendanceMode: "cancel_charge" }, variant: "danger" },
@@ -1248,7 +1506,20 @@ export function GenericPageRenderer({
         </div>
         {error && <div className="mx-3 mt-3 border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
         <div className="mx-3 mt-3 min-h-0 flex-1 overflow-hidden bg-white">
-          <CalendarView dsl={{ ...dsl, presentation: presentationWithDictionaries }} rows={rows} toolbar={toolbarDsl} onToolbar={onToolbar} onAction={onRowAction} />
+          <CalendarView
+            dsl={{ ...dsl, presentation: presentationWithDictionaries }}
+            rows={rows}
+            toolbar={toolbarDsl}
+            onToolbar={onToolbar}
+            onAction={onRowAction}
+            onRangeChange={(start, end) => {
+              const rangeField = dsl.presentation?.calendarField ?? "course_date";
+              const next = { ...filters, [rangeField]: [start, end] };
+              setFilters(next);
+              setPage(1);
+              void load(next, 1);
+            }}
+          />
         </div>
         {modal && (
           <ModalRenderer
@@ -1264,6 +1535,7 @@ export function GenericPageRenderer({
             presentation={presentationWithDictionaries}
             size={"action" in modal ? modal.action?.modalSize : undefined}
             submitLabel={"action" in modal ? modal.action?.submitLabel : undefined}
+            submitting={submitting}
             submitActions={modalFields(modal).some((field) => field.type === "attendance_table") ? [
               { label: "取消考勤", value: { __attendanceMode: "cancel_attendance" }, variant: "default" },
               { label: "取消扣费", value: { __attendanceMode: "cancel_charge" }, variant: "danger" },
@@ -1316,8 +1588,11 @@ export function GenericPageRenderer({
           )}
         </div>
         <div className={`flex flex-wrap gap-2 ${toolbarAlign === "left" ? "justify-start" : "justify-end"}`}>
-          {sortWithOrder(toolbarDsl).map((action) => (
-            <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} />
+          {sortWithOrder(toolbarDsl).filter((action) => {
+            if ((action.type === "open_ai_customization" || action.actionType === "open_ai_customization") && schemaName && schemaName.endsWith("_test")) return false;
+            return true;
+          }).map((action) => (
+            <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} disabled={!evaluateWhen(action.enabledWhen, {})} />
           ))}
         </div>
       </div>
@@ -1334,6 +1609,7 @@ export function GenericPageRenderer({
             schemaName={schemaName}
             importConfig={importConfig}
             onComplete={() => {
+              onDataChanged?.();
               void load();
             }}
           />
@@ -1403,6 +1679,7 @@ export function GenericPageRenderer({
           presentation={presentationWithDictionaries}
           size={"action" in modal ? modal.action?.modalSize : undefined}
           submitLabel={"action" in modal ? modal.action?.submitLabel : undefined}
+          submitting={submitting}
           submitActions={modalFields(modal).some((field) => field.type === "attendance_table") ? [
             { label: "取消考勤", value: { __attendanceMode: "cancel_attendance" }, variant: "default" },
             { label: "取消扣费", value: { __attendanceMode: "cancel_charge" }, variant: "danger" },

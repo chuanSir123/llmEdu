@@ -768,6 +768,7 @@ export async function migrate() {
 
     await exec(`ALTER TABLE IF EXISTS "${schema}".refund_record ADD COLUMN IF NOT EXISTS contract_id text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".refund_record ADD COLUMN IF NOT EXISTS refund_type text NOT NULL DEFAULT 'CONTRACT_PRODUCT'`);
+    await exec(`ALTER TABLE IF EXISTS "${schema}".refund_record ADD COLUMN IF NOT EXISTS organization_id text`);
     await exec(`ALTER TABLE IF EXISTS "${schema}".refund_record ADD COLUMN IF NOT EXISTS proportion numeric`);
 
     await exec(`ALTER TABLE IF EXISTS "${schema}".generic_course_student ADD COLUMN IF NOT EXISTS attendance_time timestamptz`);

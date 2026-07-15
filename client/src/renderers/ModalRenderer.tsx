@@ -17,7 +17,8 @@ export function ModalRenderer({
   presentation,
   size,
   submitLabel,
-  submitActions
+  submitActions,
+  submitting
 }: {
   scope: "admin" | "tenant";
   schemaName?: string;
@@ -32,6 +33,7 @@ export function ModalRenderer({
   size?: "default" | "large" | "fullscreen";
   submitLabel?: string;
   submitActions?: Array<{ label: string; value?: Record<string, unknown>; variant?: "primary" | "default" | "danger" }>;
+  submitting?: boolean;
 }) {
   const modalStyle = presentation?.modal?.style ?? "default";
   const visibleFields = fields.filter((field) => field.key !== "id" && !field.hidden);
@@ -55,6 +57,7 @@ export function ModalRenderer({
       ? value[field.displayKey]
       : value[field.key];
     if (raw === null || raw === undefined || raw === "") return "-";
+    if (/(amount|price|balance|hour)/i.test(field.key) && !Array.isArray(raw) && Number.isFinite(Number(raw))) return Number(raw).toFixed(2);
     return dictionaryDisplayFor(field.key, raw, presentation?.valueLabels);
   };
   const readonlyFieldClass = (field: FieldDsl) =>
@@ -115,10 +118,11 @@ export function ModalRenderer({
             {(submitActions?.length ? submitActions : [{ label: submitLabel ?? "保存", variant: "primary" as const }]).map((action) => (
               <button
                 key={action.label}
-                className={`${token.button} ${action.variant === "danger" ? token.dangerButton : action.variant === "default" ? token.defaultButton : token.primaryButton}`}
+                className={`${token.button} ${action.variant === "danger" ? token.dangerButton : action.variant === "default" ? token.defaultButton : token.primaryButton} ${submitting ? "cursor-not-allowed opacity-60" : ""}`}
+                disabled={submitting}
                 onClick={() => onSubmit?.(action.value)}
               >
-                {action.label}
+                {submitting ? "提交中…" : action.label}
               </button>
             ))}
           </div>

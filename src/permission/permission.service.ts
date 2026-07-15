@@ -71,12 +71,23 @@ export async function canExecuteApiOnPage(user: SessionUser | undefined, schemaN
   if (codes.has("*")) return true;
   if (codes.size === 0) return false;
   if (codes.has(apiCode)) return true;
+  // 按钮的 apiCode 可能直接配置，也可能藏在弹窗（内联 modal 或 modalCode 引用的 modal 行）的 submitApiCode 里，两种口径都要认
   const { rows } = await pool.query(
-    `select dsl_json->>'apiCode' as api_code from admin.action_dsl
-     where page_code = $1 and status = 'active' and deleted = false and action_code = any($2)`,
+    `select a.dsl_json->>'apiCode' as api_code,
+            a.dsl_json->>'submitApiCode' as submit_api_code,
+            a.dsl_json->'modal'->>'submitApiCode' as modal_submit_api_code,
+            m.dsl_json->>'submitApiCode' as ref_submit_api_code,
+            m.dsl_json->'modal'->>'submitApiCode' as ref_modal_submit_api_code
+     from admin.action_dsl a
+     left join admin.action_dsl m
+       on m.action_code = a.dsl_json->>'modalCode' and m.action_type = 'modal' and m.status = 'active' and m.deleted = false
+     where a.page_code = $1 and a.status = 'active' and a.deleted = false and a.action_code = any($2)`,
     [pageCode, [...codes]]
   );
-  return rows.some((row) => String(row.api_code ?? "") === apiCode);
+  return rows.some((row) =>
+    [row.api_code, row.submit_api_code, row.modal_submit_api_code, row.ref_submit_api_code, row.ref_modal_submit_api_code]
+      .some((code) => String(code ?? "") === apiCode)
+  );
 }
 
 export async function fieldPermissions(user: SessionUser | undefined, schemaName: string, pageCode: string): Promise<Record<string, string>> {

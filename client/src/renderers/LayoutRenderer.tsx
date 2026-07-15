@@ -77,12 +77,17 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
 
   async function openPage(pageCode: string, title: string, initialFilters?: Record<string, unknown>) {
     setError("");
+    const alreadyOpen = tabs.some((tab) => tab.pageCode === pageCode);
     setTabs((current) => {
       const nextTab = { pageCode, title, initialFilters };
       return current.some((tab) => tab.pageCode === pageCode)
         ? current.map((tab) => (tab.pageCode === pageCode ? { ...tab, title, initialFilters } : tab))
         : [...current, nextTab];
     });
+    // 重开已存在的 tab 时 bump refreshKey，保证 initialFilters 相同也会重新拉数据
+    if (alreadyOpen) {
+      setRefreshKeys((current) => ({ ...current, [pageCode]: (current[pageCode] ?? 0) + 1 }));
+    }
     setActiveTab(pageCode);
     try {
       const res = await GatewayClient.page(scope, pageCode, schemaName);
@@ -106,8 +111,8 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
   async function refreshActivePage() {
     const tab = tabs.find((item) => item.pageCode === activeTab);
     if (!tab) return;
+    // openPage 对已存在 tab 会 bump refreshKey，这里无需再重复 bump
     await openPage(tab.pageCode, tab.title, tab.initialFilters);
-    setRefreshKeys((current) => ({ ...current, [tab.pageCode]: (current[tab.pageCode] ?? 0) + 1 }));
   }
 
   function close(pageCode: string) {
@@ -137,6 +142,17 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
 
   function toggleModule(moduleCode: string) {
     setActiveModule((current) => (current === moduleCode ? undefined : moduleCode));
+  }
+
+  /** 某个 tab 内变更成功后，其它已打开 tab 全部 bump refreshKey（当前 tab 已自行 load） */
+  function notifyDataChanged(sourcePageCode: string) {
+    const otherPageCodes = tabs.filter((tab) => tab.pageCode !== sourcePageCode).map((tab) => tab.pageCode);
+    if (!otherPageCodes.length) return;
+    setRefreshKeys((current) => {
+      const next = { ...current };
+      for (const pageCode of otherPageCodes) next[pageCode] = (next[pageCode] ?? 0) + 1;
+      return next;
+    });
   }
 
   function openAiCustomization(sessionId?: string) {
@@ -283,6 +299,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
                   onOpenPage={openPage}
                   onOpenAiCustomization={isTestSchema ? undefined : () => openAiCustomization()}
                   onContinueAiCustomization={isTestSchema ? undefined : openAiCustomization}
+                  onDataChanged={() => notifyDataChanged(tab.pageCode)}
                 />
               </div>
             );
@@ -299,7 +316,7 @@ export function LayoutRenderer({ scope }: { scope: "admin" | "tenant" }) {
           }}
         />
       )}
-      {showAssistantPanel && schemaName && !isTestSchema && (
+      {showAssistantPanel && schemaName && (
         <AiAssistantPanel
           schemaName={schemaName}
           onNavigate={(pageCode, filters) => {

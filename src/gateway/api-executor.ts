@@ -465,6 +465,9 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
   }
   const businessCommandMap: Record<string, { command: string; ruleCode: string }> = {
     "course_list.create": { command: "course.create", ruleCode: "course_create_rule" },
+    "course_list.update": { command: "course.update", ruleCode: "course_create_rule" },
+    "course.update": { command: "course.update", ruleCode: "course_create_rule" },
+    "course.cancel": { command: "course.cancel", ruleCode: "course_delete_rule" },
     "charge_record.create": { command: "chargeRecord.create", ruleCode: "charge_create_rule" },
     "chargeRecord.reverse": { command: "chargeRecord.reverse", ruleCode: "charge_create_rule" },
     "attendance.checkIn": { command: "attendance.checkIn", ruleCode: "attendance_check_in_rule" },

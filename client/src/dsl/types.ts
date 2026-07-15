@@ -72,6 +72,15 @@ export type ApiDsl = {
   security?: { requireLogin?: boolean; dataPermission?: string };
 };
 
+export type AfterSuccessDsl = {
+  type: "toast" | "redirect" | "refreshPage";
+  message?: string;
+  to?: string;
+  pageCode?: string;
+  title?: string;
+  filters?: Record<string, unknown>;
+};
+
 export type ActionDsl = {
   actionCode: string;
   actionName?: string;
@@ -94,9 +103,9 @@ export type ActionDsl = {
   /** 未选中数据时的提示文案，DSL 可按业务定制（默认"请先选择数据"） */
   requiresSelectionMessage?: string;
   modalSize?: "default" | "large" | "fullscreen";
-  afterSuccess?: Array<{ type: "toast" | "redirect" | "refreshPage"; message?: string; to?: string }>;
+  afterSuccess?: AfterSuccessDsl | AfterSuccessDsl[];
   visibleWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | Record<string, unknown> | Array<Record<string, unknown>> | undefined>;
-  enabledWhen?: { always?: boolean; permission?: string };
+  enabledWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | Record<string, unknown> | Array<Record<string, unknown>> | undefined>;
   renderAs?: string;
   styleToken?: string;
   subActions?: Array<{ actionCode: string; label: string }>;
@@ -111,6 +120,7 @@ export type ActionDsl = {
 export type ModalDsl = {
   modalCode: string;
   modalName?: string;
+  title?: string;
   size?: "default" | "large" | "fullscreen";
   columns?: 2 | 3;
   labelAlign?: "top" | "left";
