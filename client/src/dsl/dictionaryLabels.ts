@@ -19,5 +19,6 @@ export function dictionaryDisplayFor(fieldKey: string | undefined, value: unknow
 }
 
 export function dictionaryItemValue(value: unknown) {
-  return String(value ?? "");
+  const text = String(value ?? "");
+  return text.includes(".") ? text.split(".").pop() ?? text : text;
 }

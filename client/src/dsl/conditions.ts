@@ -11,6 +11,11 @@ function conditionValue(value: unknown): string {
   return String(value ?? "");
 }
 
+function businessValue(value: unknown): string {
+  const text = conditionValue(value);
+  return text.includes(".") ? text.split(".").pop() ?? text : text;
+}
+
 function isOpCondition(value: unknown): value is { op: string; value?: unknown } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const op = (value as Record<string, unknown>).op;
@@ -27,11 +32,11 @@ export function evaluateCondition(expected: unknown, actual: unknown): boolean {
   const actualText = String(actual ?? "");
   if (isOpCondition(expected)) {
     const target = expected.value;
-    if (expected.op === "ne") return missing ? true : actualText !== conditionValue(target);
-    if (expected.op === "notIn") return missing ? true : !toList(target).includes(actualText);
+    if (expected.op === "ne") return missing ? true : businessValue(actualText) !== businessValue(target);
+    if (expected.op === "notIn") return missing ? true : !toList(target).map(businessValue).includes(businessValue(actualText));
     if (missing) return false;
-    if (expected.op === "eq") return actualText === conditionValue(target);
-    if (expected.op === "in") return toList(target).includes(actualText);
+    if (expected.op === "eq") return businessValue(actualText) === businessValue(target);
+    if (expected.op === "in") return toList(target).map(businessValue).includes(businessValue(actualText));
     const left = Number(actual);
     const right = Number(conditionValue(target));
     if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
@@ -41,9 +46,9 @@ export function evaluateCondition(expected: unknown, actual: unknown): boolean {
     return left <= right;
   }
   if (Array.isArray(expected)) {
-    return missing ? false : expected.map(conditionValue).includes(actualText);
+    return missing ? false : expected.map(businessValue).includes(businessValue(actualText));
   }
-  return missing ? false : actualText === conditionValue(expected);
+  return missing ? false : businessValue(actualText) === businessValue(expected);
 }
 
 /** 对 visibleWhen / enabledWhen 整体求值；always/permission 键跳过（permission 由后端口径控制）。 */

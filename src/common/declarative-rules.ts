@@ -97,7 +97,7 @@ function str(value: unknown, fallback = "") {
 }
 
 function dictValue(text: string): string {
-  return text;
+  return text.includes(".") ? text.split(".").pop() ?? text : text;
 }
 
 /** 操作符读取：字典归一化可能把 "<=" 存成 "rule_operator.<="，读取时剥离前缀 */

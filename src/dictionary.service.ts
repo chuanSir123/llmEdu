@@ -136,6 +136,11 @@ export const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   valueField: "rule_system_value"
 };
 
+export function dictionaryItemValue(itemValue: unknown) {
+  const text = String(itemValue ?? "");
+  return text.includes(".") ? text.split(".").pop() ?? text : text;
+}
+
 export function dictionaryItemId(dictCode: string, itemValue: unknown) {
   return `${dictCode}.${String(itemValue ?? "")}`;
 }
@@ -148,10 +153,10 @@ export function dictionaryCodeForFieldName(fieldName: string) {
   return DICTIONARY_FIELD_ALIASES[fieldName] ?? (SYSTEM_DICTIONARIES[fieldName] ? fieldName : undefined);
 }
 
-export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[]) {
+export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[], dictCodeByField: Record<string, string> = {}) {
   const normalized = { ...input };
   const candidates = fields
-    .map((field) => ({ field, dictCode: dictionaryCodeForFieldName(field), value: input[field] }))
+    .map((field) => ({ field, dictCode: dictCodeByField[field] ?? dictionaryCodeForFieldName(field), value: input[field] }))
     .filter((item): item is { field: string; dictCode: string; value: string | string[] } => {
       if (!item.dictCode) return false;
       if (typeof item.value === "string") return item.value.trim() !== "";
@@ -165,11 +170,15 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
     `select id, dict_code, item_value, item_label
        from admin.dictionary_item
       where dict_code = any($2::text[]) and deleted = false
-        and (id = any($1::text[]) or item_label = any($1::text[]))
+        and (id = any($1::text[]) or item_value = any($1::text[]) or item_label = any($1::text[]))
         and ((schema_scope = 'admin' and schema_name = '') or (schema_scope = 'tenant' and schema_name = $3))`,
     [values, dictCodes, schemaName]
   );
-  const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_label}`, row.id]]));
+  const byInputAndCode = new Map(rows.flatMap((row) => [
+    [`${row.dict_code}:${row.id}`, row.id],
+    [`${row.dict_code}:${row.item_value}`, row.id],
+    [`${row.dict_code}:${row.item_label}`, row.id]
+  ]));
   for (const item of candidates) {
     if (Array.isArray(item.value)) {
       normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? value);

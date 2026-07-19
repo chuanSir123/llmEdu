@@ -1,3 +1,4 @@
+import { dictionaryItemValue } from "../dsl/dictionaryLabels";
 import { token } from "../styles/designTokens";
 
 type ApprovalTaskDetailProps = {
@@ -49,7 +50,7 @@ export function ApprovalTaskDetail({ value, onClose, onApprove, onReject }: Appr
   const steps = asArray(form.steps);
   const logs = asArray(value.logs ?? form.logs);
   const currentIndex = Number(value.current_step_index ?? 0);
-  const status = String(value.status ?? "");
+  const status = dictionaryItemValue(value.status ?? "");
   const businessEntries = Object.entries(payload).filter(([key]) => !["approval_comment", "approval_task_id", "approvalTaskId"].includes(key));
 
   return (
