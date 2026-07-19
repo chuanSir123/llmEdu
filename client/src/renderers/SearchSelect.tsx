@@ -56,6 +56,7 @@ export function SearchSelect({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const lastQueryRef = useRef<string | null>(null);
+  const sourceKey = optionSource ? JSON.stringify({ optionSource, scope, schemaName }) : "";
 
   useEffect(() => {
     if (!open) return;
@@ -90,6 +91,11 @@ export function SearchSelect({
     };
   }, [open]);
 
+  useEffect(() => {
+    lastQueryRef.current = null;
+    setRemote(null);
+  }, [sourceKey]);
+
   // 远程加载：打开时首查；输入词变化 300ms 防抖带 label 过滤重查
   useEffect(() => {
     if (!optionSource || !open) return;
@@ -119,7 +125,7 @@ export function SearchSelect({
     }, remote === null ? 0 : 300);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [optionSource && JSON.stringify(optionSource), open, query]);
+  }, [sourceKey, open, query]);
 
   function dedupeOptions(list: SearchSelectOption[]) {
     const seen = new Set<string>();

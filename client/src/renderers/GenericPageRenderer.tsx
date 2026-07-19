@@ -1000,21 +1000,9 @@ export function GenericPageRenderer({
         </div>
       );
     }
+    // 下拉筛选统一先解析远程来源：字典下拉可走 dictionary.options，外键下拉可走对应列表 API。
+    // 这样即使 presentation.valueLabels 没有预置选项，也不会退化成空的本地下拉。
     const dictOptions = presentationWithDictionaries.valueLabels?.[field.key];
-    if (field.type === "select" || fieldDictCode(field) || dictOptions) {
-      return (
-        <SearchSelect
-          compact
-          className="min-w-[150px]"
-          value={String(filters[field.key] ?? "")}
-          placeholder={selectFilterPlaceholder(field)}
-          clearLabel={selectFilterPlaceholder(field)}
-          options={Object.entries(dictOptions ?? {}).map(([optionValue, optionLabel]) => ({ value: optionValue, label: String(optionLabel) }))}
-          onChange={(next) => setFilters({ ...filters, [field.key]: next })}
-        />
-      );
-    }
-    // 外键筛选（学员/老师/产品等）：可搜索远程下拉，替代手输 ID 的文本框
     const rawFilterSource = effectiveOptionSource(field as FieldDsl);
     const filterSource = rawFilterSource?.pageCode && rawFilterSource.apiCode
       ? {
@@ -1026,6 +1014,23 @@ export function GenericPageRenderer({
           pageSize: rawFilterSource.pageSize
         }
       : undefined;
+    if (field.type === "select" || fieldDictCode(field) || dictOptions) {
+      return (
+        <SearchSelect
+          compact
+          className="min-w-[150px]"
+          scope={scope}
+          schemaName={schemaName}
+          value={String(filters[field.key] ?? "")}
+          placeholder={selectFilterPlaceholder(field)}
+          clearLabel={selectFilterPlaceholder(field)}
+          options={Object.entries(dictOptions ?? {}).map(([optionValue, optionLabel]) => ({ value: optionValue, label: String(optionLabel) }))}
+          optionSource={filterSource}
+          onChange={(next) => setFilters({ ...filters, [field.key]: next })}
+        />
+      );
+    }
+    // 外键筛选（学员/老师/产品等）：可搜索远程下拉，替代手输 ID 的文本框
     if (filterSource) {
       return (
         <SearchSelect
