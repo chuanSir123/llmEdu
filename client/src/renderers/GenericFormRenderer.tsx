@@ -178,6 +178,12 @@ export function GenericFormRenderer({
       for (const [targetKey, sourceKey] of Object.entries(field.fillOnSelect)) {
         next[targetKey] = selected?.row[sourceKey] ?? next[targetKey];
       }
+      if (selected?.row && (field.fillOnSelect.total_amount || field.fillOnSelect.paid_amount) && (next.transaction_amount === undefined || next.transaction_amount === null || next.transaction_amount === "")) {
+        const total = Number(selected.row.total_amount ?? next.total_amount ?? 0);
+        const paid = Number(selected.row.paid_amount ?? next.paid_amount ?? 0);
+        const receivable = Math.max(0, Math.round((total - paid) * 100) / 100);
+        if (receivable > 0) next.transaction_amount = receivable;
+      }
     }
     onChange(next);
   };
@@ -382,6 +388,7 @@ export function GenericFormRenderer({
               {field.required && <span className="mr-0.5 text-[#d92d20]">*</span>}
               {field.label ?? field.title ?? field.key}
             </span>
+            <div className="min-w-0">
             {field.type === "textarea" ? (
               <textarea
                 className={`${token.input} min-h-[96px] w-full min-w-0 resize-y py-2 leading-5`}
@@ -568,6 +575,8 @@ export function GenericFormRenderer({
                 }}
               />
             )}
+            {field.helperText && <div className="mt-1 text-xs leading-5 text-[#8b95a7]">{field.helperText}</div>}
+            </div>
           </label>
         );
       })}
