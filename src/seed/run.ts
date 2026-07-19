@@ -143,6 +143,7 @@ function collectPermissionPageSeeds() {
 
 // demo 角色按钮矩阵（教务系统常规分工）：查看类动作全员可用；
 // 教师=考勤/请假/补课/学员跟进；学管=教务/学员/招生/审批全操作（财务与系统配置只读）；
+// 扣费记录归属财务流水，但看到扣费记录页的角色仍默认可用详情/取消扣费行操作。
 // 顾问=招生全操作+学员建档报名；校长=全部。租户可在角色管理里继续调整。
 const READONLY_ACTION_VERBS = new Set([
   "query", "detail", "refresh", "export", "print",
@@ -161,10 +162,12 @@ const SALES_ACTION_CODES = new Set([
   "student_list.create", "student_list.edit", "student_list.batchEnroll", "student_list.followup",
   "student_followup_list.create",
 ]);
+const CHARGE_RECORD_VISIBLE_ACTION_CODES = new Set(["charge_record.detail", "charge_record.reverse"]);
 
 function roleButtonPermission(prefix: string, page: { pageCode: string; module: string; actionCodes: string[] }) {
   const verbOf = (code: string) => (code.startsWith(`${page.pageCode}.`) ? code.slice(page.pageCode.length + 1) : code.split(".").pop() ?? code);
   return page.actionCodes.filter((code) => {
+    if (page.pageCode === "charge_record" && CHARGE_RECORD_VISIBLE_ACTION_CODES.has(code)) return true;
     if (READONLY_ACTION_VERBS.has(verbOf(code))) return true;
     switch (prefix) {
       case "rr_principal": return true;
