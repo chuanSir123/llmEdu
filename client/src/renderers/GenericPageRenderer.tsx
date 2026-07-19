@@ -556,9 +556,11 @@ export function GenericPageRenderer({
       if (!(await appConfirm({ message: `未勾选学员，将对全部 ${attendanceStudents.length} 名学员执行，是否继续？` }))) return;
     }
     const selectedAttendanceStudents = attendanceStudents.filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)));
-    const submitFields = fields.filter((field) => !(field.computed && !field.editable));
+    const submitFields = ("action" in modal && modal.action?.fields?.length ? modal.action.fields : modalDsl.fields)
+      .filter((field) => field.key !== "id" && !(field.computed && !field.editable));
+    const submitFieldKeys = new Set(submitFields.map((field) => field.key));
     const stripComputedFields = (source: Record<string, unknown>) => Object.fromEntries(
-      Object.entries(source).filter(([key]) => !submitFields.length || submitFields.some((field) => field.key === key) || key.startsWith("__"))
+      Object.entries(source).filter(([key]) => !submitFields.length || submitFieldKeys.has(key) || key.startsWith("__"))
     );
     if (hasAttendanceTable && attendanceMode === "cancel_attendance" && selectedAttendanceStudents.some((student) => Number(student.charged_count ?? 0) > 0)) {
       toast.error("选中学员含有已扣费，请直接取消扣费");
