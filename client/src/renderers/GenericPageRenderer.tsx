@@ -116,7 +116,11 @@ export function GenericPageRenderer({
   const remoteProductOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
   const remotePromotionOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
 
-  const createAction = toolbarDsl.find((action) => action.actionCode.endsWith(".create") || action.actionCode.endsWith(".enroll"));
+  const createAction = dsl.layout === "enrollment"
+    ? toolbarDsl.find((action) => action.actionCode.endsWith(".enroll"))
+      ?? toolbarDsl.find((action) => action.apiCode === dsl.createApi || action.apiCode === "contract_list.create")
+      ?? toolbarDsl.find((action) => action.actionCode.endsWith(".create"))
+    : toolbarDsl.find((action) => action.actionCode.endsWith(".create") || action.actionCode.endsWith(".enroll"));
   const enrollmentFields = dsl.layout === "enrollment" ? (createAction?.fields ?? modalDsl.fields) : [];
   const enrollmentConfig = dsl.presentation?.enrollment ?? {};
   const enrollmentProductConfig = enrollmentConfig.productTable ?? {};

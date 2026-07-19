@@ -298,6 +298,11 @@ function nextDay(value: unknown) {
 }
 
 function appendEqFilter(where: string[], values: unknown[], expr: string, field: string, value: unknown, op = "=") {
+  if (op === "=" && field === "status" && typeof value === "string" && value && !value.includes(".")) {
+    values.push(value, `${field}.${value}`);
+    where.push(`${expr} in ($${values.length - 1}, $${values.length})`);
+    return;
+  }
   values.push(value);
   where.push(`${expr} ${op} $${values.length}`);
 }
