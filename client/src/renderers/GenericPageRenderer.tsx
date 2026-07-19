@@ -113,6 +113,7 @@ export function GenericPageRenderer({
   const [dictionaryOptionIds, setDictionaryOptionIds] = useState<Record<string, Record<string, string>>>({});
   const [dictionaryMeta, setDictionaryMeta] = useState<Record<string, Record<string, Record<string, unknown>>>>({});
   const [enrollmentValue, setEnrollmentValue] = useState<Record<string, unknown>>({});
+  const [businessRules, setBusinessRules] = useState<Record<string, Record<string, unknown>>>({});
   const remoteProductOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
   const remotePromotionOptionsRef = useRef<Array<{ value: string; label: string; row: Record<string, unknown> }>>([]);
 
@@ -141,6 +142,23 @@ export function GenericPageRenderer({
   }, [dsl.layout, selectedProductIds]);
 
 
+  const businessRuleRequirements = useMemo(() =>
+    [...toolbarDsl, ...(tableDsl.rowActions ?? [])]
+      .map((action) => action.requiresBusinessRule)
+      .filter(Boolean) as Array<{ ruleCode: string; path: string; equals?: unknown }>,
+    [JSON.stringify(toolbarDsl), JSON.stringify(tableDsl.rowActions ?? [])]
+  );
+
+  const businessRuleValue = (rule: Record<string, unknown> | undefined, path: string) =>
+    path.split(".").reduce<unknown>((current, key) => current && typeof current === "object" && !Array.isArray(current) ? (current as Record<string, unknown>)[key] : undefined, rule);
+
+  const actionBusinessRuleAllowed = (action: ActionDsl) => {
+    const requirement = action.requiresBusinessRule;
+    if (!requirement) return true;
+    const actual = businessRuleValue(businessRules[requirement.ruleCode], requirement.path);
+    return actual === (requirement.equals ?? true);
+  };
+
   const dictionaryCodes = useMemo(() => {
     const actions = [...toolbarDsl, ...(tableDsl.rowActions ?? [])];
     const actionFields = actions.flatMap((action) => action.fields ?? []);
@@ -153,6 +171,30 @@ export function GenericPageRenderer({
     ]);
     return [...new Set([...fieldCodes, ...editorCodes, ...refCodes])];
   }, [dsl.pageCode, JSON.stringify(filtersDsl), JSON.stringify(tableDsl.columns ?? []), JSON.stringify(tableDsl.rowActions ?? []), JSON.stringify(modalDsl.fields ?? []), JSON.stringify(toolbarDsl)]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!businessRuleRequirements.length || scope !== "tenant") {
+      setBusinessRules({});
+      return;
+    }
+    Promise.all([...new Set(businessRuleRequirements.map((item) => item.ruleCode))].map(async (ruleCode) => {
+      const result = await GatewayClient.executeApi({
+        scope,
+        schemaName,
+        pageCode: "business_rule_list",
+        apiCode: "business_rule_list.query",
+        params: { filters: { rule_code: ruleCode }, page: 1, pageSize: 20 }
+      });
+      const data = result.data as { rows?: Array<Record<string, unknown>> };
+      const row = (data.rows ?? []).find((item) => String(item.rule_code ?? item.ruleCode ?? "") === ruleCode) ?? data.rows?.[0];
+      const ruleJson = row?.rule_json && typeof row.rule_json === "object" && !Array.isArray(row.rule_json) ? row.rule_json as Record<string, unknown> : {};
+      return [ruleCode, ruleJson] as const;
+    }))
+      .then((entries) => { if (!cancelled) setBusinessRules(Object.fromEntries(entries)); })
+      .catch(() => { if (!cancelled) setBusinessRules({}); });
+    return () => { cancelled = true; };
+  }, [scope, schemaName, JSON.stringify(businessRuleRequirements)]);
 
   useEffect(() => {
     let cancelled = false;
@@ -476,6 +518,19 @@ export function GenericPageRenderer({
       const missing = missingRequiredLabels(fields, modal.value);
       if (missing.length) {
         toast.error(`请填写必填项：${missing.join("、")}`);
+        return;
+      }
+      const fundsType = String(modal.value.funds_type ?? "");
+      if (fundsType === "CONTRACT_PAY" && !modal.value.contract_id) {
+        toast.error("合同收款必须先选择合同；如需预存，请使用「预存收款」。");
+        return;
+      }
+      if (fundsType === "PRE_STORE" && modal.value.contract_id) {
+        toast.error("预存收款不关联合同；合同收款请从合同列表或「合同收款」入口发起。");
+        return;
+      }
+      if (fundsType === "PRE_STORE" && action && !actionBusinessRuleAllowed(action)) {
+        toast.error(action.disabledMessage ?? "请从合同列表发起收款");
         return;
       }
     }
@@ -1673,7 +1728,7 @@ export function GenericPageRenderer({
             if ((action.type === "open_ai_customization" || action.actionType === "open_ai_customization") && schemaName && schemaName.endsWith("_test")) return false;
             return true;
           }).map((action) => (
-            <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} disabled={!evaluateWhen(action.enabledWhen, {})} />
+            <ActionRenderer key={action.actionCode} action={action} onClick={onToolbar} disabled={!evaluateWhen(action.enabledWhen, {}) || !actionBusinessRuleAllowed(action)} disabledTitle={!actionBusinessRuleAllowed(action) ? action.disabledMessage : undefined} />
           ))}
         </div>
       </div>

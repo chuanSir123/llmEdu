@@ -166,7 +166,7 @@ const userSelect = { pageCode: "user_list", apiCode: "user_list.query", labelFie
 const payWaySelect = { pageCode: "pay_way_list", apiCode: "pay_way_list.query", labelField: "name" };
 const productSelect = { pageCode: "product_list", apiCode: "product_list.query", labelField: "name", filters: { status: "ACTIVE" } };
 const promotionSelect = { pageCode: "promotion_list", apiCode: "promotion_list.query", labelField: "name", filters: { status: "ACTIVE" } };
-const contractSelect = { pageCode: "contract_list", apiCode: "contract_list.query", labelField: "contract_no" };
+const contractSelect = { pageCode: "contract_list", apiCode: "contract_list.query", labelField: "contract_no", filters: { contract_status: "ACTIVE" }, pageSize: 200 };
 const contractProductSelect = { pageCode: "contract_product_list", apiCode: "contract_product_list.query", labelField: "product_name" };
 const miniClassSelect = { pageCode: "mini_class_list", apiCode: "mini_class_list.query", labelField: "name" };
 const oneOnNGroupSelect = { pageCode: "one_on_n_group_list", apiCode: "one_on_n_group_list.query", labelField: "name" };
@@ -392,10 +392,43 @@ const fundsCreateFields = [
   { key: "contract_id", label: "合同", type: "text", optionSource: contractSelect },
   { key: "student_id", label: "学员", type: "text", optionSource: studentSelect },
   { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect },
-  { key: "transaction_amount", label: "收款金额", type: "number", required: true, min: 0.01 },
+  { key: "transaction_amount", label: "收款金额", type: "number", required: true, validation: { min: 0.01 }, helperText: "收款金额必须大于 0。" },
   { key: "pay_way_config_id", label: "支付方式", type: "text", optionSource: payWaySelect, required: true },
   { key: "transaction_time", label: "收款时间", type: "datetime" },
   { key: "funds_type", label: "流水类型", type: "text" },
+  { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
+];
+
+const contractPaymentFields = [
+  { key: "funds_type", label: "流水类型", type: "text", hidden: true },
+  {
+    key: "contract_id",
+    label: "合同",
+    type: "text",
+    optionSource: contractSelect,
+    searchable: true,
+    required: true,
+    helperText: "请选择有效合同；选中后会自动带出学员、校区、合同编号，并将收款金额预填为应收减已收金额。",
+    fillOnSelect: { student_id: "student_id", organization_id: "organization_id", contract_no: "contract_no", student_name: "student_name", organization_name: "organization_name", total_amount: "total_amount", paid_amount: "paid_amount" }
+  },
+  { key: "student_id", label: "学员ID", type: "text", hidden: true },
+  { key: "organization_id", label: "校区ID", type: "text", hidden: true },
+  { key: "contract_no", label: "合同编号", type: "text", readonly: true },
+  { key: "student_name", label: "学员", type: "text", readonly: true },
+  { key: "organization_name", label: "校区", type: "text", readonly: true },
+  { key: "transaction_amount", label: "可收/本次收款", type: "number", required: true, validation: { min: 0.01 }, helperText: "默认按合同应收金额减已收金额预填，可按实际收款调整，但必须大于 0。" },
+  { key: "pay_way_config_id", label: "支付方式", type: "text", optionSource: payWaySelect, required: true },
+  { key: "transaction_time", label: "收款时间", type: "datetime" },
+  { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
+];
+
+const preStorePaymentFields = [
+  { key: "funds_type", label: "流水类型", type: "text", hidden: true },
+  { key: "student_id", label: "学员", type: "text", optionSource: studentSelect, searchable: true, required: true },
+  { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect, searchable: true, required: true },
+  { key: "transaction_amount", label: "预存金额", type: "number", required: true, validation: { min: 0.01 }, helperText: "预存收款不关联合同；若规则关闭，请从合同列表发起收款。" },
+  { key: "pay_way_config_id", label: "支付方式", type: "text", optionSource: payWaySelect, required: true },
+  { key: "transaction_time", label: "收款时间", type: "datetime" },
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
 
@@ -2151,7 +2184,8 @@ export const actionDslSeeds: Array<{ actionCode: string; actionName: string; act
   { actionCode: "charge_record.create", actionName: "新增扣费", actionType: "open_modal", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { actionCode: "charge_record.create", actionName: "新增扣费", actionType: "open_modal", modalCode: "charge_confirm_modal", afterSuccess: [{ type: "toast", message: "扣费成功" }, { type: "refreshPage" }] } },
   { actionCode: "charge_record.detail", actionName: "扣费详情", actionType: "open_modal", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { actionCode: "charge_record.detail", actionName: "扣费详情", actionType: "open_modal", modalCode: "charge_detail_modal" } },
   { actionCode: "charge_record.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { actionCode: "charge_record.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "charge_record.query" } },
-  { actionCode: "funds_history.create", actionName: "新增收款", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.create", actionName: "新增收款", actionType: "open_modal", modalCode: "funds_add_modal", afterSuccess: [{ type: "toast", message: "收款成功" }, { type: "refreshPage" }] } },
+  { actionCode: "funds_history.create", actionName: "合同收款", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.create", actionName: "合同收款", actionType: "open_modal", modalCode: "funds_add_modal", afterSuccess: [{ type: "toast", message: "收款成功" }, { type: "refreshPage" }] } },
+  { actionCode: "funds_history.prestore", actionName: "预存收款", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.prestore", actionName: "预存收款", actionType: "open_modal", modalCode: "funds_add_modal", afterSuccess: [{ type: "toast", message: "预存成功" }, { type: "refreshPage" }] } },
   { actionCode: "funds_history.detail", actionName: "收款详情", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.detail", actionName: "收款详情", actionType: "open_modal", modalCode: "funds_detail_modal" } },
   { actionCode: "funds_history.delete", actionName: "作废收款", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.delete", actionName: "作废收款", actionType: "open_modal", apiCode: "funds.delete", variant: "danger", confirm: "作废后将回滚排款、优惠、业绩与电子账户，确认继续？", afterSuccess: [{ type: "toast", message: "收款已作废并回滚" }, { type: "refreshPage" }] } },
   { actionCode: "funds_history.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "funds_history.query" } },
@@ -2905,7 +2939,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         modalTitle: "合同收款",
         fields: contractFundsFields,
         defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: "$now" },
-        mapRowToValue: { contract_id: "id", student_id: "student_id", organization_id: "organization_id", contract_no: "contract_no", student_name: "student_name", organization_name: "organization_name" },
+        mapRowToValue: { contract_id: "id", student_id: "student_id", organization_id: "organization_id", contract_no: "contract_no", student_name: "student_name", organization_name: "organization_name", total_amount: "total_amount", paid_amount: "paid_amount" },
         visibleWhen: { contract_status: "ACTIVE" }
       },
       {
@@ -3274,7 +3308,8 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
 
   if (page.page === "funds_history") {
     baseDsl.toolbar = [
-      { actionCode: "funds_history.create", label: "新增收款", type: "open_modal", variant: "primary", modalTitle: "新增收款", fields: fundsCreateFields, defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: "$now" } },
+      { actionCode: "funds_history.create", label: "合同收款", type: "open_modal", variant: "primary", apiCode: "funds_history.create", modalTitle: "合同收款", fields: contractPaymentFields, defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: "$now" } },
+      { actionCode: "funds_history.prestore", label: "预存收款", type: "open_modal", apiCode: "funds_history.create", modalTitle: "预存收款", fields: preStorePaymentFields, defaultValues: { funds_type: "PRE_STORE", transaction_time: "$now" }, requiresBusinessRule: { ruleCode: "funds_create_rule", path: "allowPreStoreWithoutContract", equals: true }, disabledMessage: "请从合同列表发起收款" },
       { actionCode: "funds_history.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
@@ -3282,7 +3317,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "funds_history.delete", label: "作废", type: "open_modal", apiCode: "funds.delete", modalTitle: "作废收款", fields: fundsVoidFields, mapRowToValue: { id: "id" }, variant: "danger", confirm: "作废后将回滚排款、优惠、业绩与电子账户，确认继续？" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["funds_history.detail", "funds_history.delete"];
-    baseDsl.modal.fields = fundsCreateFields;
+    baseDsl.modal.fields = contractPaymentFields;
   }
 
 
