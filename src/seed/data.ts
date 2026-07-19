@@ -845,7 +845,7 @@ export const pages: PageSeed[] = [
       { key: "consumed_real_amount", label: "已扣实收" }
     ],
     joins: [
-      { table: "contract", alias: "ct", on: { left: "contract_id", right: "id" }, fields: [{ source: "id", as: "contract_no" }, { source: "student_id", as: "student_id" }] },
+      { table: "contract", alias: "ct", on: { left: "contract_id", right: "id" }, fields: [{ source: "id", as: "contract_no" }, { source: "student_id", as: "student_id" }, { source: "contract_status", as: "contract_status" }] },
       { table: "product", alias: "pd", on: { left: "product_id", right: "id" }, fields: [{ source: "name", as: "product_name" }] }
     ]
   },
@@ -2845,6 +2845,35 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "student_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["student_list.detail", "student_list.edit", "student_list.contracts", "student_list.prestore", "student_list.followup", "student_list.delete"];
+  }
+
+  if (page.page === "contract_product_list") {
+    baseDsl.table.rowActions = [
+      { actionCode: "contract_product_list.detail", label: "详情", type: "open_modal" },
+      {
+        actionCode: "contract_product_list.refund",
+        label: "申请退费",
+        type: "open_modal",
+        apiCode: "refund_record.create",
+        modalTitle: "申请退费",
+        fields: refundCreateFields,
+        defaultValues: { refund_time: "$now" },
+        mapRowToValue: {
+          contract_product_id: "id",
+          student_id: "student_id",
+          contract_id: "contract_id",
+          contract_no: "contract_no",
+          product_name: "product_name"
+        },
+        visibleWhen: {
+          remaining_real_amount: { op: "gt", value: 0 },
+          contract_status: { op: "notIn", value: ["REFUNDED", "CLOSED", "CANCELLED"] }
+        }
+      },
+      { actionCode: "contract_product_list.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "contract_product_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["contract_product_list.detail", "contract_product_list.refund", "contract_product_list.edit", "contract_product_list.delete"];
   }
 
   if (page.page === "contract_list") {
