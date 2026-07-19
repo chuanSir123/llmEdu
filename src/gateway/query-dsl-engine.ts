@@ -3,7 +3,7 @@ import { qIdent } from "../db/schema-resolver.js";
 import type { SessionUser } from "../types.js";
 import { getOrganizationScope } from "../permission/permission.service.js";
 import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
-import { dictionaryCompatValues, normalizeDictionaryInputValues } from "../dictionary.service.js";
+import { normalizeDictionaryInputValues } from "../dictionary.service.js";
 
 const FIELD = /^[a-z][a-z0-9_]{0,62}$/;
 
@@ -297,19 +297,7 @@ function nextDay(value: unknown) {
   return date.toISOString().slice(0, 10);
 }
 
-// 字典值双格式兼容统一走 dictionary.service（历史数据可能存 ACTIVE 或 status.ACTIVE 两种形态）
-const statusCompatValues = dictionaryCompatValues;
-
 function appendEqFilter(where: string[], values: unknown[], expr: string, field: string, value: unknown, op = "=") {
-  const compatValues = op === "=" ? statusCompatValues(field, value) : undefined;
-  if (compatValues) {
-    const placeholders = compatValues.map((item) => {
-      values.push(item);
-      return `$${values.length}`;
-    });
-    where.push(`${expr} in (${placeholders.join(", ")})`);
-    return;
-  }
   values.push(value);
   where.push(`${expr} ${op} $${values.length}`);
 }
@@ -521,17 +509,10 @@ function buildWhereClause(where: WhereCondition[], params: Record<string, unknow
     if (cond.ignoreEmpty && (val === undefined || val === null || val === "")) continue;
 
     switch (cond.op) {
-      case "eq": {
-        const compatValues = statusCompatValues(field, val);
-        if (compatValues) {
-          const placeholders = compatValues.map((item) => { values.push(item); return `$${idx++}`; });
-          fragments.push(`${expr} in (${placeholders.join(", ")})`);
-        } else {
-          values.push(val);
-          fragments.push(`${expr} = $${idx++}`);
-        }
+      case "eq":
+        values.push(val);
+        fragments.push(`${expr} = $${idx++}`);
         break;
-      }
       case "ilike":
         values.push(`%${val}%`);
         fragments.push(`cast(${expr} as text) ilike $${idx++}`);

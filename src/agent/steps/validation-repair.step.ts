@@ -329,7 +329,7 @@ async function validate(diffs: DslDiff[], schemaName: string): Promise<{ valid: 
       const dictCode = String(diff.resourceDef.dictCode ?? diff.targetCode ?? "");
       const itemValue = String(diff.resourceDef.itemValue ?? diff.resourceDef.item_value ?? "");
       if (!/^[a-z][a-z0-9_]{1,80}$/.test(dictCode)) errors.push(`dictionary ${diff.targetCode} dictCode 不合法`);
-      if (!/^[A-Z][A-Z0-9_]{1,80}$/.test(itemValue)) errors.push(`dictionary ${diff.targetCode} itemValue 必须是大写英文枚举值`);
+      if (!/^[A-Z][A-Z0-9_]{1,80}$/.test(itemValue)) errors.push(`dictionary ${diff.targetCode} itemValue 必须是大写英文编码`);
       if (!String(diff.resourceDef.itemLabel ?? diff.resourceDef.item_label ?? "").trim()) errors.push(`dictionary ${diff.targetCode} missing itemLabel`);
     }
     if (diff.targetType === "business_rule" && diff.resourceDef) {

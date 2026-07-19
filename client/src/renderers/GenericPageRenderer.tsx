@@ -173,14 +173,10 @@ export function GenericPageRenderer({
       const ids: Record<string, string> = {};
       const meta: Record<string, Record<string, unknown>> = {};
       for (const row of data.rows ?? []) {
-        const itemValue = String(row.itemValue ?? row.item_value ?? "");
         const optionId = String(row.value ?? "");
-        const label = String(row.label ?? row.item_label ?? itemValue ?? optionId);
-        if (itemValue) labels[itemValue] = label;
+        const label = String(row.label ?? row.item_label ?? optionId);
         if (optionId) labels[optionId] = label;
-        if (itemValue) ids[itemValue] = optionId;
         if (optionId) ids[optionId] = optionId;
-        if (itemValue) meta[itemValue] = row.metadata ?? row.metadata_json ?? {};
         if (optionId) meta[optionId] = row.metadata ?? row.metadata_json ?? {};
       }
       return [dictCode, { labels, ids, meta }] as const;
@@ -956,6 +952,18 @@ export function GenericPageRenderer({
     return `${token.input} ${compact ? "h-7 min-w-[120px] px-2 text-xs" : ""} ${extra}`.trim();
   }
 
+  function filterLabel(field: typeof filtersDsl[number]) {
+    return field.label ?? field.title ?? field.key;
+  }
+
+  function selectFilterPlaceholder(field: typeof filtersDsl[number]) {
+    return field.placeholder ?? filterLabel(field);
+  }
+
+  function textFilterPlaceholder(field: typeof filtersDsl[number]) {
+    return field.placeholder ?? `请输入${filterLabel(field)}`;
+  }
+
   function renderFilterInput(field: typeof filtersDsl[number]) {
     if (field.type === "date_range" || field.type === "daterange") {
       const range = Array.isArray(filters[field.key]) ? filters[field.key] as unknown[] : currentMonthRange();
@@ -999,8 +1007,8 @@ export function GenericPageRenderer({
           compact
           className="min-w-[150px]"
           value={String(filters[field.key] ?? "")}
-          placeholder="全部"
-          clearLabel="全部"
+          placeholder={selectFilterPlaceholder(field)}
+          clearLabel={selectFilterPlaceholder(field)}
           options={Object.entries(dictOptions ?? {}).map(([optionValue, optionLabel]) => ({ value: optionValue, label: String(optionLabel) }))}
           onChange={(next) => setFilters({ ...filters, [field.key]: next })}
         />
@@ -1026,8 +1034,8 @@ export function GenericPageRenderer({
           scope={scope}
           schemaName={schemaName}
           value={String(filters[field.key] ?? "")}
-          placeholder="全部"
-          clearLabel="全部"
+          placeholder={selectFilterPlaceholder(field)}
+          clearLabel={selectFilterPlaceholder(field)}
           optionSource={filterSource}
           onChange={(next) => setFilters({ ...filters, [field.key]: next })}
         />
@@ -1039,7 +1047,7 @@ export function GenericPageRenderer({
         type={inputType}
         className={filterControlClass()}
         value={String(filters[field.key] ?? "")}
-        placeholder={field.placeholder}
+        placeholder={textFilterPlaceholder(field)}
         onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
         onKeyDown={(event) => {
           if (event.key === "Enter") { setPage(1); void load(filters, 1); }

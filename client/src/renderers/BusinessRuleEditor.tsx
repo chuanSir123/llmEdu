@@ -1,5 +1,5 @@
 import { token } from "../styles/designTokens";
-import { dictionaryOptionEntries, firstDictionaryOptionValue, preferredDictionaryValue, dictionaryItemValue } from "../dsl/dictionaryLabels";
+import { dictionaryOptionEntries, firstDictionaryOptionValue, dictionaryItemValue } from "../dsl/dictionaryLabels";
 
 type RuleValue = Record<string, unknown>;
 type ConditionRow = { field?: string; operator?: string; value?: unknown; valueField?: string; message?: string };
@@ -52,7 +52,7 @@ function categoryValues(rule: RuleValue) {
 }
 
 function categoryLabels(values: string[], options: Record<string, string>) {
-  return values.map((value) => options[value] ?? options[preferredDictionaryValue(options, value)] ?? value).join("、") || "未设置";
+  return values.map((value) => options[value] ?? value).join("、") || "未设置";
 }
 
 function sectionValues(rule: RuleValue, categoryKey: string): RuleValue {
@@ -66,7 +66,7 @@ function sectionRows(rule: RuleValue, categoryKey: string, key: "conditions" | "
 
 function previewItems(rule: RuleValue, selectedCategories: string[], categoryOptions: Record<string, string>, businessTypeOptions: Record<string, string>) {
   const businessType = String(rule.businessType ?? "");
-  const businessLabel = businessTypeOptions[businessType] ?? businessTypeOptions[preferredDictionaryValue(businessTypeOptions, businessType)] ?? (businessType || "未设置业务类型");
+  const businessLabel = businessTypeOptions[businessType] ?? (businessType || "未设置业务类型");
   const categoryText = categoryLabels(selectedCategories, categoryOptions);
   return [`业务类型：${businessLabel}`, `规则分类：${categoryText}`, `保存后将按所选分类生成/更新同一业务类型下的规则设置`];
 }
@@ -76,7 +76,7 @@ function displayValue(key: string, value: unknown, ruleSections: ReturnType<type
   const section = Object.values(ruleSections).find((item) => item.selects?.some((select) => select.key === key));
   const select = section?.selects?.find((item) => item.key === key);
   const options = select?.options ?? {};
-  return options[String(value)] ?? options[preferredDictionaryValue(options, value)] ?? String(value);
+  return options[String(value)] ?? String(value);
 }
 
 export function BusinessRuleEditor({ value, onChange, readonly = false, valueLabels = {}, editorSchema, lockBusinessType = false }: { value: unknown; onChange: (next: RuleValue) => void; readonly?: boolean; valueLabels?: Record<string, Record<string, string>>; editorSchema?: unknown; lockBusinessType?: boolean }) {
@@ -117,7 +117,7 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
       {readonly ? (
         <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{displayValue(field.key, values[field.key], ruleSections)}</div>
       ) : (
-        <select className={token.input} value={preferredDictionaryValue(field.options ?? {}, values[field.key])} onChange={(event) => patchSection(categoryKey, field.key, event.target.value)}>
+        <select className={token.input} value={String(values[field.key] ?? "")} onChange={(event) => patchSection(categoryKey, field.key, event.target.value)}>
           <option value="">不设置</option>
           {optionEntries(field.options ?? {}).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}
         </select>
@@ -227,9 +227,9 @@ export function BusinessRuleEditor({ value, onChange, readonly = false, valueLab
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-[#5f6b7a]">业务类型</span>
           {readonly ? (
-            <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{businessTypeOptions[String(rule.businessType)] ?? businessTypeOptions[preferredDictionaryValue(businessTypeOptions, rule.businessType)] ?? String(rule.businessType ?? "未设置")}</div>
+            <div className="min-h-9 border border-[#dde3ee] bg-[#f7f8fa] px-3 py-2 text-[#263445]">{businessTypeOptions[String(rule.businessType)] ?? String(rule.businessType ?? "未设置")}</div>
           ) : (
-            <select className={token.input} value={preferredDictionaryValue(businessTypeOptions, rule.businessType)} disabled={lockBusinessType} onChange={(event) => patchBusinessType(event.target.value)}>
+            <select className={token.input} value={String(rule.businessType ?? "")} disabled={lockBusinessType} onChange={(event) => patchBusinessType(event.target.value)}>
               <option value="">请选择</option>
               {optionEntries(businessTypeOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}
             </select>

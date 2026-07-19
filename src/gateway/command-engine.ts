@@ -46,7 +46,7 @@ function str(value: unknown, fallback = "") {
   return value === undefined || value === null || value === "" ? fallback : String(value);
 }
 
-// 字典值双格式兼容：导入/助手链路可能传字典项 ID 形态（如 charge_type.NORMAL），业务分支与落库统一使用裸值
+// 业务分支读取数据字典项的业务编码部分，持久化和接口仍使用字典项 ID。
 function dictBare(value: unknown, fallback = "") {
   const text = str(value, fallback);
   const dotIndex = text.indexOf(".");

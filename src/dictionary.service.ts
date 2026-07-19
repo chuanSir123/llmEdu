@@ -105,21 +105,6 @@ export const SYSTEM_DICTIONARIES: Record<string, Record<string, { label: string;
   fulfillment_status: { PENDING: { label: "待履约" }, PROCESSING: { label: "处理中" }, SUCCESS: { label: "已完成" }, FAILED: { label: "履约失败" } }
 };
 
-/** 历史枚举值→当前字典项值别名；用于兼容旧数据，不再作为可选项写入字典。 */
-const LEGACY_DICTIONARY_VALUE_ALIASES: Record<string, Record<string, string>> = {
-  business_type: {
-    contract: "contract_create",
-    funds: "funds_create",
-    course: "course_create",
-    refund: "refund_create"
-  }
-};
-
-function canonicalDictionaryItemValue(dictCode: string, value: unknown) {
-  const raw = dictionaryItemValueFromId(dictCode, value);
-  return LEGACY_DICTIONARY_VALUE_ALIASES[dictCode]?.[raw] ?? raw;
-}
-
 /** 字段名→字典码别名（单一来源；seed 与运行时共用，不要在别处再复制一份）。 */
 export const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   category: "business_rule_category",
@@ -155,32 +140,12 @@ export function dictionaryItemId(dictCode: string, itemValue: unknown) {
   return `${dictCode}.${String(itemValue ?? "")}`;
 }
 
-function dictionaryItemValueFromId(dictCode: string, value: unknown) {
-  const text = String(value ?? "");
-  const prefix = `${dictCode}.`;
-  return text.startsWith(prefix) ? text.slice(prefix.length) : text;
-}
-
 export function systemDictionaryLabel(dictCode: string, itemValue: unknown) {
-  const value = canonicalDictionaryItemValue(dictCode, itemValue);
-  return SYSTEM_DICTIONARIES[dictCode]?.[value]?.label;
+  return SYSTEM_DICTIONARIES[dictCode]?.[String(itemValue ?? "")]?.label;
 }
 
 export function dictionaryCodeForFieldName(fieldName: string) {
   return DICTIONARY_FIELD_ALIASES[fieldName] ?? (SYSTEM_DICTIONARIES[fieldName] ? fieldName : undefined);
-}
-
-/**
- * 字典值查询展开：业务入参可使用字典项 ID（status.ACTIVE）或 item_value（ACTIVE）。
- * 查询/登录判断需要同时匹配两种标准形态。返回 undefined 表示该字段/值无需展开。
- */
-export function dictionaryCompatValues(field: string, value: unknown): string[] | undefined {
-  const text = String(value ?? "");
-  if (!text || !SYSTEM_DICTIONARIES[field]) return undefined;
-  const raw = dictionaryItemValueFromId(field, text);
-  const canonical = canonicalDictionaryItemValue(field, raw);
-  if (!SYSTEM_DICTIONARIES[field][canonical]) return undefined;
-  return [...new Set([raw, dictionaryItemId(field, raw), canonical, dictionaryItemId(field, canonical)])];
 }
 
 export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[]) {
@@ -200,11 +165,11 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
     `select id, dict_code, item_value, item_label
        from admin.dictionary_item
       where dict_code = any($2::text[]) and deleted = false
-        and (id = any($1::text[]) or item_value = any($1::text[]) or item_label = any($1::text[]))
+        and (id = any($1::text[]) or item_label = any($1::text[]))
         and ((schema_scope = 'admin' and schema_name = '') or (schema_scope = 'tenant' and schema_name = $3))`,
     [values, dictCodes, schemaName]
   );
-  const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_value}`, row.id], [`${row.dict_code}:${row.item_label}`, row.id]]));
+  const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_label}`, row.id]]));
   for (const item of candidates) {
     if (Array.isArray(item.value)) {
       normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? value);

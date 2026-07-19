@@ -1,5 +1,5 @@
 import { token } from "../styles/designTokens";
-import { dictionaryOptionEntries, firstDictionaryOptionValue, preferredDictionaryValue } from "../dsl/dictionaryLabels";
+import { dictionaryOptionEntries, firstDictionaryOptionValue } from "../dsl/dictionaryLabels";
 
 type Step = {
   stepCode?: string;
@@ -53,7 +53,7 @@ export function ApprovalFlowEditor({
           <span className="text-[#5f6b7a]">触发事件</span>
           <select
             className={token.input}
-            value={preferredDictionaryValue(triggerEvents, asObject(config.trigger).event)}
+            value={String(asObject(config.trigger).event ?? "")}
             onChange={(event) => updateConfig({ trigger: { ...asObject(config.trigger), event: event.target.value } })}
           >
             <option value="">请选择</option>
@@ -64,7 +64,7 @@ export function ApprovalFlowEditor({
           <span className="text-[#5f6b7a]">触发页面</span>
           <select
             className={token.input}
-            value={preferredDictionaryValue(pageOptions, asObject(config.trigger).pageCode)}
+            value={String(asObject(config.trigger).pageCode ?? "")}
             onChange={(event) => updateConfig({ trigger: { ...asObject(config.trigger), pageCode: event.target.value } })}
           >
             <option value="">请选择</option>
@@ -75,7 +75,7 @@ export function ApprovalFlowEditor({
           <span className="text-[#5f6b7a]">审批后动作</span>
           <select
             className={token.input}
-            value={preferredDictionaryValue(actionOptions, (Array.isArray(config.afterApproved) ? config.afterApproved[0] as Record<string, unknown> : {})?.actionCode)}
+            value={String((Array.isArray(config.afterApproved) ? config.afterApproved[0] as Record<string, unknown> : {})?.actionCode ?? "")}
             onChange={(event) => updateConfig({ afterApproved: event.target.value ? [{ type: "enable_action", actionCode: event.target.value }] : [] })}
           >
             <option value="">不设置</option>
@@ -93,7 +93,7 @@ export function ApprovalFlowEditor({
         {steps.map((step, index) => (
           <div key={index} className="grid grid-cols-[1.2fr_1fr_56px] gap-2 border-t border-[#e8edf5] px-3 py-2">
             <input className={token.input} value={step.stepName ?? ""} onChange={(event) => updateStep(index, { stepName: event.target.value })} />
-            <select className={token.input} value={preferredDictionaryValue(roleOptions, step.assigneeRole)} onChange={(event) => updateStep(index, { assigneeRole: event.target.value })}>
+            <select className={token.input} value={String(step.assigneeRole ?? "")} onChange={(event) => updateStep(index, { assigneeRole: event.target.value })}>
               <option value="">请选择</option>
               {dictionaryOptionEntries(roleOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
