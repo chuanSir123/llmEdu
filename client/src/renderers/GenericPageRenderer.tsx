@@ -619,6 +619,26 @@ export function GenericPageRenderer({
       openTarget(target, action.label ?? "打开页面", targetFilters(target));
       return;
     }
+    if (action.type === "open_modal" || action.actionType === "open_modal") {
+      if (action.requiresSelection && selectedRowIds.length === 0) {
+        toast.error(action.requiresSelectionMessage ?? "请先选择数据");
+        return;
+      }
+      const resolved = await resolveModalAction(action);
+      if (!resolved) return;
+      const selectedRows = rows.filter((row) => selectedRowIds.includes(String(row.id)));
+      // 跨页多选：sourceKey 为 id 时直接用选中 id 集合，避免翻页后丢失非当前页的选中行
+      const selectedValues = resolved.mapSelectedToValue && selectedRowIds.length
+        ? Object.fromEntries(Object.entries(resolved.mapSelectedToValue).map(([targetKey, sourceKey]) => [
+            targetKey,
+            String(sourceKey) === "id"
+              ? [...selectedRowIds]
+              : selectedRows.map((row) => row[String(sourceKey)]).filter((value) => value !== undefined && value !== null && value !== "")
+          ]))
+        : {};
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(resolved.defaultValues) ?? {}), ...selectedValues }, action: resolved });
+      return;
+    }
     if (action.actionCode.endsWith(".create") || action.actionCode.endsWith(".batchEnroll")) {
       if (action.requiresSelection && selectedRowIds.length === 0) {
         toast.error(action.requiresSelectionMessage ?? "请先选择数据");
@@ -635,12 +655,6 @@ export function GenericPageRenderer({
           ]))
         : {};
       setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...selectedValues }, action });
-      return;
-    }
-    if (action.type === "open_modal" || action.actionType === "open_modal") {
-      const resolved = await resolveModalAction(action);
-      if (!resolved) return;
-      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(resolved.defaultValues) ?? {}) }, action: resolved });
       return;
     }
     if (isImportToolbarAction(action)) {

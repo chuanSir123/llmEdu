@@ -369,7 +369,7 @@ export function GenericFormRenderer({
 
   return (
     <div className={`grid grid-cols-1 gap-x-8 gap-y-4 ${gridClass}`}>
-      {sortWithOrder(fields).filter((field) => fieldVisible(field, value)).map((field) => {
+      {sortWithOrder(fields).filter((field) => !field.hidden && fieldVisible(field, value)).map((field) => {
         const options = presentation?.valueLabels?.[field.key];
         const labelClass =
           labelAlign === "left" && field.type !== "textarea"

@@ -294,7 +294,11 @@ const preStoreFields = [
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
 
-const contextPreStoreFields = preStoreFields.filter((field) => !["student_id"].includes(field.key));
+const contextPreStoreFields = [
+  { key: "student_id", label: "学员", type: "text", hidden: true },
+  { key: "student_name", label: "学员", type: "text", readonly: true },
+  ...preStoreFields.filter((field) => !["student_id"].includes(field.key))
+];
 
 const followupCreateFields = [
   { key: "student_id", label: "学员", type: "text", hidden: true },
@@ -395,7 +399,16 @@ const fundsCreateFields = [
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
 
-const contractFundsFields = fundsCreateFields.filter((field) => !["contract_id", "student_id", "organization_id", "funds_type"].includes(field.key));
+const contractFundsFields = [
+  { key: "contract_id", label: "合同ID", type: "text", hidden: true },
+  { key: "student_id", label: "学员ID", type: "text", hidden: true },
+  { key: "organization_id", label: "校区ID", type: "text", hidden: true },
+  { key: "funds_type", label: "流水类型", type: "text", hidden: true },
+  { key: "contract_no", label: "合同号", type: "text", readonly: true },
+  { key: "student_name", label: "学员", type: "text", readonly: true },
+  { key: "organization_name", label: "校区", type: "text", readonly: true },
+  ...fundsCreateFields.filter((field) => !["contract_id", "student_id", "organization_id", "funds_type"].includes(field.key))
+];
 
 const fundsVoidFields = [
   { key: "id", label: "收款记录", type: "text", hidden: true },
@@ -2814,10 +2827,10 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         label: "预存",
         type: "open_modal",
         apiCode: "funds_history.create",
-        modalTitle: "学员预存",
+        modalTitle: "为学员预存",
         fields: contextPreStoreFields,
         defaultValues: { funds_type: "PRE_STORE", transaction_time: "$now" },
-        mapRowToValue: { student_id: "id", organization_id: "organization_id" }
+        mapRowToValue: { student_id: "id", student_name: "name", organization_id: "organization_id" }
       },
       {
         actionCode: "student_list.followup",
@@ -2863,7 +2876,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         modalTitle: "合同收款",
         fields: contractFundsFields,
         defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: "$now" },
-        mapRowToValue: { contract_id: "id", student_id: "student_id", organization_id: "organization_id" },
+        mapRowToValue: { contract_id: "id", student_id: "student_id", organization_id: "organization_id", contract_no: "contract_no", student_name: "student_name", organization_name: "organization_name" },
         visibleWhen: { contract_status: "ACTIVE" }
       },
       {
