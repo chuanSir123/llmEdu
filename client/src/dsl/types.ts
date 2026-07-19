@@ -30,7 +30,6 @@ export type FieldDsl = {
   searchable?: boolean;
   editable?: boolean;
   computed?: boolean;
-  readonly?: boolean;
   computeExpr?: string;
   required?: boolean;
   validation?: Record<string, unknown>;
