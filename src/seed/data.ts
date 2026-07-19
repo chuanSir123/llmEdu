@@ -2205,7 +2205,7 @@ export const actionDslSeeds: Array<{ actionCode: string; actionName: string; act
   { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "tenant_version_list", module: "system", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "tenant_version_list.query" } },
   { actionCode: "contract_list.refund", actionName: "合同退费", actionType: "open_modal", pageCode: "contract_list", module: "finance", feature: "contract_list", dsl: { actionCode: "contract_list.refund", actionName: "合同退费", actionType: "open_modal", modalCode: "contract_refund_modal", afterSuccess: [{ type: "toast", message: "退费成功" }, { type: "refreshPage" }] } },
   { actionCode: "contract_product_list.refund", actionName: "合同产品退费", actionType: "open_modal", pageCode: "contract_product_list", module: "finance", feature: "contract_product_list", dsl: { actionCode: "contract_product_list.refund", actionName: "合同产品退费", actionType: "open_modal", afterSuccess: [{ type: "toast", message: "退费成功" }, { type: "refreshPage" }] } },
-  { actionCode: "refund_record.delete", actionName: "删除退费记录", actionType: "execute_api", pageCode: "refund_record", module: "finance", feature: "refund_record", dsl: { actionCode: "refund_record.delete", actionName: "删除退费记录", actionType: "execute_api", apiCode: "refund.delete", confirm: "确认删除该退费记录？删除后将恢复合同产品余额", afterSuccess: [{ type: "toast", message: "退费记录已删除，余额已恢复" }, { type: "refreshPage" }] } },
+  { actionCode: "refund_record.delete", actionName: "作废退费记录", actionType: "execute_api", pageCode: "refund_record", module: "finance", feature: "refund_record", dsl: { actionCode: "refund_record.delete", actionName: "作废退费记录", actionType: "execute_api", apiCode: "refund.delete", confirm: "确认作废该退费记录？作废后将恢复合同产品余额", afterSuccess: [{ type: "toast", message: "退费记录已作废，余额已恢复" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.attendance", actionName: "考勤签到", actionType: "open_modal", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.attendance", actionName: "考勤签到", actionType: "open_modal", modalCode: "attendance_check_in_modal", afterSuccess: [{ type: "toast", message: "考勤成功" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.cancel", actionName: "取消排课", actionType: "execute_api", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.cancel", actionName: "取消排课", actionType: "execute_api", apiCode: "course.cancel", confirm: "确认取消该排课？已有考勤或扣费的课程不能取消", variant: "danger", afterSuccess: [{ type: "toast", message: "排课已取消" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.leave", actionName: "学员请假", actionType: "open_modal", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.leave", actionName: "学员请假", actionType: "open_modal", apiCode: "leave_record.create", afterSuccess: [{ type: "toast", message: "请假已登记" }, { type: "refreshPage" }] } },
@@ -2914,7 +2914,13 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         modalTitle: "合同退费",
         fields: contractRefundFields,
         defaultValues: { refund_time: "$now" },
-        mapRowToValue: { contract_id: "id", student_name: "student_name" },
+        mapRowToValue: {
+          contract_id: "id",
+          contract_no: "contract_no",
+          student_id: "student_id",
+          student_name: "student_name",
+          available_refund_real_amount: "paid_amount"
+        },
         visibleWhen: { contract_status: { op: "notIn", value: ["REFUNDED", "CLOSED", "CANCELLED"] } }
       },
       { actionCode: "contract_list.print", label: "打印", type: "display", actionType: "display", printTemplateCode: "contract_receipt_print" },
@@ -3141,12 +3147,11 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
 
   if (page.page === "refund_record") {
     baseDsl.toolbar = [
-      { actionCode: "refund_record.create", label: "新增退费", type: "open_modal", variant: "primary", modalTitle: "新增退费", fields: refundCreateFields, defaultValues: { refund_time: "$now" } },
       { actionCode: "refund_record.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
       { actionCode: "refund_record.detail", label: "详情", type: "open_modal" },
-      { actionCode: "refund_record.delete", label: "删除", type: "execute_api", apiCode: "refund.delete", confirm: "确认删除该退费记录？删除后将恢复合同产品余额", variant: "danger" }
+      { actionCode: "refund_record.delete", label: "作废", type: "execute_api", apiCode: "refund.delete", confirm: "确认作废该退费记录？作废后将恢复合同产品余额", variant: "danger" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["refund_record.detail", "refund_record.delete"];
     baseDsl.modal.fields = refundCreateFields;
@@ -4319,7 +4324,7 @@ export const skillContentMap: Record<string, string> = {
   contract_list: "# 合同列表\n\n## 功能描述\n跟踪合同状态、应收实收和付款进度，支持合同收款操作。\n\n## 使用说明\n- 点击「新增合同」创建合同\n- 行操作支持收款、详情、编辑\n- 合同自动关联优惠分配\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 付款状态根据实收金额自动更新",
   contract_product_list: "# 合同产品\n\n## 功能描述\n查看合同关联的产品信息，包括剩余课时、剩余金额等。\n\n## 使用说明\n- 按合同维度查看产品列表\n- 显示实时剩余课时和金额\n- 合同产品为只读信息，不支持在列表中直接编辑或删除\n- 如需变更合同产品，请回到合同报名、合同调整或退费等业务流程处理\n\n## 注意事项\n- 剩余数据由扣费和退费操作自动维护\n- 退费应通过合同产品退费或合同退费流程发起，避免手工修改余额",
   funds_history: "# 收款记录\n\n## 功能描述\n核对收款流水、支付方式和交易时间，支持合同收款和预存两种类型。\n\n## 使用说明\n- 点击「新增收款」录入收款\n- 支持现金、微信、支付宝、电子账户等支付方式\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 预存类型不需要关联合同",
-  refund_record: "# 退费记录\n\n## 功能描述\n管理学员退费，支持退课时、退金额、退优惠等操作。\n\n## 使用说明\n- 点击「新增退费」选择学员和合同产品\n- 填写退费金额和退费方式\n\n## 注意事项\n- 退费金额不能超过合同产品余额\n- 退费后自动更新合同产品余额和付款状态",
+  refund_record: "# 退费记录\n\n## 功能描述\n用于查询和核对学员退费流水，支持查看详情和作废/删除退费记录。退费发起入口推荐放在业务上下文页面，避免脱离合同和合同产品余额直接提交。\n\n## 使用说明\n- 推荐路径：在「合同列表」或「合同产品」行操作中点击「退费」\n- 从合同列表发起退费时，会自动带入合同、学员和可退金额等上下文\n- 从合同产品发起退费时，会自动带入合同产品、学员、可退课时、可退金额、可退赠课时和可退优惠金额\n- 退费记录页主要用于筛选查询、查看详情和撤销/作废已有退费\n\n## 注意事项\n- 退费金额不能超过合同或合同产品可退余额\n- 退费后自动更新合同产品余额和付款状态\n- 如需恢复全局「新增退费」，弹窗必须先选择合同，再按合同筛选合同产品，并展示可退课时/金额，避免用户提交后才失败",
   product_list: "# 产品列表\n\n## 功能描述\n维护课程产品、课时、单价和启用状态。\n\n## 使用说明\n- 点击「新增产品」创建课程产品\n- 支持一对一、小班、一对N等产品类型\n\n## 注意事项\n- 已关联合同的产品不可删除\n- 产品价格变更不影响已有合同",
   promotion_list: "# 优惠方案\n\n## 功能描述\n维护优惠方案，支持立减和折扣两种类型。\n\n## 使用说明\n- 点击「新增优惠」创建优惠方案\n- 立减类型填写减免金额\n- 折扣类型填写折扣值（如9表示9折）\n\n## 注意事项\n- 优惠方案关联合同时会快照当前值\n- 后续修改优惠不影响已有合同",
   student_ele_account: "# 电子账户\n\n## 功能描述\n查看学员电子账户余额和冻结金额。\n\n## 使用说明\n- 按学员维度查看账户信息\n- 余额和冻结金额由系统自动维护\n\n## 注意事项\n- 冻结金额不可用于扣费",
