@@ -132,12 +132,48 @@ function collectPageActionCodes(page: (typeof pages)[number]) {
 
 function collectPermissionPageSeeds() {
   return [
-    ...pages.map((page) => ({ pageCode: page.page, actionCodes: collectPageActionCodes(page) })),
+    ...pages.map((page) => ({ pageCode: page.page, module: page.module, actionCodes: collectPageActionCodes(page) })),
     ...extraPages.map((page) => ({
       pageCode: page.pageCode,
+      module: page.module,
       actionCodes: actionDslSeeds.filter((action) => action.pageCode === page.pageCode).map((action) => action.actionCode),
     })),
   ];
+}
+
+// demo 角色按钮矩阵（教务系统常规分工）：查看类动作全员可用；
+// 教师=考勤/请假/补课/学员跟进；学管=教务/学员/招生/审批全操作（财务与系统配置只读）；
+// 顾问=招生全操作+学员建档报名；校长=全部。租户可在角色管理里继续调整。
+const READONLY_ACTION_VERBS = new Set([
+  "query", "detail", "refresh", "export", "print",
+  "week", "course", "courses", "originalCourse", "makeupCourse", "student", "students", "lead", "contracts",
+]);
+const TEACHER_ACTION_CODES = new Set([
+  "course_list.attendance", "course_list.leave", "course_list.makeup",
+  "course_week_schedule.attendance", "course_week_schedule.leave", "course_week_schedule.makeup",
+  "leave_record.create", "leave_record.delete", "leave_record.makeup",
+  "makeup_course_record.create", "makeup_course_record.delete",
+  "student_followup_list.create", "student_list.followup",
+]);
+const MANAGER_WRITE_MODULES = new Set(["education", "student", "recruit", "oa", "frontdesk"]);
+const SALES_WRITE_MODULES = new Set(["recruit"]);
+const SALES_ACTION_CODES = new Set([
+  "student_list.create", "student_list.edit", "student_list.batchEnroll", "student_list.followup",
+  "student_followup_list.create",
+]);
+
+function roleButtonPermission(prefix: string, page: { pageCode: string; module: string; actionCodes: string[] }) {
+  const verbOf = (code: string) => (code.startsWith(`${page.pageCode}.`) ? code.slice(page.pageCode.length + 1) : code.split(".").pop() ?? code);
+  return page.actionCodes.filter((code) => {
+    if (READONLY_ACTION_VERBS.has(verbOf(code))) return true;
+    switch (prefix) {
+      case "rr_principal": return true;
+      case "rr_teacher": return TEACHER_ACTION_CODES.has(code);
+      case "rr_manager": return MANAGER_WRITE_MODULES.has(page.module) && code !== "customization_record_list.new_customization";
+      case "rr_sales": return SALES_WRITE_MODULES.has(page.module) || SALES_ACTION_CODES.has(code);
+      default: return false;
+    }
+  });
 }
 
 function buildSkillMd(page: (typeof pages)[number] | (typeof adminPages)[number]) {
@@ -879,8 +915,9 @@ async function seedTenantData() {
         resource_type: "page",
         page_code: page.pageCode,
         action_code: null,
-        page_permission: "all",
-        button_permission: JSON.stringify(page.actionCodes),
+        // 校长 all（"*" 全按钮）；其余角色走 button_permission 白名单（visibleActionCodes 语义）
+        page_permission: role.prefix === "rr_principal" ? "all" : "read",
+        button_permission: JSON.stringify(roleButtonPermission(role.prefix, page)),
         data_permission: role.dataPermission,
         field_permission: JSON.stringify(role.fieldPermission),
         organization_scope: role.dataPermission === "all" ? null : "role_organization",

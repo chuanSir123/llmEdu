@@ -64,8 +64,9 @@ export async function loadPageFullDsl(scope: "admin" | "tenant", pageCode: strin
   for (const action of filteredActions) {
     actionMap.set(action.action_code, action.dsl_json as Record<string, unknown>);
   }
+  const permittedActionCodes = !user || user.kind === "admin" || actionPermSet.has("*") ? null : actionPermSet;
   const pageDsl = await enrichImportConfigs(
-    ensureBusinessRuleEditorSchema(normalizeForeignKeyFields(mergePageActions(page.dsl_json as Record<string, unknown>, actionMap))),
+    ensureBusinessRuleEditorSchema(normalizeForeignKeyFields(applyFieldPermissions(mergePageActions(page.dsl_json as Record<string, unknown>, actionMap, permittedActionCodes), fieldPermMap))),
     scope,
     schemaName,
   );
@@ -122,6 +123,44 @@ function normalizeActionFields(action: unknown) {
   return Array.isArray(obj.fields) ? { ...obj, fields: normalizeFieldArray(obj.fields) } : obj;
 }
 
+// 字段权限落到 DSL：hidden 字段从列/弹窗/筛选中剥除，readonly 字段在表单中置为只读。
+// （数据层面的剥除在 api 执行响应里做，见 main.ts 的 stripHiddenFields）
+function applyFieldPermissions(pageDsl: Record<string, unknown>, fieldPermMap: Record<string, string>) {
+  const entries = Object.entries(fieldPermMap ?? {});
+  if (!entries.length) return pageDsl;
+  const hidden = new Set(entries.filter(([, perm]) => perm === "hidden").map(([key]) => key));
+  const readonly = new Set(entries.filter(([, perm]) => perm === "readonly").map(([key]) => key));
+  if (!hidden.size && !readonly.size) return pageDsl;
+  const mapFields = (fields: unknown) => {
+    if (!Array.isArray(fields)) return fields;
+    return fields
+      .filter((field) => !(field && typeof field === "object" && hidden.has(String((field as Record<string, unknown>).key ?? ""))))
+      .map((field) => {
+        if (field && typeof field === "object" && readonly.has(String((field as Record<string, unknown>).key ?? ""))) {
+          return { ...(field as Record<string, unknown>), readonly: true, computed: true };
+        }
+        return field;
+      });
+  };
+  const mapActions = (actions: unknown) => {
+    if (!Array.isArray(actions)) return actions;
+    return actions.map((action) => {
+      if (!action || typeof action !== "object") return action;
+      const obj = action as Record<string, unknown>;
+      return Array.isArray(obj.fields) ? { ...obj, fields: mapFields(obj.fields) } : obj;
+    });
+  };
+  const table = (pageDsl.table as Record<string, unknown> | undefined) ?? {};
+  const modal = (pageDsl.modal as Record<string, unknown> | undefined) ?? {};
+  return {
+    ...pageDsl,
+    filters: mapFields(pageDsl.filters),
+    toolbar: mapActions(pageDsl.toolbar),
+    table: { ...table, columns: mapFields(table.columns), rowActions: mapActions(table.rowActions) },
+    modal: { ...modal, fields: mapFields(modal.fields) },
+  };
+}
+
 function normalizeForeignKeyFields(pageDsl: Record<string, unknown>) {
   const table = (pageDsl.table as Record<string, unknown> | undefined) ?? {};
   const modal = (pageDsl.modal as Record<string, unknown> | undefined) ?? {};
@@ -141,9 +180,16 @@ function normalizeForeignKeyFields(pageDsl: Record<string, unknown>) {
   };
 }
 
-function mergeActionRefs(actions: unknown, actionMap: Map<string, Record<string, unknown>>) {
+function mergeActionRefs(actions: unknown, actionMap: Map<string, Record<string, unknown>>, permittedActionCodes?: Set<string> | null) {
   if (!Array.isArray(actions)) return actions;
-  return actions.map((action) => {
+  return actions
+    .filter((action) => {
+      // 按钮权限落到 UI：受限角色（无 "*"）看不到未授权按钮，而不是点击后被后端拒绝
+      if (!permittedActionCodes || !action || typeof action !== "object") return true;
+      const actionCode = String((action as Record<string, unknown>).actionCode ?? "");
+      return !actionCode || permittedActionCodes.has(actionCode);
+    })
+    .map((action) => {
     if (!action || typeof action !== "object") return action;
     const ref = action as Record<string, unknown>;
     const actionCode = String(ref.actionCode ?? "");
@@ -152,10 +198,10 @@ function mergeActionRefs(actions: unknown, actionMap: Map<string, Record<string,
   });
 }
 
-function mergePageActions(pageDsl: Record<string, unknown>, actionMap: Map<string, Record<string, unknown>>) {
-  const toolbar = dedupeActionRefs(mergeActionRefs(pageDsl.toolbar, actionMap));
+function mergePageActions(pageDsl: Record<string, unknown>, actionMap: Map<string, Record<string, unknown>>, permittedActionCodes?: Set<string> | null) {
+  const toolbar = dedupeActionRefs(mergeActionRefs(pageDsl.toolbar, actionMap, permittedActionCodes));
   const table = (pageDsl.table as Record<string, unknown> | undefined) ?? {};
-  const rowActions = mergeActionRefs(table.rowActions, actionMap);
+  const rowActions = mergeActionRefs(table.rowActions, actionMap, permittedActionCodes);
   return { ...pageDsl, toolbar, table: { ...table, rowActions } };
 }
 

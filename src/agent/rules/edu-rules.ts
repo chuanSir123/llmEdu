@@ -150,6 +150,15 @@ export const EDU_RULES: EduRule[] = [
     triggers: ["导出", "下载列表", "导出 Excel"],
   },
   {
+    code: "declarative_validation_rule",
+    title: "新增业务校验用声明式 validation 规则，运行时真实拦截",
+    scope: "business_rule",
+    errorCode: HarnessErrorCode.BUSINESS_RULE_INVALID,
+    promptHint:
+      "新增业务限制/校验（如单次扣课时上限、学员状态门槛、每日排课上限）用 business_rule(create_business_rule)，category=validation + validations 数组；解释器在业务命令前逐条求值，不通过则阻断。字段可引用入参、data.xxx、context.<student|contract|contract_product|course|product|organization>.<列>；计数上限用 type=count_limit；只能收紧不能放宽引擎内置防护。",
+    triggers: ["限制", "不允许", "上限", "不能超过", "必须满足", "才能", "校验", "拦截"],
+  },
+  {
     code: "permission_via_policy",
     title: "权限变更必须走 permission_policy",
     scope: "permission",

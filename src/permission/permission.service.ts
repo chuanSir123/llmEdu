@@ -1,6 +1,7 @@
 import { pool } from "../db/pool.js";
 import { systemDictionaryLabel } from "../dictionary.service.js";
 import { DATA_PERMISSION_PRIORITY } from "../common/dsl-constants.js";
+import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 import type { SessionUser } from "../types.js";
 
 export async function canAccessPage(user: SessionUser | undefined, schemaName: string | undefined, pageCode: string) {
@@ -84,10 +85,37 @@ export async function canExecuteApiOnPage(user: SessionUser | undefined, schemaN
      where a.page_code = $1 and a.status = 'active' and a.deleted = false and a.action_code = any($2)`,
     [pageCode, [...codes]]
   );
-  return rows.some((row) =>
+  if (rows.some((row) =>
     [row.api_code, row.submit_api_code, row.modal_submit_api_code, row.ref_submit_api_code, row.ref_modal_submit_api_code]
       .some((code) => String(code ?? "") === apiCode)
+  )) return true;
+  // 内联按钮：大多数行按钮/工具栏按钮直接写在 page_dsl 里（不在 action_dsl 注册表），
+  // 其 apiCode（含 .create/.edit/.delete 约定映射到页面 createApi/updateApi/deleteApi）也要认，
+  // 否则受限角色被授权的按钮点击时会被误拒。
+  const pageRows = await pool.query(
+    `select dsl_json from admin.page_dsl
+     where page_code = $1 and status = 'active' and deleted = false
+       and schema_scope = 'tenant' and (schema_name = $2 or schema_name = '${TEMPLATE_SCHEMA}')
+     order by case when schema_name = $2 then 0 else 1 end
+     limit 1`,
+    [pageCode, schemaName]
   );
+  const pageDsl = pageRows.rows[0]?.dsl_json as Record<string, unknown> | undefined;
+  if (!pageDsl) return false;
+  const tableDsl = (pageDsl.table as Record<string, unknown> | undefined) ?? {};
+  const inlineActions = [
+    ...(Array.isArray(pageDsl.toolbar) ? pageDsl.toolbar : []),
+    ...(Array.isArray(tableDsl.rowActions) ? tableDsl.rowActions : []),
+  ] as Array<Record<string, unknown>>;
+  for (const action of inlineActions) {
+    const actionCode = String(action?.actionCode ?? "");
+    if (!actionCode || !codes.has(actionCode)) continue;
+    if (String(action?.apiCode ?? "") === apiCode) return true;
+    if (actionCode.endsWith(".create") && String(pageDsl.createApi ?? "") === apiCode) return true;
+    if (actionCode.endsWith(".edit") && String(pageDsl.updateApi ?? "") === apiCode) return true;
+    if (actionCode.endsWith(".delete") && String(pageDsl.deleteApi ?? "") === apiCode) return true;
+  }
+  return false;
 }
 
 export async function fieldPermissions(user: SessionUser | undefined, schemaName: string, pageCode: string): Promise<Record<string, string>> {
@@ -216,43 +244,54 @@ export async function getDataPermissionScope(user: SessionUser | undefined, sche
   return { dataPermission: bestPermission, organizationId: management.organizationId, subOrganizationIds };
 }
 
-export async function getOrganizationScope(user: SessionUser | undefined, schemaName: string) {
+export async function getOrganizationScope(user: SessionUser | undefined, schemaName: string, availableColumns?: Set<string>) {
   const scope = await getDataPermissionScope(user, schemaName);
   const params: unknown[] = [];
   const conditions: string[] = [];
+  // 归属列在目标表不一定存在（如 own_courses 的 teacher_id 在学员/收款表上没有），
+  // 拼 SQL 前先校验列存在，缺列时回落到校区维度；连 organization_id 都没有的表视为共享字典表不加过滤。
+  const has = (column: string) => !availableColumns || availableColumns.has(column);
+
+  const pushOrganizationScope = () => {
+    if (!has("organization_id")) return false;
+    if (scope.subOrganizationIds.length > 0) {
+      const placeholders = scope.subOrganizationIds.map((_, i) => `$${params.length + i + 1}`);
+      conditions.push(`t.organization_id in (${placeholders.join(", ")})`);
+      params.push(...scope.subOrganizationIds);
+      return true;
+    }
+    if (scope.organizationId) {
+      conditions.push(`t.organization_id = $${params.length + 1}`);
+      params.push(scope.organizationId);
+      return true;
+    }
+    return false;
+  };
+
+  const pushOwnerScope = (ownerColumns: string[]) => {
+    const columns = ownerColumns.filter(has);
+    if (!user?.userId || !columns.length) return false;
+    params.push(user.userId);
+    conditions.push(`(${columns.map((column) => `t.${column} = $${params.length}`).join(" or ")})`);
+    return true;
+  };
 
   switch (scope.dataPermission) {
     case "all":
       return { whereSql: "", params: [] };
     case "own_organization":
     case "organization_or_sub":
-      if (scope.subOrganizationIds.length > 0) {
-        const placeholders = scope.subOrganizationIds.map((_, i) => `$${i + 1}`);
-        conditions.push(`t.organization_id in (${placeholders.join(", ")})`);
-        params.push(...scope.subOrganizationIds);
-      } else if (scope.organizationId) {
-        conditions.push("t.organization_id = $1");
-        params.push(scope.organizationId);
-      }
+      if (!pushOrganizationScope() && availableColumns) return { whereSql: "", params: [] };
       break;
     case "own_students":
-      if (user?.userId) {
-        conditions.push(`(t.owner_user_id = $1 or t.study_manager_id = $1)`);
-        params.push(user.userId);
-      }
+      if (!pushOwnerScope(["owner_user_id", "study_manager_id"]) && !pushOrganizationScope() && availableColumns) return { whereSql: "", params: [] };
       break;
     case "own_courses":
-      if (user?.userId) {
-        conditions.push(`(t.teacher_id = $1 or t.study_manager_id = $1)`);
-        params.push(user.userId);
-      }
+      if (!pushOwnerScope(["teacher_id", "study_manager_id"]) && !pushOrganizationScope() && availableColumns) return { whereSql: "", params: [] };
       break;
     case "self_only":
     default:
-      if (user?.userId) {
-        conditions.push("t.created_by = $1");
-        params.push(user.userId);
-      }
+      if (!pushOwnerScope(["created_by"]) && !pushOrganizationScope() && availableColumns) return { whereSql: "", params: [] };
       break;
   }
 

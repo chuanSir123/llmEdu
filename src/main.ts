@@ -16,7 +16,7 @@ import { loadAdminMenu, loadTenantMenu } from "./gateway/menu.service.js";
 import { loadPageFullDsl } from "./gateway/page.service.js";
 import { executeGatewayApi } from "./gateway/api-executor.js";
 import { executeAction } from "./gateway/action-executor.js";
-import { canAccessPage, canExecuteApiOnPage, listManagementOrganizations } from "./permission/permission.service.js";
+import { canAccessPage, canExecuteApiOnPage, fieldPermissions, listManagementOrganizations } from "./permission/permission.service.js";
 import { publishVersion, publishVersionAndSyncSkillMd, rollbackVersion, rejectVersion, initializeTenantVersion, listTenantVersions, tenantRollbackVersion } from "./version/version.service.js";
 import { tenantAgentChat, tenantAgentPreview, tenantAgentPublish, tenantAgentReject, listTenantDrafts, getActiveChatSession } from "./tenant/tenant-agent.service.js";
 import { tenantAssistantChat } from "./tenant/tenant-assistant.service.js";
@@ -341,7 +341,29 @@ export async function buildServer() {
         && !(await canExecuteApiOnPage(user, schema, body.pageCode, body.apiCode))) {
         throw httpError(403, "无该操作的按钮权限");
       }
-      const data = await executeGatewayApi(body.scope, schema, body.apiCode, body.params, user);
+      // 字段权限执行：写入前丢弃 hidden/readonly 字段（防绕过），读取后从 rows/record 中剥除 hidden 字段
+      let params = body.params;
+      let fieldPerms: Record<string, string> = {};
+      if (body.scope === "tenant" && body.pageCode && user && user.kind !== "admin" && !isDictionaryOptionLookup) {
+        fieldPerms = await fieldPermissions(user, schema, body.pageCode);
+        const blockedWrite = Object.entries(fieldPerms).filter(([, perm]) => perm === "hidden" || perm === "readonly").map(([key]) => key);
+        if (blockedWrite.length && params.data && typeof params.data === "object" && !Array.isArray(params.data)) {
+          const nextData = { ...(params.data as Record<string, unknown>) };
+          for (const key of blockedWrite) delete nextData[key];
+          params = { ...params, data: nextData };
+        }
+      }
+      const data = await executeGatewayApi(body.scope, schema, body.apiCode, params, user);
+      const hiddenFields = Object.entries(fieldPerms).filter(([, perm]) => perm === "hidden").map(([key]) => key);
+      if (hiddenFields.length && data && typeof data === "object") {
+        const container = data as Record<string, unknown>;
+        const stripRow = (row: unknown) => {
+          if (row && typeof row === "object" && !Array.isArray(row)) for (const key of hiddenFields) delete (row as Record<string, unknown>)[key];
+        };
+        if (Array.isArray(container.rows)) container.rows.forEach(stripRow);
+        if (container.record) stripRow(container.record);
+        if (!container.rows && !container.record) stripRow(container);
+      }
       await audit({ schemaName: schema, userId: user?.userId, pageCode: body.pageCode, apiCode: body.apiCode, inputSummary: body.params, outputSummary: { ok: true }, costMs: Date.now() - started });
       return { data };
     } catch (error) {

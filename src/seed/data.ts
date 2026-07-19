@@ -418,8 +418,7 @@ const courseCreateFields = [
   { key: "product_id", label: "排课产品", type: "text", optionSource: productSelect },
   { key: "grade", label: "年级", type: "text" },
   { key: "subject", label: "科目", type: "text" },
-  { key: "student_ids", label: "上课学员", type: "multiSelect", optionSource: studentSelect, searchable: true },
-  { key: "contract_product_id", label: "合同产品", type: "text", optionSource: contractProductSelect },
+  { key: "students", label: "上课学员", type: "student_cp_table", span: "full" as const, optionSource: studentSelect, visibleWhen: { course_type: { op: "notIn", value: ["SMALL_CLASS", "ONE_ON_N_GROUP"] } } },
   { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect },
   { key: "course_hour", label: "课时", type: "number" }
 ];
@@ -433,7 +432,7 @@ const courseEditFields = [
   { key: "end_time", label: "结束时间", type: "time", required: true },
   { key: "teacher_id", label: "老师", type: "text", optionSource: userSelect },
   { key: "study_manager_id", label: "学管师", type: "text", optionSource: userSelect },
-  { key: "student_ids", label: "上课学员", type: "multiSelect", optionSource: studentSelect, searchable: true },
+  { key: "students", label: "上课学员", type: "student_cp_table", span: "full" as const, optionSource: studentSelect, visibleWhen: { course_type: { op: "notIn", value: ["SMALL_CLASS", "ONE_ON_N_GROUP"] } } },
   { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect },
   { key: "course_hour", label: "课时", type: "number", min: 0 }
 ];
@@ -610,7 +609,7 @@ const contractRefundFields = [
   { key: "refund_promotion_amount", label: "退优惠金额", type: "number" },
   { key: "refund_real_hour", label: "退课时", type: "number" },
   { key: "refund_promotion_hour", label: "退赠课时", type: "number" },
-  { key: "refund_way_config_id", label: "退费方式", type: "text", optionSource: payWaySelect },
+  { key: "refund_way_config_id", label: "退费方式", type: "text", required: true, optionSource: payWaySelect },
   { key: "refund_time", label: "退费时间", type: "datetime" },
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
@@ -803,6 +802,7 @@ export const pages: PageSeed[] = [
       { key: "remaining_promotion_hour", label: "剩余赠课" },
       { key: "remaining_promotion_amount", label: "剩余优惠" },
       { key: "paid_real_amount", label: "已分配实收" },
+      { key: "paid_promotion_amount", label: "已分配优惠" },
       { key: "consumed_real_amount", label: "已扣实收" }
     ],
     joins: [
@@ -1628,8 +1628,9 @@ export const pages: PageSeed[] = [
       { key: "charge_hour", label: "课时" },
       { key: "charge_amount", label: "金额" },
       { key: "charge_status", label: "状态", filter: true },
+      { key: "created_at", label: "扣费时间", type: "datetime" },
       { key: "organization_id", label: "校区ID", hidden: true },
-      { key: "course_id", label: "课程ID", hidden: true, filter: true }
+      { key: "course_id", label: "课程", filter: true }
     ]
   },
   {
@@ -1652,7 +1653,9 @@ export const pages: PageSeed[] = [
       { key: "teacher_id", label: "授课老师" },
       { key: "study_manager_id", label: "班主任" },
       { key: "course_status", label: "状态", filter: true },
-      { key: "student_names", label: "上课学员", hidden: true }
+      { key: "student_names", label: "上课学员", hidden: true },
+      { key: "student_ids", label: "上课学员ID", hidden: true },
+      { key: "students", label: "上课学员配置", hidden: true }
     ]
   },
   {
@@ -1662,7 +1665,6 @@ export const pages: PageSeed[] = [
     name: "周课表",
     table: "generic_course",
     group: "教务管理",
-    softDelete: false,
     fields: [
       { key: "course_date", label: "日期", type: "date", filter: true },
       { key: "start_time", label: "开始时间" },
@@ -1740,8 +1742,8 @@ export const pages: PageSeed[] = [
     name: "班级学员",
     table: "mini_class_student",
     group: "班级管理",
-    softDelete: false,
     fields: [
+      { key: "mini_class_id", label: "所属班级", filter: true },
       { key: "student_id", label: "学员" },
       { key: "join_date", label: "入班日期", type: "date" },
       { key: "status", label: "状态", filter: true }
@@ -1755,8 +1757,8 @@ export const pages: PageSeed[] = [
     name: "1对N学员",
     table: "one_on_n_group_student",
     group: "班级管理",
-    softDelete: false,
     fields: [
+      { key: "one_on_n_group_id", label: "所属小组", filter: true },
       { key: "student_id", label: "学员" },
       { key: "join_date", label: "入组日期", type: "date" },
       { key: "status", label: "状态", filter: true }
@@ -2709,6 +2711,18 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.presentation.table.primaryRowActions = ["approval_flow_list.edit", "approval_flow_list.delete"];
   }
 
+  if (page.page === "student_ele_account") {
+    baseDsl.table.rowActions = [
+      { actionCode: "student_ele_account.records", label: "流水", type: "open_page", target: { pageCode: "student_ele_account_record", title: "电子账户流水", filterField: "student_id", rowField: "student_id" } },
+      { actionCode: "student_ele_account.withdraw", label: "退预存", type: "open_modal", apiCode: "eleAccount.withdraw", modalTitle: "退预存余额", variant: "danger", visibleWhen: { balance_amount: { op: "notIn", value: ["0", "0.00", 0] } }, fields: [
+        { key: "student_id", label: "学员ID", type: "text", hidden: true },
+        { key: "amount", label: "退款金额", type: "number", required: true, min: 0.01 },
+        { key: "remark", label: "退款原因", type: "textarea", span: "full" as const, rows: 3, required: true }
+      ], mapRowToValue: { student_id: "student_id" } }
+    ];
+    baseDsl.presentation.table.primaryRowActions = ["student_ele_account.records", "student_ele_account.withdraw"];
+  }
+
   if (page.page === "approval_task_list") {
     baseDsl.subtitle = "集中处理我的待办、我发起的审批和历史审批";
     baseDsl.presentation.header.subtitle = "集中处理我的待办、我发起的审批和历史审批";
@@ -2721,6 +2735,15 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { key: "status", title: "状态", width: 100, badge: true },
       { key: "created_at", title: "发起时间", width: 170 },
       { key: "updated_at", title: "更新时间", width: 170 }
+    ];
+    baseDsl.toolbar = [
+      { actionCode: "approval_task_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
+    ];
+    baseDsl.table.rowActions = [
+      { actionCode: "approval_task_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "approval_task_list.approve", label: "同意", type: "execute_api", apiCode: "approvalTask.approve", confirm: "确认同意该审批？", visibleWhen: { status: "PENDING" } },
+      { actionCode: "approval_task_list.reject", label: "驳回", type: "execute_api", apiCode: "approvalTask.reject", confirm: "确认驳回该审批？", variant: "danger", visibleWhen: { status: "PENDING" } },
+      { actionCode: "approval_task_list.cancel", label: "撤回", type: "execute_api", apiCode: "approvalTask.cancel", confirm: "确认撤回该审批？", variant: "danger", visibleWhen: { status: "PENDING" } }
     ];
     baseDsl.presentation.table.primaryRowActions = ["approval_task_list.detail", "approval_task_list.approve", "approval_task_list.reject", "approval_task_list.cancel"];
   }
@@ -2748,12 +2771,13 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.table.selectable = true;
     baseDsl.toolbar = [
       { actionCode: "student_list.create", label: "新增", type: "open_modal", variant: "primary" },
-      { actionCode: "student_list.batchEnroll", label: "批量报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "批量报名", fields: contractCreateFields, requiresSelection: true, requiresSelectionMessage: "请先选择学员", mapSelectedToValue: { student_ids: "id" }, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) } },
+      { actionCode: "student_list.batchEnroll", label: "批量报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "批量报名", fields: contractCreateFields, requiresSelection: true, requiresSelectionMessage: "请先选择学员", mapSelectedToValue: { student_ids: "id" }, defaultValues: { contract_type: "NEW_SIGN", sign_time: "$now" } },
       { actionCode: "student_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
       { actionCode: "student_list.detail", label: "详情", type: "open_modal" },
       { actionCode: "student_list.edit", label: "编辑", type: "open_modal" },
+      { actionCode: "student_list.contracts", label: "合同", type: "open_page", target: { pageCode: "contract_list", title: "合同收费", filterField: "student_id", rowField: "id" } },
       {
         actionCode: "student_list.prestore",
         label: "预存",
@@ -2761,7 +2785,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         apiCode: "funds_history.create",
         modalTitle: "学员预存",
         fields: contextPreStoreFields,
-        defaultValues: { funds_type: "PRE_STORE", transaction_time: new Date().toISOString().slice(0, 16), pay_way_config_id: "pay_cash" },
+        defaultValues: { funds_type: "PRE_STORE", transaction_time: "$now" },
         mapRowToValue: { student_id: "id", organization_id: "organization_id" }
       },
       {
@@ -2776,11 +2800,12 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       },
       { actionCode: "student_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["student_list.detail", "student_list.edit", "student_list.prestore", "student_list.followup", "student_list.delete"];
+    baseDsl.presentation.table.primaryRowActions = ["student_list.detail", "student_list.edit", "student_list.contracts", "student_list.prestore", "student_list.followup", "student_list.delete"];
   }
 
   if (page.page === "contract_list") {
     baseDsl.toolbar = [
+      { actionCode: "contract_list.create", label: "新增合同", type: "open_page", variant: "primary", target: { pageCode: "lead_list", title: "新生报名" } },
       {
         actionCode: "contract_list.export",
         label: "导出",
@@ -2793,7 +2818,6 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
           columns: ["contract_no", "student_id", "sign_time", "total_amount", "paid_amount", "contract_status"]
         }
       },
-      { actionCode: "contract_list.create", label: "新增合同", type: "open_page", variant: "primary", target: { pageCode: "lead_list", title: "新生报名" } },
       { actionCode: "contract_list.import", label: "导入", type: "import", actionType: "import", variant: "default", importConfig: { importCode: "contract_list.import", apiCode: "contract_list.create" } },
       { actionCode: "contract_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
@@ -2807,7 +2831,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         apiCode: "funds_history.create",
         modalTitle: "合同收款",
         fields: contractFundsFields,
-        defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: new Date().toISOString().slice(0, 16), pay_way_config_id: "pay_cash" },
+        defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: "$now" },
         mapRowToValue: { contract_id: "id", student_id: "student_id", organization_id: "organization_id" },
         visibleWhen: { contract_status: "ACTIVE" }
       },
@@ -2818,7 +2842,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         apiCode: "contract.refund",
         modalTitle: "合同退费",
         fields: contractRefundFields,
-        defaultValues: { refund_time: new Date().toISOString().slice(0, 16), refund_way_config_id: "pay_cash" },
+        defaultValues: { refund_time: "$now" },
         mapRowToValue: { contract_id: "id", student_name: "student_name" },
         visibleWhen: { contract_status: { op: "notIn", value: ["REFUNDED", "CLOSED", "CANCELLED"] } }
       },
@@ -2884,7 +2908,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         apiCode: "contract_list.create",
         modalTitle: "新生报名",
         fields: contractCreateFields,
-        defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) },
+        defaultValues: { contract_type: "NEW_SIGN", sign_time: "$now" },
         modalSize: "fullscreen"
       },
       { actionCode: "lead_list.refresh", label: "刷新", type: "execute_api", variant: "default" }
@@ -2897,7 +2921,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         apiCode: "contract_list.create",
         modalTitle: "新生报名",
         fields: contractCreateFields,
-        defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) },
+        defaultValues: { contract_type: "NEW_SIGN", sign_time: "$now" },
         mapRowToValue: { student_ids: "id", organization_id: "organization_id" },
         modalSize: "large"
       },
@@ -2950,7 +2974,10 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       { actionCode: "course_list.leave", label: "请假", type: "open_modal", apiCode: "leave_record.create", modalTitle: "学员请假", fields: leaveCreateFields, mapRowToValue: { course_id: "id", organization_id: "organization_id" }, visibleWhen: { course_status: { op: "ne", value: "CANCELLED" } } },
       { actionCode: "course_list.makeup", label: "安排补课", type: "open_modal", apiCode: "makeup_course_record.create", modalTitle: "安排补课", fields: makeupCreateFields, defaultValues: { course_hour: 1, course_title: "补课" }, mapRowToValue: { original_course_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id" } },
       { actionCode: "course_list.cancel", label: "取消排课", type: "execute_api", apiCode: "course.cancel", confirm: "确认取消该排课？已有考勤或扣费的课程不能取消", variant: "danger", visibleWhen: { course_status: "SCHEDULED" } },
-      { actionCode: "course_list.delete", label: "删除", type: "execute_api", apiCode: "course.delete", confirm: "确认删除该排课？将回滚关联考勤和扣费", variant: "danger" }
+      { actionCode: "course_list.delete", label: "删除", type: "open_modal", apiCode: "course_list.delete", modalTitle: "删除排课", variant: "danger", confirm: "确认删除该排课？将回滚关联考勤和扣费", fields: [
+        { key: "id", label: "课程ID", type: "text", hidden: true },
+        { key: "delete_reason", label: "删除原因", type: "textarea", span: "full" as const, rows: 3, required: true }
+      ], mapRowToValue: { id: "id" } }
     ];
     baseDsl.presentation.table.primaryRowActions = ["course_list.detail", "course_list.edit", "course_list.attendance", "course_list.leave", "course_list.makeup", "course_list.cancel", "course_list.delete"];
     baseDsl.table.columns = [
@@ -3002,6 +3029,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
 
   if (page.page === "charge_record") {
     baseDsl.toolbar = [
+      { actionCode: "charge_record.create", label: "新增扣费", type: "open_modal", variant: "primary", modalTitle: "扣费确认", fields: chargeCreateFields },
       { actionCode: "charge_record.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
@@ -3014,7 +3042,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
 
   if (page.page === "refund_record") {
     baseDsl.toolbar = [
-      { actionCode: "refund_record.create", label: "新增退费", type: "open_modal", variant: "primary", modalTitle: "新增退费", fields: refundCreateFields, defaultValues: { refund_time: new Date().toISOString().slice(0, 16), refund_way_config_id: "pay_cash" } },
+      { actionCode: "refund_record.create", label: "新增退费", type: "open_modal", variant: "primary", modalTitle: "新增退费", fields: refundCreateFields, defaultValues: { refund_time: "$now" } },
       { actionCode: "refund_record.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
@@ -3028,6 +3056,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   if (page.page === "mini_class_list") {
     baseDsl.table.rowActions = [
       { actionCode: "mini_class_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "mini_class_list.students", label: "班级学员", type: "open_page", target: { pageCode: "mini_class_student_list", title: "班级学员", filterField: "mini_class_id", rowField: "id" } },
       { actionCode: "mini_class_list.edit", label: "编辑", type: "open_modal" },
       {
         actionCode: "mini_class_list.addStudent",
@@ -3038,18 +3067,19 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         fields: addStudentFields,
         mapRowToValue: { mini_class_id: "id" }
       },
-      { actionCode: "mini_class_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "班级排课", fields: courseCreateFields, defaultValues: { course_type: "SMALL_CLASS", course_status: "SCHEDULED", course_hour: 1, course_dates: ["2026-07-12"] }, mapRowToValue: { mini_class_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
+      { actionCode: "mini_class_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "班级排课", fields: courseCreateFields, defaultValues: { course_type: "SMALL_CLASS", course_status: "SCHEDULED", course_hour: 1, course_dates: ["$today"] }, mapRowToValue: { mini_class_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
       { actionCode: "mini_class_list.transfer", label: "批量调班", type: "open_modal", apiCode: "classStudent.transfer", modalTitle: "批量调班", fields: classTransferFields, defaultValues: { target_type: "mini_class" }, mapRowToValue: { from_target_id: "id" } },
       { actionCode: "mini_class_list.markFull", label: "标记满班", type: "execute_api", apiCode: "class.changeStatus", defaultValues: { target_type: "mini_class", target_status: "FULL" } },
       { actionCode: "mini_class_list.close", label: "结班", type: "execute_api", apiCode: "class.changeStatus", confirm: "确认结班？结班后不建议继续排课。", defaultValues: { target_type: "mini_class", target_status: "CLOSED" } },
       { actionCode: "mini_class_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["mini_class_list.detail", "mini_class_list.edit", "mini_class_list.addStudent", "mini_class_list.schedule", "mini_class_list.transfer", "mini_class_list.markFull", "mini_class_list.close", "mini_class_list.delete"];
+    baseDsl.presentation.table.primaryRowActions = ["mini_class_list.detail", "mini_class_list.students", "mini_class_list.edit", "mini_class_list.addStudent", "mini_class_list.schedule", "mini_class_list.transfer", "mini_class_list.markFull", "mini_class_list.close", "mini_class_list.delete"];
   }
 
   if (page.page === "one_on_n_group_list") {
     baseDsl.table.rowActions = [
       { actionCode: "one_on_n_group_list.detail", label: "详情", type: "open_modal" },
+      { actionCode: "one_on_n_group_list.students", label: "小组学员", type: "open_page", target: { pageCode: "one_on_n_group_student_list", title: "小组学员", filterField: "one_on_n_group_id", rowField: "id" } },
       { actionCode: "one_on_n_group_list.edit", label: "编辑", type: "open_modal" },
       {
         actionCode: "one_on_n_group_list.addStudent",
@@ -3060,13 +3090,13 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         fields: addStudentFields,
         mapRowToValue: { one_on_n_group_id: "id" }
       },
-      { actionCode: "one_on_n_group_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "1对N排课", fields: courseCreateFields, defaultValues: { course_type: "ONE_ON_N_GROUP", course_status: "SCHEDULED", course_hour: 1, course_dates: ["2026-07-12"] }, mapRowToValue: { one_on_n_group_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
+      { actionCode: "one_on_n_group_list.schedule", label: "直接排课", type: "open_modal", apiCode: "course_list.create", modalTitle: "1对N排课", fields: courseCreateFields, defaultValues: { course_type: "ONE_ON_N_GROUP", course_status: "SCHEDULED", course_hour: 1, course_dates: ["$today"] }, mapRowToValue: { one_on_n_group_id: "id", organization_id: "organization_id", teacher_id: "teacher_id", study_manager_id: "study_manager_id", product_id: "product_id", grade: "grade", subject: "subject" } },
       { actionCode: "one_on_n_group_list.transfer", label: "批量调组", type: "open_modal", apiCode: "classStudent.transfer", modalTitle: "批量调组", fields: classTransferFields, defaultValues: { target_type: "one_on_n_group" }, mapRowToValue: { from_target_id: "id" } },
       { actionCode: "one_on_n_group_list.markFull", label: "标记满组", type: "execute_api", apiCode: "class.changeStatus", defaultValues: { target_type: "one_on_n_group", target_status: "FULL" } },
       { actionCode: "one_on_n_group_list.close", label: "结组", type: "execute_api", apiCode: "class.changeStatus", confirm: "确认结组？结组后不建议继续排课。", defaultValues: { target_type: "one_on_n_group", target_status: "CLOSED" } },
       { actionCode: "one_on_n_group_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["one_on_n_group_list.detail", "one_on_n_group_list.edit", "one_on_n_group_list.addStudent", "one_on_n_group_list.schedule", "one_on_n_group_list.transfer", "one_on_n_group_list.markFull", "one_on_n_group_list.close", "one_on_n_group_list.delete"];
+    baseDsl.presentation.table.primaryRowActions = ["one_on_n_group_list.detail", "one_on_n_group_list.students", "one_on_n_group_list.edit", "one_on_n_group_list.addStudent", "one_on_n_group_list.schedule", "one_on_n_group_list.transfer", "one_on_n_group_list.markFull", "one_on_n_group_list.close", "one_on_n_group_list.delete"];
   }
 
   if (page.page === "mini_class_student_list" || page.page === "one_on_n_group_student_list") {
@@ -3090,7 +3120,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
 
   if (page.page === "leave_record") {
     baseDsl.toolbar = [
-      { actionCode: "leave_record.create", label: "新增请假", type: "open_modal", variant: "primary", modalTitle: "新增请假", fields: leaveCreateFields, defaultValues: { status: "APPROVED", leave_type: "PERSONAL", leave_time: new Date().toISOString().slice(0, 16) } },
+      { actionCode: "leave_record.create", label: "新增请假", type: "open_modal", variant: "primary", modalTitle: "新增请假", fields: leaveCreateFields, defaultValues: { status: "APPROVED", leave_type: "PERSONAL", leave_time: "$now" } },
       { actionCode: "leave_record.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
@@ -3145,7 +3175,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
 
   if (page.page === "funds_history") {
     baseDsl.toolbar = [
-      { actionCode: "funds_history.create", label: "新增收款", type: "open_modal", variant: "primary", modalTitle: "新增收款", fields: fundsCreateFields, defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: new Date().toISOString().slice(0, 16), pay_way_config_id: "pay_cash" } },
+      { actionCode: "funds_history.create", label: "新增收款", type: "open_modal", variant: "primary", modalTitle: "新增收款", fields: fundsCreateFields, defaultValues: { funds_type: "CONTRACT_PAY", transaction_time: "$now" } },
       { actionCode: "funds_history.refresh", label: "刷新", type: "execute_api", variant: "default" }
     ];
     baseDsl.table.rowActions = [
@@ -3314,7 +3344,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   if (page.page === "recruit_channel_list") {
     baseDsl.table.rowActions = [
       { actionCode: "recruit_channel_list.detail", label: "详情", type: "open_modal" },
-      { actionCode: "recruit_channel_list.addCost", label: "登记成本", type: "open_modal", apiCode: "recruit_channel_cost_list.create", modalTitle: "登记渠道成本", fields: channelCostFields, defaultValues: { cost_date: "2026-07-12" }, mapRowToValue: { channel_id: "id" } },
+      { actionCode: "recruit_channel_list.addCost", label: "登记成本", type: "open_modal", apiCode: "recruit_channel_cost_list.create", modalTitle: "登记渠道成本", fields: channelCostFields, defaultValues: { cost_date: "$today" }, mapRowToValue: { channel_id: "id" } },
       { actionCode: "recruit_channel_list.leads", label: "查看线索", type: "open_page", target: { pageCode: "lead_stage_list", title: "招生漏斗", filterField: "channel_id", rowField: "id" } },
       { actionCode: "recruit_channel_list.edit", label: "编辑", type: "open_modal" },
       { actionCode: "recruit_channel_list.delete", label: "删除", type: "execute_api", confirm: "确认删除该招生渠道？" }
@@ -3338,7 +3368,7 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
     baseDsl.table.rowActions = [
       { actionCode: "trial_lesson_list.detail", label: "详情", type: "open_modal" },
       { actionCode: "trial_lesson_list.feedback", label: "试听反馈", type: "open_modal", apiCode: "trial_lesson_list.update", modalTitle: "试听反馈", fields: trialFeedbackFields, mapRowToValue: { id: "id" } },
-      { actionCode: "trial_lesson_list.enroll", label: "转报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "新生报名", fields: contractCreateFields, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) }, mapRowToValue: { student_ids: "student_id" }, modalSize: "fullscreen" },
+      { actionCode: "trial_lesson_list.enroll", label: "转报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "新生报名", fields: contractCreateFields, defaultValues: { contract_type: "NEW_SIGN", sign_time: "$now" }, mapRowToValue: { student_ids: "student_id" }, modalSize: "fullscreen" },
       { actionCode: "trial_lesson_list.course", label: "查看课次", type: "open_page", target: { pageCode: "course_list", title: "排课列表", filterField: "id", rowField: "course_id" } },
       { actionCode: "trial_lesson_list.edit", label: "编辑", type: "open_modal" }
     ];
@@ -3348,10 +3378,10 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   if (page.page === "sales_task_list") {
     baseDsl.table.rowActions = [
       { actionCode: "sales_task_list.detail", label: "详情", type: "open_modal" },
-      { actionCode: "sales_task_list.complete", label: "完成", type: "execute_api", apiCode: "sales_task_list.update", defaultValues: { task_status: "COMPLETED", complete_time: new Date().toISOString() } },
+      { actionCode: "sales_task_list.complete", label: "完成", type: "execute_api", apiCode: "sales_task_list.update", defaultValues: { task_status: "COMPLETED", complete_time: "$now" } },
       { actionCode: "sales_task_list.followup", label: "写跟进", type: "open_modal", apiCode: "student_followup_list.create", modalTitle: "新增跟进", fields: followupCreateFields, defaultValues: { follow_type: "PHONE", follow_result: "CONTACTED" }, mapRowToValue: { student_id: "student_id" } },
       { actionCode: "sales_task_list.trial", label: "邀约试听", type: "open_modal", apiCode: "trial_lesson_list.create", modalTitle: "邀约试听", fields: trialLessonCreateFields, defaultValues: { course_hour: 1 }, mapRowToValue: { student_id: "student_id", sales_user_id: "owner_user_id" } },
-      { actionCode: "sales_task_list.enroll", label: "转报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "新生报名", fields: contractCreateFields, defaultValues: { contract_type: "NEW_SIGN", sign_time: new Date().toISOString().slice(0, 16) }, mapRowToValue: { student_ids: "student_id" }, modalSize: "fullscreen" },
+      { actionCode: "sales_task_list.enroll", label: "转报名", type: "open_modal", apiCode: "contract_list.create", modalTitle: "新生报名", fields: contractCreateFields, defaultValues: { contract_type: "NEW_SIGN", sign_time: "$now" }, mapRowToValue: { student_ids: "student_id" }, modalSize: "fullscreen" },
       { actionCode: "sales_task_list.edit", label: "编辑", type: "open_modal" }
     ];
     baseDsl.presentation.table.primaryRowActions = ["sales_task_list.detail", "sales_task_list.complete", "sales_task_list.followup", "sales_task_list.trial", "sales_task_list.enroll", "sales_task_list.edit"];
@@ -3546,6 +3576,19 @@ export function apiDsl(page: (typeof pages)[number] | (typeof adminPages)[number
       operation: "command",
       command: "funds.delete",
       ruleCode: "funds_create_rule"
+    };
+  }
+  if (page.page === "student_list" && apiType === "delete") {
+    return {
+      operation: "command",
+      command: "student.delete"
+    };
+  }
+  if (page.page === "leave_record" && apiType === "delete") {
+    return {
+      operation: "command",
+      command: "leave.delete",
+      ruleCode: "leave_create_rule"
     };
   }
   if (page.page === "refund_record" && apiType === "delete") {

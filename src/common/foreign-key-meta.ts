@@ -57,6 +57,17 @@ export function inferForeignKeyMeta(key: string): ForeignKeyMeta | undefined {
       displayKey: key.replace(/_id$/, "_name"),
     };
   }
+  if (key.endsWith("course_id")) {
+    return {
+      key,
+      table: "generic_course",
+      pageCode: "course_list",
+      apiCode: "course_list.query",
+      valueField: "id",
+      labelField: "course_title",
+      displayKey: key.replace(/_id$/, "_title"),
+    };
+  }
   if (key === "operator_id" || key.endsWith("manager_id")) {
     return {
       key,

@@ -139,6 +139,22 @@ async function selectColumns(schemaName: string, dsl: ApiDsl) {
       }
       continue;
     }
+    // 编辑排课弹窗需要回填当前上课学员（multiSelect 用 id 数组），与 student_names 同源聚合
+    if (dsl.table === "generic_course" && safeField === "student_ids") {
+      if (!selectedAliases.has(safeField)) {
+        cols.push(`(select coalesce(jsonb_agg(gcs.student_id order by gcs.student_id), '[]'::jsonb) from ${tableExpr(schemaName, "generic_course_student")} gcs where gcs.course_id = t.id and coalesce(gcs.deleted, false) = false) as ${qIdent(safeField)}`);
+        selectedAliases.add(safeField);
+      }
+      continue;
+    }
+    // 学员-合同产品行编辑器（student_cp_table）的回填值，形态与 course.create/update 的 students 入参一致
+    if (dsl.table === "generic_course" && safeField === "students") {
+      if (!selectedAliases.has(safeField)) {
+        cols.push(`(select coalesce(jsonb_agg(jsonb_build_object('student_id', gcs.student_id, 'contract_product_id', gcs.contract_product_id) order by gcs.student_id), '[]'::jsonb) from ${tableExpr(schemaName, "generic_course_student")} gcs where gcs.course_id = t.id and coalesce(gcs.deleted, false) = false) as ${qIdent(safeField)}`);
+        selectedAliases.add(safeField);
+      }
+      continue;
+    }
     if (!selectedAliases.has(safeField)) {
       cols.push(`${fieldExpr(safeField, tableColumns)} as ${qIdent(safeField)}`);
       selectedAliases.add(safeField);
@@ -170,13 +186,13 @@ async function selectColumns(schemaName: string, dsl: ApiDsl) {
     if (!meta || selectedAliases.has(meta.displayKey)) continue;
     const sourceExpr = fieldExpr(field, tableColumns);
     if (field === "contract_product_id") {
-      cols.push(`(select p.name from ${tableExpr(schemaName, "contract_product")} cp left join ${tableExpr(schemaName, "product")} p on cp.product_id = p.id and coalesce(p.deleted, false) = false where cp.id = ${sourceExpr} and coalesce(cp.deleted, false) = false limit 1) as ${qIdent(meta.displayKey)}`);
+      cols.push(`(select p.name from ${tableExpr(schemaName, "contract_product")} cp left join ${tableExpr(schemaName, "product")} p on cp.product_id = p.id where cp.id = ${sourceExpr} limit 1) as ${qIdent(meta.displayKey)}`);
       selectedAliases.add(meta.displayKey);
       continue;
     }
     const fkColumns = await getTableColumns(schemaName, meta.table);
     if (!fkColumns.has(meta.labelField) || !fkColumns.has(meta.valueField)) continue;
-    cols.push(`(select fk.${qIdent(meta.labelField)} from ${tableExpr(schemaName, meta.table)} fk where fk.${qIdent(meta.valueField)} = ${sourceExpr} and coalesce(fk.deleted, false) = false limit 1) as ${qIdent(meta.displayKey)}`);
+    cols.push(`(select fk.${qIdent(meta.labelField)} from ${tableExpr(schemaName, meta.table)} fk where fk.${qIdent(meta.valueField)} = ${sourceExpr} limit 1) as ${qIdent(meta.displayKey)}`);
     selectedAliases.add(meta.displayKey);
   }
   if (tableColumns.has("created_at")) cols.push("t.created_at");
@@ -192,13 +208,13 @@ async function foreignKeyDisplayColumns(schemaName: string, tableColumns: Set<st
     if (!meta || selectedAliases.has(meta.displayKey)) continue;
     const sourceExpr = fieldExpr(field, tableColumns);
     if (field === "contract_product_id") {
-      cols.push(`(select p.name from ${tableExpr(schemaName, "contract_product")} cp left join ${tableExpr(schemaName, "product")} p on cp.product_id = p.id and coalesce(p.deleted, false) = false where cp.id = ${sourceExpr} and coalesce(cp.deleted, false) = false limit 1) as ${qIdent(meta.displayKey)}`);
+      cols.push(`(select p.name from ${tableExpr(schemaName, "contract_product")} cp left join ${tableExpr(schemaName, "product")} p on cp.product_id = p.id where cp.id = ${sourceExpr} limit 1) as ${qIdent(meta.displayKey)}`);
       selectedAliases.add(meta.displayKey);
       continue;
     }
     const fkColumns = await getTableColumns(schemaName, meta.table);
     if (!fkColumns.has(meta.labelField) || !fkColumns.has(meta.valueField)) continue;
-    cols.push(`(select fk.${qIdent(meta.labelField)} from ${tableExpr(schemaName, meta.table)} fk where fk.${qIdent(meta.valueField)} = ${sourceExpr} and coalesce(fk.deleted, false) = false limit 1) as ${qIdent(meta.displayKey)}`);
+    cols.push(`(select fk.${qIdent(meta.labelField)} from ${tableExpr(schemaName, meta.table)} fk where fk.${qIdent(meta.valueField)} = ${sourceExpr} limit 1) as ${qIdent(meta.displayKey)}`);
     selectedAliases.add(meta.displayKey);
   }
   return cols;
@@ -358,6 +374,10 @@ function appendDynamicFilters(where: string[], values: unknown[], filterDsl: Fil
   }
 }
 
+function scopeColumnsFor(tableName: string, tableColumns: Set<string>) {
+  return tableName === "organization" ? new Set([...tableColumns, "organization_id"]) : tableColumns;
+}
+
 function appendDataPermissionScope(where: string[], values: unknown[], tableColumns: Set<string>, tableName: string, scope: { whereSql: string; params: unknown[] }) {
   if (!scope.whereSql) return;
   let whereSql = scope.whereSql;
@@ -391,7 +411,7 @@ async function executeAggregateQuery(effectiveSchema: string, dsl: ApiDsl, param
     where.push(...fragments);
   }
   if (dsl.security?.dataPermission && user) {
-    const scope = await getOrganizationScope(user, authorizedSchema ?? effectiveSchema);
+    const scope = await getOrganizationScope(user, authorizedSchema ?? effectiveSchema, scopeColumnsFor(dsl.table, tableColumns));
     appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
   }
 
@@ -435,15 +455,53 @@ async function executeAggregateQuery(effectiveSchema: string, dsl: ApiDsl, param
   return { rows: rows.map(({ __total, ...row }) => flattenExtJson(row)), total, page, pageSize };
 }
 
-function joinSql(schemaName: string, joins: JoinDsl[] = [], softDelete = true) {
+// 主数据删除引用护栏：被业务数据引用的主数据不允许删除，否则历史流水/合同/课表悬空。
+// key = 被删表；每项 = 引用它的表/列（仅查未删除的引用行），命中即拒绝并提示解开路径。
+const DELETE_REFERENCE_GUARDS: Record<string, Array<{ table: string; column: string; label: string; extraWhere?: string }>> = {
+  product: [
+    { table: "contract_product", column: "product_id", label: "合同产品" },
+  ],
+  pay_way_config: [
+    { table: "funds_change_history", column: "pay_way_config_id", label: "收款流水" },
+    { table: "refund_record", column: "refund_way_config_id", label: "退费记录" },
+  ],
+  organization: [
+    { table: "student", column: "organization_id", label: "学员" },
+    { table: "contract", column: "organization_id", label: "合同" },
+    { table: "generic_course", column: "organization_id", label: "排课", extraWhere: " and course_status not in ('CANCELLED', 'course_status.CANCELLED')" },
+    { table: "user", column: "organization_id", label: "员工账号" },
+  ],
+  promotion: [
+    { table: "contract_product", column: "promotion_id", label: "合同产品优惠" },
+  ],
+};
+
+async function assertNoDeleteReferences(schemaName: string, tableName: string, id: unknown) {
+  const guards = DELETE_REFERENCE_GUARDS[tableName];
+  if (!guards) return;
+  for (const guard of guards) {
+    const refColumns = await getTableColumns(schemaName, guard.table);
+    if (!refColumns.has(guard.column)) continue;
+    const delClause = refColumns.has("deleted") ? " and coalesce(deleted, false) = false" : "";
+    const { rows } = await pool.query(
+      `select id from ${tableExpr(schemaName, guard.table)} where ${qIdent(guard.column)} = $1${delClause}${guard.extraWhere ?? ""} limit 1`,
+      [id]
+    );
+    if (rows[0]) throw new Error(`该记录已被${guard.label}引用，不能删除；如需停用请改为编辑状态`);
+  }
+}
+
+
+function joinSql(schemaName: string, joins: JoinDsl[] = [], _softDelete = true) {
   return joins
     .map((join) => {
       assertField(join.alias);
       assertField(join.on.left);
       assertField(join.on.right);
-      const delClause = softDelete ? ` and ${qIdent(join.alias)}.deleted = false` : "";
+      // join 只取显示名（left join + 主键等值），不过滤 deleted：
+      // 学员/支付方式等主数据被删后，历史流水（收款/扣费/合同）的名称列应保留而非空白
       const joinSchema = join.schema ?? schemaName;
-      return `left join ${tableExpr(joinSchema, join.table)} ${qIdent(join.alias)} on t.${qIdent(join.on.left)} = ${qIdent(join.alias)}.${qIdent(join.on.right)}${delClause}`;
+      return `left join ${tableExpr(joinSchema, join.table)} ${qIdent(join.alias)} on t.${qIdent(join.on.left)} = ${qIdent(join.alias)}.${qIdent(join.on.right)}`;
     })
     .join(" ");
 }
@@ -540,7 +598,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
       where.push(...fragments);
     }
     if (dsl.security?.dataPermission && user) {
-      const scope = await getOrganizationScope(user, schemaName);
+      const scope = await getOrganizationScope(user, schemaName, scopeColumnsFor(dsl.table, tableColumns));
       appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
     }
     const page = Math.max(Number(params.page ?? 1), 1);
@@ -566,7 +624,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     const values: unknown[] = [params.id];
     const where = [`t.id = $1${delClause}`];
     if (dsl.security?.dataPermission && user) {
-      const scope = await getOrganizationScope(user, schemaName);
+      const scope = await getOrganizationScope(user, schemaName, scopeColumnsFor(dsl.table, tableColumns));
       appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
     }
     const { rows } = await pool.query(
@@ -622,7 +680,7 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     values.push(params.id);
     const where = [`t.id = $${values.length}${dsl.softDelete === false ? "" : " and t.deleted = false"}`];
     if (dsl.security?.dataPermission && user) {
-      const scope = await getOrganizationScope(user, schemaName);
+      const scope = await getOrganizationScope(user, schemaName, scopeColumnsFor(dsl.table, tableColumns));
       appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
     }
     const { rows } = await pool.query(
@@ -634,10 +692,11 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
 
   if (dsl.operation === "delete") {
     if (!params.id) throw new Error("缺少 id");
+    await assertNoDeleteReferences(schemaName, dsl.table, params.id);
     const values: unknown[] = [params.id];
     const where = ["t.id = $1"];
     if (dsl.security?.dataPermission && user) {
-      const scope = await getOrganizationScope(user, schemaName);
+      const scope = await getOrganizationScope(user, schemaName, scopeColumnsFor(dsl.table, tableColumns));
       appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
     }
     if (dsl.softDelete === false) {

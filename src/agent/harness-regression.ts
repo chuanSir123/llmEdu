@@ -26,6 +26,7 @@ import { validateEduDomainGuardrails } from "./validators/edu-domain.validator.j
 import { classifyHarnessError, classifyFeedback, needsContextRefresh, HarnessErrorCode } from "./harness-errors.js";
 import { EDU_RULES } from "./rules/edu-rules.js";
 import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
+import { validateDeclarativeRuleJson, evaluateFieldCheck } from "../common/declarative-rules.js";
 
 type TestCase = {
   name: string;
@@ -1484,6 +1485,99 @@ const tests: TestCase[] = [
       // 可能因其他关联校验（回显缺失等）失败，但绝不能因"物理表不存在: student"失败
       const err = result.error ?? "";
       expectEqual(err.includes("物理表不存在: student"), false, "real table student must not be flagged as missing");
+    },
+  },
+  {
+    name: "declarative rule structure validation rejects bad shapes and accepts good ones",
+    run: () => {
+      // 好结构：单次扣课时上限（含 when 前置条件）
+      const good = validateDeclarativeRuleJson({
+        ruleCode: "charge_hour_limit", ruleName: "单次扣课时上限", category: "validation", businessType: "charge_create",
+        validations: [{ field: "charge_hour", operator: "<=", value: 4, message: "单次扣课时不能超过4", when: [{ field: "charge_type", operator: "=", value: "NORMAL" }] }],
+      });
+      expectEqual(good.length, 0, `good rule should pass, got: ${good.join(";")}`);
+      // 好结构：context 引用 + count_limit
+      const goodCtx = validateDeclarativeRuleJson({
+        category: "validation", businessType: "course_create",
+        validations: [
+          { field: "context.student.student_status", operator: "=", value: "FORMAL", message: "仅正式学员可排课" },
+          { type: "count_limit", table: "generic_course_student", where: [{ field: "student_id", valueFrom: "student_id" }], operator: "<", value: 10, message: "未完成课程已达上限" },
+        ],
+      });
+      expectEqual(goodCtx.length, 0, `context/count_limit rule should pass, got: ${goodCtx.join(";")}`);
+      // 坏结构：未知实体、未知 operator、count_limit 无 where、businessType 不支持
+      const bad = validateDeclarativeRuleJson({
+        category: "validation", businessType: "not_a_command",
+        validations: [
+          { field: "context.invoice.amount", operator: "=", value: 1 },
+          { field: "charge_hour", operator: "sql_inject", value: 1 },
+          { type: "count_limit", table: "generic_course_student", where: [], operator: "<", value: 5 },
+          { type: "count_limit", table: "admin_secret", where: [{ field: "id", value: "1" }], operator: "<", value: 5 },
+        ],
+      });
+      expectEqual(bad.some((e) => e.includes("不支持的上下文实体")), true, "should flag unknown context entity");
+      expectEqual(bad.some((e) => e.includes("operator 不支持")), true, "should flag unknown operator");
+      expectEqual(bad.some((e) => e.includes("禁止全表计数")), true, "should flag empty count_limit where");
+      expectEqual(bad.some((e) => e.includes("不在白名单")), true, "should flag non-whitelisted table");
+      expectEqual(bad.some((e) => e.includes("businessType 不受声明式校验支持")), true, "should flag unsupported businessType");
+      // 非 validation 分类（如 funds_allocation）不做结构校验
+      const nonValidation = validateDeclarativeRuleJson({ category: "funds_allocation", businessType: "funds_create", fundsAllocation: "byCpRemainingAmount" });
+      expectEqual(nonValidation.length, 0, "non-validation categories must not be structure-checked");
+      // 旗标类 validation 规则（无 validations 数组，如排课冲突 preventXxx）继续放行
+      const flagsOnly = validateDeclarativeRuleJson({ category: "validation", businessType: "course_create", preventTeacherTimeConflict: true });
+      expectEqual(flagsOnly.length, 0, "flag-only validation rules must pass");
+    },
+  },
+  {
+    name: "declarative field check evaluator semantics (empty-skip, when, each, dict-compat, native-skip)",
+    run: () => {
+      const src = (data: Record<string, unknown>, context: Record<string, unknown> = {}) => ({ data, context });
+      // 基本比较 + message 透传
+      const over = evaluateFieldCheck({ field: "charge_hour", operator: "<=", value: 4, message: "超限" }, src({ charge_hour: 5 }));
+      expectEqual(over.passed, false, "5 <= 4 must fail");
+      expectEqual(over.message, "超限", "message must pass through");
+      expectEqual(evaluateFieldCheck({ field: "charge_hour", operator: "<=", value: 4 }, src({ charge_hour: 4 })).passed, true, "4 <= 4 must pass");
+      // 左值缺失：比较类跳过（规则不适用），required 拦截
+      expectEqual(evaluateFieldCheck({ field: "charge_hour", operator: "<=", value: 4 }, src({})).passed, true, "missing left must skip compare");
+      expectEqual(evaluateFieldCheck({ field: "remark", operator: "required" }, src({})).passed, false, "required must fail on missing");
+      // when 前置条件不满足 → 直接通过
+      expectEqual(evaluateFieldCheck(
+        { field: "charge_hour", operator: "<=", value: 1, when: [{ field: "charge_type", operator: "=", value: "NORMAL" }] },
+        src({ charge_hour: 9, charge_type: "PROMOTION" })
+      ).passed, true, "when-precondition unmatched must skip");
+      // 字典点号形态与裸值等价
+      expectEqual(evaluateFieldCheck(
+        { field: "context.student.student_status", operator: "=", value: "FORMAL" },
+        src({}, { student: { student_status: "student_status.FORMAL" } })
+      ).passed, true, "dict-id form must equal bare value");
+      // each 逐项校验：任一项不满足即失败
+      expectEqual(evaluateFieldCheck(
+        { each: "students", field: "charge_hour", operator: "<=", value: 2 },
+        src({ students: [{ charge_hour: 1 }, { charge_hour: 3 }] })
+      ).passed, false, "each must fail when any item violates");
+      // valueField 字段间比较（时间字符串字典序）
+      expectEqual(evaluateFieldCheck({ field: "end_time", operator: ">", valueField: "start_time" }, src({ start_time: "10:00", end_time: "09:00" })).passed, false, "09:00 > 10:00 must fail");
+      // 原生操作符（no_time_overlap）由引擎兜底，解释器跳过
+      expectEqual(evaluateFieldCheck({ field: "teacher_id", operator: "no_time_overlap" }, src({ teacher_id: "t1" })).passed, true, "native operators must be skipped");
+      // in / regex
+      expectEqual(evaluateFieldCheck({ field: "student_status", operator: "in", value: ["FORMAL", "TRIAL"] }, src({ student_status: "LEAD" })).passed, false, "in must fail for excluded value");
+      expectEqual(evaluateFieldCheck({ field: "contact", operator: "regex", value: "^1\\d{10}$" }, src({ contact: "abc" })).passed, false, "regex must fail on mismatch");
+    },
+  },
+  {
+    name: "edu guardrails reject bad declarative rules in create_business_rule diffs",
+    run: () => {
+      const errors = validateEduDomainGuardrails([
+        {
+          targetType: "business_rule", targetCode: "bad_rule", op: "create_business_rule",
+          resourceDef: {
+            ruleCode: "bad_rule", ruleName: "坏规则", category: "validation", businessType: "charge_create",
+            validations: [{ field: "context.payroll.salary", operator: "magic", value: 1 }],
+          },
+        } as DslDiff,
+      ], defaultTenantAgentPolicy());
+      expectEqual(errors.some((e) => e.includes("不支持的上下文实体")), true, "guardrails must surface entity error");
+      expectEqual(errors.some((e) => e.includes("operator 不支持")), true, "guardrails must surface operator error");
     },
   },
 ];

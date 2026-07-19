@@ -11,7 +11,7 @@
     "db:seed": "tsx src/seed/run.ts",
     "check": "tsc -p tsconfig.json && tsc -p client/tsconfig.json",
     "verify:static": "npm run check",
-    "verify:db": "npm run db:migrate && npm run db:seed && npm run check:harness && npm run smoke:module-selection && npm run smoke:core-import-flow && npm run smoke:business-flow && npm run smoke:reversal-flow && npm run smoke:refund-flow",
+    "verify:db": "npm run db:migrate && npm run db:seed && npm run check:harness && npm run smoke:module-selection && npm run smoke:core-import-flow && npm run smoke:business-flow && npm run smoke:reversal-flow && npm run smoke:refund-flow && npm run smoke:declarative-rule",
     "check:harness": "tsx src/agent/harness-regression.ts",
     "smoke:tenant-import": "tsx src/smoke/tenant-onboarding-import.ts",
     "smoke:business-flow": "tsx src/smoke/tenant-business-flow.ts",
@@ -20,7 +20,8 @@
     "smoke:core-import-flow": "tsx src/smoke/tenant-core-import-flow.ts",
     "smoke:assistant-full": "tsx src/smoke/tenant-assistant-full.ts",
     "eval:harness": "tsx src/smoke/eval/eval-runner.ts",
-    "smoke:module-selection": "tsx src/smoke/tenant-module-selection.ts"
+    "smoke:module-selection": "tsx src/smoke/tenant-module-selection.ts",
+    "smoke:declarative-rule": "tsx src/smoke/tenant-declarative-rule-flow.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

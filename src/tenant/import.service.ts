@@ -509,7 +509,7 @@ async function enrichImportContext(input: {
   const { rows } = await pool.query(
     `select id
      from ${schema}.contract
-     where student_id = $1 and deleted = false and contract_status = 'ACTIVE'
+     where student_id = $1 and deleted = false and contract_status in ('ACTIVE', 'contract_status.ACTIVE')
      order by created_at desc, id desc
      limit 2`,
     [input.data.student_id]

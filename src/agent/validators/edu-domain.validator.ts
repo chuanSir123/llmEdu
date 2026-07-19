@@ -1,6 +1,7 @@
 import type { DslDiff, TenantAgentPolicy } from "../types.js";
 import { SYSTEM_FIELD_SET as SYSTEM_FIELDS, SAFE_DATA_PERMISSION_SET } from "../../common/dsl-constants.js";
 import { PHONE_HINTS, MONEY_HINTS, DATE_HINTS, TIME_HINTS, COUNT_HINTS } from "../../common/field-type.js";
+import { validateDeclarativeRuleJson } from "../../common/declarative-rules.js";
 const OVERWRITE_STRATEGIES = new Set(["upsert", "overwrite", "replace", "merge"]);
 const FIELD_RE = /^[a-z][a-z0-9_]{0,62}$/;
 const ROLE_CODE_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
@@ -60,9 +61,18 @@ export function validateEduDomainGuardrails(diffs: DslDiff[], policy: TenantAgen
     validateContractPaymentAction(errors, diff);
     validateRefundAction(errors, diff);
     validateProtectedFinanceWrites(errors, diff);
+    validateDeclarativeBusinessRule(errors, diff);
   }
 
   return errors;
+}
+
+/** AI 定制新增 validation 规则时，用与保存接口同一套结构校验拦截坏结构（declarative-rules.ts 单一真相源） */
+function validateDeclarativeBusinessRule(errors: string[], diff: DslDiff) {
+  if (diff.targetType !== "business_rule" || diff.op !== "create_business_rule" || !diff.resourceDef) return;
+  for (const message of validateDeclarativeRuleJson(diff.resourceDef as Record<string, unknown>)) {
+    errors.push(`业务规则 ${String(diff.targetCode ?? "")} ${message}`);
+  }
 }
 
 function validateCustomTableScope(errors: string[], diff: DslDiff) {

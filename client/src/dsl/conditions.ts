@@ -8,11 +8,18 @@
 
 const COMPARE_OPS = new Set(["eq", "ne", "in", "notIn", "gt", "gte", "lt", "lte"]);
 
+// 字典值双格式兼容：历史/导入数据可能存 "course_status.SCHEDULED"（字典项 ID）形态，
+// 与 DSL 条件里的裸值 "SCHEDULED" 等价比较（仅剥离一层 小写下划线前缀+点号）
+function bareDictValue(text: string): string {
+  const match = /^[a-z][a-z0-9_]*\.(.+)$/.exec(text);
+  return match ? match[1] : text;
+}
+
 function conditionValue(value: unknown): string {
   if (value && typeof value === "object" && !Array.isArray(value) && "itemValue" in (value as Record<string, unknown>)) {
-    return String((value as Record<string, unknown>).itemValue ?? "");
+    return bareDictValue(String((value as Record<string, unknown>).itemValue ?? ""));
   }
-  return String(value ?? "");
+  return bareDictValue(String(value ?? ""));
 }
 
 function isOpCondition(value: unknown): value is { op: string; value?: unknown } {
@@ -28,7 +35,7 @@ function toList(target: unknown): string[] {
 export function evaluateCondition(expected: unknown, actual: unknown): boolean {
   const missing = actual === undefined;
   // null 沿用旧求值器的 "" 口径；undefined 才算"字段缺失"
-  const actualText = String(actual ?? "");
+  const actualText = bareDictValue(String(actual ?? ""));
   if (isOpCondition(expected)) {
     const target = expected.value;
     if (expected.op === "ne") return missing ? true : actualText !== conditionValue(target);

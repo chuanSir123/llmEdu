@@ -7,6 +7,7 @@ import { dictionaryDisplayFor, dictionaryOptionEntries } from "../dsl/dictionary
 import { effectiveOptionSource } from "../dsl/dictionarySource";
 import { evaluateWhen } from "../dsl/conditions";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
+import { StudentContractRows } from "./StudentContractRows";
 import { BusinessRuleEditor } from "./BusinessRuleEditor";
 import { JsonTextarea } from "./JsonTextarea";
 import { PermissionEditor } from "./PermissionEditor";
@@ -56,6 +57,34 @@ export function GenericFormRenderer({
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [openField]);
+
+  // 下拉面板 fixed 定位：absolute 会被弹窗 overflow-auto / 表格 overflow-hidden 裁剪
+  const [panelRect, setPanelRect] = useState<{ left: number; width: number; top?: number; bottom?: number } | null>(null);
+  useEffect(() => {
+    if (!openField) {
+      setPanelRect(null);
+      return;
+    }
+    function updateRect() {
+      const el = openField ? dropdownRefs.current[openField] : null;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUp = spaceBelow < 320 && rect.top > spaceBelow;
+      setPanelRect({
+        left: rect.left,
+        width: rect.width,
+        ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 })
+      });
+    }
+    updateRect();
+    window.addEventListener("resize", updateRect);
+    window.addEventListener("scroll", updateRect, true);
+    return () => {
+      window.removeEventListener("resize", updateRect);
+      window.removeEventListener("scroll", updateRect, true);
+    };
   }, [openField]);
 
   useEffect(() => {
@@ -267,25 +296,30 @@ export function GenericFormRenderer({
       <div className="relative min-w-0" ref={(el) => { dropdownRefs.current[field.key] = el; }}>
         <button
           type="button"
-          className={`${token.input} w-full min-w-0 truncate text-left flex items-center justify-between gap-1`}
+          className={`flex h-8 w-full min-w-0 items-center justify-between gap-1 truncate rounded-[3px] border bg-white px-2.5 text-left text-[13px] transition ${
+            isOpen ? "border-[#2f80ed] shadow-[0_0_0_2px_rgba(47,128,237,0.12)]" : "border-[#dde3ee] hover:border-[#b9c8de]"
+          }`}
           onClick={() => { setOpenField(isOpen ? null : field.key); setSearchText({ ...searchText, [field.key]: "" }); }}
         >
-          <span className="truncate">{selLabel}</span>
+          <span className={`truncate ${selLabel === "请选择" ? "text-[#a7b0bf]" : "text-[#263445]"}`}>{selLabel}</span>
           <svg className={`h-4 w-4 shrink-0 text-[#8b95a7] transition-transform ${isOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
         </button>
-        {isOpen && (
-          <div className="absolute left-0 right-0 top-[36px] z-50 border border-[#cfd8e6] bg-white shadow-[0_10px_24px_rgba(24,36,56,0.16)]">
-            <div className="flex items-center border-b border-[#e8edf5] px-2">
+        {isOpen && panelRect && (
+          <div
+            className="fixed z-[500] overflow-hidden rounded-[4px] border border-[#dfe6f0] bg-white shadow-[0_12px_32px_rgba(24,36,56,0.18)]"
+            style={{ left: panelRect.left, width: panelRect.width, top: panelRect.top, bottom: panelRect.bottom }}
+          >
+            <div className="flex items-center gap-1 border-b border-[#eef2f7] bg-[#fafbfd] px-2">
               <svg className="h-4 w-4 shrink-0 text-[#8b95a7]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
               <input
-                className="h-9 w-full border-0 px-2 text-sm outline-none"
+                className="h-9 w-full border-0 bg-transparent px-1 text-[13px] outline-none placeholder:text-[#a7b0bf]"
                 value={searchText[field.key] ?? ""}
                 placeholder={`搜索${field.label ?? field.title ?? ""}...`}
                 onChange={(event) => setSearchText({ ...searchText, [field.key]: event.target.value })}
                 autoFocus
               />
             </div>
-            <div className="max-h-52 overflow-auto py-1">
+            <div className="max-h-56 overflow-auto py-1">
               {!isMulti && (
                 <button type="button" className="block w-full px-3 py-2 text-left text-sm text-[#8b95a7] hover:bg-[#f2f7ff]" onClick={() => { applySelectValue(field, ""); setOpenField(null); }}>
                   请选择
@@ -396,6 +430,22 @@ export function GenericFormRenderer({
                 ))}
                 <button type="button" className={token.defaultButton} onClick={() => { const rows = [...(Array.isArray(value[field.key]) ? value[field.key] as Record<string, unknown>[] : []), { performance_type: value.performance_type ?? "MANUAL_ADJUST", source_type: value.source_type ?? "MANUAL_ADJUSTMENT", contract_product_id: value.contract_product_id, funds_change_history_id: value.funds_change_history_id, adjustment_reason: value.adjustment_reason }]; onChange({ ...value, [field.key]: rows, items: rows }); }}>添加分摊行</button>
               </div>
+            ) : field.type === "student_cp_table" ? (
+              <StudentContractRows
+                scope={scope}
+                schemaName={schemaName}
+                value={value[field.key]}
+                onChange={(rowsNext) => onChange({ ...value, [field.key]: rowsNext })}
+                studentOptions={(effectiveOptionSource(field) ? remoteOptions[field.key] ?? [] : []).map((option) => ({ value: option.value, label: option.label }))}
+                studentSource={field.optionSource?.pageCode && field.optionSource?.apiCode ? {
+                  pageCode: field.optionSource.pageCode,
+                  apiCode: field.optionSource.apiCode,
+                  labelField: field.optionSource.labelField,
+                  valueField: field.optionSource.valueField,
+                  filters: field.optionSource.filters as Record<string, unknown> | undefined,
+                  pageSize: field.optionSource.pageSize
+                } : undefined}
+              />
             ) : field.type === "attendance_table" ? (
               <div className="space-y-3">
                 <div className="rounded-lg border border-[#dbeafe] bg-[#eff6ff] px-3 py-2 text-xs text-[#1d4ed8]">

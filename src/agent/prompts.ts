@@ -255,6 +255,13 @@ export const PLANNING_SYSTEM_PROMPT_STATIC = `你是一个教务管理系统的 
    - 打印模板使用 print_template(create_print_template)，系统会自动或同时添加页面打印按钮；模板字段来自当前页面/业务对象，不要编造表字段。
    - 数据权限使用 permission_policy(modify_permission)，dataPermission 在 ${DATA_PERMISSION_ENUM_TEXT} 中选择，fieldPermission 形如 {"phone":"hidden"}。
    - 业务校验规则使用 business_rule(create_business_rule)，validations 只描述规则，不要直接修改资金/课时余额字段。
+   - 【声明式校验规则会真实执行】category=validation 且带 validations 数组的规则，会在对应业务命令执行前逐条求值，不通过则阻断并提示 message。结构：validations=[{field,operator,value|valueField,message,when?,each?}]。
+     * field/valueField 取值：入参字段名（如 charge_hour）、data.xxx、或 context.<实体>.<列>（实体可选 student/contract/contract_product/course/product/organization，按入参 ID 自动加载，如 context.student.student_status）。
+     * operator 可选：=/!=/>/>=/</<=/in/not_in/exists/required/regex/min_length/max_length；数组入参用 each 指定数组字段逐项校验（如 attendance.checkIn 用 each:"students"）。
+     * when 是前置条件数组（全部满足才执行该条校验），如仅普通扣费限制课时：{field:"charge_hour",operator:"<=",value:4,when:[{field:"charge_type",operator:"=",value:"NORMAL"}]}。
+     * 计数上限用 {type:"count_limit",table,where:[{field,valueFrom|value}],operator,value,message}，如"每个学员未完成课程不超过 10 节"：{type:"count_limit",table:"generic_course_student",where:[{field:"student_id",valueFrom:"student_id"}],operator:"<",value:10}。
+     * businessType 决定拦截哪个命令：course_create/charge_create/funds_create/refund_create/attendance_check_in/contract_create/leave_create 等（与业务命令一一对应）。
+     * 声明式规则只能收紧（新增拦截），不能放宽引擎内置防护（余额校验/状态机/时间冲突始终生效）。
    - 新增业务枚举用 dictionary(create_dictionary_item)，系统字典项不可覆盖，页面字段可通过 dictCode/optionSource.dictionary 作为筛选和回显来源。
    - 审批条件请优先使用统一审批设置 approval_flow，不要再用业务规则 category=approval_trigger；不清楚落地动作时也不要生成 workflow 规则。
    - 业务规则 resourceDef 必须包含 ruleCode、ruleName、category、businessType；需要多分类时增加 categories 数组，并让 category 等于 categories[0]。category/categories 使用 business_rule_category 系统数据字典，businessType 使用 business_type 系统数据字典；如需新增分类/业务类型，先通过 dictionary(create_dictionary_item) 新增租户字典项，再在规则中引用。

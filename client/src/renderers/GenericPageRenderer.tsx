@@ -6,6 +6,7 @@ import { evaluateWhen } from "../dsl/conditions";
 import { isDangerAction } from "../dsl/actionVariant";
 import { dictionaryLabelFor } from "../dsl/dictionaryLabels";
 import { useToast } from "../context/ToastContext";
+import { useConfirm } from "../context/ConfirmContext";
 import { token } from "../styles/designTokens";
 import { ActionRenderer } from "./ActionRenderer";
 import { GenericTableRenderer } from "./GenericTableRenderer";
@@ -16,7 +17,8 @@ import { ImportHandler } from "./ImportHandler";
 import { exportToExcel } from "./ExportHandler";
 import { CustomizationRecordDetail } from "./CustomizationRecordDetail";
 import { CalendarView } from "./CalendarView";
-import { fieldDictCode } from "../dsl/dictionarySource";
+import { effectiveOptionSource, fieldDictCode } from "../dsl/dictionarySource";
+import { SearchSelect } from "./SearchSelect";
 
 const editorDictionaryCodes: Record<string, string[]> = {
   business_rule_editor: [
@@ -88,6 +90,7 @@ export function GenericPageRenderer({
   const tableDsl = dsl.table ?? { columns: [], rowActions: [] };
   const modalDsl = dsl.modal ?? { fields: [] };
   const toast = useToast();
+  const appConfirm = useConfirm();
   const [filters, setFilters] = useState<Record<string, unknown>>(initialFilters ?? {});
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
@@ -198,7 +201,17 @@ export function GenericPageRenderer({
     dictionaryMeta: { ...dictionaryMeta, ...(dsl.presentation?.dictionaryMeta ?? {}) }
   }), [dsl.presentation, dictionaryLabels, dictionaryMeta]);
 
+  // 动态默认值 sentinel：DSL 是静态 JSON，"当前时间"必须在打开弹窗时解析，
+  // 否则 seed 时刻的时间会被固化进 DSL（如 收款时间 永远默认 seed 那天）。
+  function resolveDynamicToken(value: string): string {
+    if (value !== "$now" && value !== "$today") return value;
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString();
+    return value === "$now" ? local.slice(0, 16) : local.slice(0, 10);
+  }
+
   function resolveDictionaryValue(value: unknown): unknown {
+    if (typeof value === "string") return resolveDynamicToken(value);
     if (Array.isArray(value)) return value.map((item) => resolveDictionaryValue(item));
     if (value && typeof value === "object") {
       const obj = value as Record<string, unknown>;
@@ -478,11 +491,11 @@ export function GenericPageRenderer({
         return;
       }
       const modeLabel = attendanceMode === "cancel_attendance" ? "取消考勤" : "取消扣费";
-      if (!window.confirm(`确认执行「${modeLabel}」？`)) return;
+      if (!(await appConfirm({ title: modeLabel, message: `确认执行「${modeLabel}」？`, danger: true }))) return;
     }
     // 考勤/扣费模式未勾选学员时不再静默全选，先确认
     if (hasAttendanceTable && (attendanceMode === "attendance" || attendanceMode === "charge") && selectedStudentIds.size === 0 && attendanceStudents.length > 0) {
-      if (!window.confirm(`未勾选学员，将对全部 ${attendanceStudents.length} 名学员执行，是否继续？`)) return;
+      if (!(await appConfirm({ message: `未勾选学员，将对全部 ${attendanceStudents.length} 名学员执行，是否继续？` }))) return;
     }
     const selectedAttendanceStudents = attendanceStudents.filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)));
     if (hasAttendanceTable && attendanceMode === "cancel_attendance" && selectedAttendanceStudents.some((student) => Number(student.charged_count ?? 0) > 0)) {
@@ -642,8 +655,8 @@ export function GenericPageRenderer({
         toast.error(action.requiresSelectionMessage ?? "请先选择数据");
         return;
       }
-      if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
-      if (!action.confirm && isDangerAction(action) && !window.confirm(`确认执行「${action.label ?? action.actionCode}」？`)) return;
+      if (action.confirm && !(await appConfirm({ title: action.label, message: typeof action.confirm === "string" ? action.confirm : "确认操作？", danger: isDangerAction(action) }))) return;
+      if (!action.confirm && isDangerAction(action) && !(await appConfirm({ title: action.label, message: `确认执行「${action.label ?? action.actionCode}」？`, danger: true }))) return;
       if (actionInFlightRef.current) return;
       actionInFlightRef.current = true;
       try {
@@ -716,9 +729,9 @@ export function GenericPageRenderer({
   }
 
   async function onRowAction(action: ActionDsl, row: Record<string, unknown>) {
-    if (action.confirm && !window.confirm(typeof action.confirm === "string" ? action.confirm : "确认操作？")) return;
+    if (action.confirm && !(await appConfirm({ title: action.label, message: typeof action.confirm === "string" ? action.confirm : "确认操作？", danger: isDangerAction(action) }))) return;
     // danger 语义且未配 confirm 的兜底确认
-    if (!action.confirm && isDangerAction(action) && !window.confirm(`确认执行「${action.label ?? action.actionCode}」？`)) return;
+    if (!action.confirm && isDangerAction(action) && !(await appConfirm({ title: action.label, message: `确认执行「${action.label ?? action.actionCode}」？`, danger: true }))) return;
     if (action.type === "open_ai_customization" || action.actionType === "open_ai_customization") {
       onOpenAiCustomization?.();
       return;
@@ -748,7 +761,15 @@ export function GenericPageRenderer({
       return;
     }
     if (action.actionCode.endsWith(".edit")) {
-      setModal({ type: "edit", value: await hydrateEditValue(row) });
+      // 行按钮显式配置了 fields 时（如 编辑排课 的 courseEditFields + course.update），
+      // 保留 action 让弹窗字段/提交接口生效；只配 modalCode 的仍走页面 modal.fields +
+      // updateApi（modalCode 的 submitApiCode 通常是 create，编辑不能复用）。
+      const value = await hydrateEditValue(row);
+      if (action.fields?.length) {
+        setModal({ type: "edit", value, action });
+      } else {
+        setModal({ type: "edit", value });
+      }
       return;
     }
     if (action.type === "open_page" || action.actionType === "open_page") {
@@ -974,14 +995,42 @@ export function GenericPageRenderer({
     const dictOptions = presentationWithDictionaries.valueLabels?.[field.key];
     if (field.type === "select" || fieldDictCode(field) || dictOptions) {
       return (
-        <select
-          className={filterControlClass()}
+        <SearchSelect
+          compact
+          className="min-w-[150px]"
           value={String(filters[field.key] ?? "")}
-          onChange={(event) => setFilters({ ...filters, [field.key]: event.target.value })}
-        >
-          <option value="">全部</option>
-          {Object.entries(dictOptions ?? {}).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
+          placeholder="全部"
+          clearLabel="全部"
+          options={Object.entries(dictOptions ?? {}).map(([optionValue, optionLabel]) => ({ value: optionValue, label: String(optionLabel) }))}
+          onChange={(next) => setFilters({ ...filters, [field.key]: next })}
+        />
+      );
+    }
+    // 外键筛选（学员/老师/产品等）：可搜索远程下拉，替代手输 ID 的文本框
+    const rawFilterSource = effectiveOptionSource(field as FieldDsl);
+    const filterSource = rawFilterSource?.pageCode && rawFilterSource.apiCode
+      ? {
+          pageCode: rawFilterSource.pageCode,
+          apiCode: rawFilterSource.apiCode,
+          labelField: rawFilterSource.labelField,
+          valueField: rawFilterSource.valueField,
+          filters: rawFilterSource.filters as Record<string, unknown> | undefined,
+          pageSize: rawFilterSource.pageSize
+        }
+      : undefined;
+    if (filterSource) {
+      return (
+        <SearchSelect
+          compact
+          className="min-w-[170px]"
+          scope={scope}
+          schemaName={schemaName}
+          value={String(filters[field.key] ?? "")}
+          placeholder="全部"
+          clearLabel="全部"
+          optionSource={filterSource}
+          onChange={(next) => setFilters({ ...filters, [field.key]: next })}
+        />
       );
     }
     const inputType = field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text";

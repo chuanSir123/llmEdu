@@ -3,12 +3,13 @@ import { withClient } from "../db/pool.js";
 import { qIdent } from "../db/schema-resolver.js";
 import { withRedisLock } from "../redis-lock.service.js";
 import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
+import { runDeclarativeValidations } from "./declarative-rule.service.js";
 
 type CommandDsl = {
   operation: "command";
   command: "contract.create" | "contract.update" | "funds.create" | "funds.delete" | "course.create" | "course.update" | "chargeRecord.create" | "refund.create"
     | "contract.refund" | "contract.delete" | "refund.delete" | "course.delete" | "ledger.denyMutation"
-    | "attendance.checkIn" | "attendance.cancel" | "leave.create" | "makeup.create" | "classStudent.transfer" | "class.changeStatus"
+    | "attendance.checkIn" | "attendance.cancel" | "leave.create" | "leave.delete" | "student.delete" | "eleAccount.withdraw" | "makeup.create" | "classStudent.transfer" | "class.changeStatus"
     | "miniClass.addStudent" | "miniClass.removeStudent" | "oneOnNGroup.addStudent" | "oneOnNGroup.removeStudent"
     | "chargeRecord.reverse" | "chargeRecord.preview" | "course.cancel" | "course.student.save" | "holiday.apply"
     | "moneyArrange.save" | "promotionArrange.save" | "performanceArrange.save"
@@ -107,7 +108,7 @@ function shouldRedisLockCommand(command: string) {
   return [
     "contract.create", "contract.update", "funds.create", "funds.delete", "refund.create", "contract.refund", "contract.delete", "refund.delete",
     "course.create", "course.update", "course.delete", "course.cancel", "course.student.save",
-    "chargeRecord.create", "chargeRecord.reverse", "attendance.checkIn", "attendance.cancel",
+    "chargeRecord.create", "chargeRecord.reverse", "attendance.checkIn", "attendance.cancel", "leave.delete", "student.delete", "eleAccount.withdraw",
     "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent",
     "classStudent.transfer", "class.changeStatus", "moneyArrange.save", "promotionArrange.save", "performanceArrange.save",
     "product.grant.save", "product.promotion.save", "contract.transition_status"
@@ -147,7 +148,8 @@ function commandApprovalHint(command: CommandDsl["command"]) {
 
 async function resolveApproverUserId(client: pg.PoolClient, schemaName: string, assigneeRole: string, organizationId?: string) {
   if (!assigneeRole) return null;
-  const values: unknown[] = [assigneeRole];
+  // 双方都可能带字典前缀（assigneeRole=approval_role.X、staff_type=staff_type.X、role_code 裸值），一律剥前缀按裸值比较
+  const values: unknown[] = [dictBare(assigneeRole)];
   let orgWhere = "";
   if (organizationId) {
     values.push(organizationId);
@@ -158,8 +160,8 @@ async function resolveApproverUserId(client: pg.PoolClient, schemaName: string, 
      from ${table(schemaName, "user")} u
      left join ${table(schemaName, "user_role")} ur on ur.user_id = u.id and ur.deleted = false
      left join ${table(schemaName, "role")} r on r.id = ur.role_id and r.deleted = false
-     where u.deleted = false and u.status = 'ACTIVE'
-       and (upper(coalesce(u.staff_type,'')) = upper($1) or upper(coalesce(r.role_code,'')) = upper($1))
+     where u.deleted = false and u.status in ('ACTIVE', 'status.ACTIVE')
+       and (upper(regexp_replace(coalesce(u.staff_type,''), '^[a-z_]+\\.', '')) = upper($1) or upper(regexp_replace(coalesce(r.role_code,''), '^[a-z_]+\\.', '')) = upper($1))
        ${orgWhere}
      order by case when u.organization_id = ${organizationId ? "$2" : "u.organization_id"} then 0 else 1 end, u.created_at asc
      limit 1`,
@@ -183,7 +185,7 @@ async function submitApprovalTask(client: pg.PoolClient, schemaName: string, par
   const businessType = str(input.business_type ?? input.businessType);
   const event = str(input.event);
   const values: unknown[] = [];
-  const where = ["deleted = false", "status = 'ACTIVE'"];
+  const where = ["deleted = false", "status in ('ACTIVE', 'status.ACTIVE')"];
   if (flowCode) { values.push(flowCode); where.push(`flow_code = $${values.length}`); }
   if (!flowCode && businessType) { values.push(businessType); where.push(`coalesce(config_json->>'businessType', config_json->>'business_type') = $${values.length}`); }
   if (!flowCode && !businessType && event) { values.push(event); where.push(`config_json->'trigger'->>'event' = $${values.length}`); }
@@ -291,7 +293,7 @@ async function maybeSubmitApprovalTask(client: pg.PoolClient, schemaName: string
     if (task?.status === "APPROVED") return undefined;
     throw new Error("审批未通过，不能执行业务动作");
   }
-  const { rows } = await client.query(`select id from ${table(schemaName, "approval_flow")} where flow_code = $1 and status = 'ACTIVE' and deleted = false limit 1`, [hint.flowCode]);
+  const { rows } = await client.query(`select id from ${table(schemaName, "approval_flow")} where flow_code = $1 and status in ('ACTIVE', 'status.ACTIVE') and deleted = false limit 1`, [hint.flowCode]);
   if (!rows[0]) return undefined;
   return submitApprovalTask(client, schemaName, {
     ...params,
@@ -393,7 +395,7 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
   if (!totalAmount) totalAmount = productInputs.reduce((sum, { item, product }) => sum + num(item.plan_real_amount ?? item.total_amount ?? product.total_amount), 0);
 
   const promotionId = str(input.promotion_id);
-  const promotion = promotionId ? await one(client, `select * from ${table(schemaName, "promotion")} where id = $1 and deleted = false and status = 'ACTIVE'`, [promotionId]) : undefined;
+  const promotion = promotionId ? await one(client, `select * from ${table(schemaName, "promotion")} where id = $1 and deleted = false and status in ('ACTIVE', 'status.ACTIVE')`, [promotionId]) : undefined;
   let promotionAmount = num(input.promotion_amount);
   if (!promotionAmount && promotion) {
     const promotionType = str(promotion.type);
@@ -425,7 +427,7 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
   );
 
   const convertedStudent = await client.query(
-    `update ${table(schemaName, "student")} set student_status = 'FORMAL', updated_at = now() where id = $1 and coalesce(student_status,'') = 'LEAD' returning id`,
+    `update ${table(schemaName, "student")} set student_status = 'FORMAL', updated_at = now() where id = $1 and coalesce(student_status,'') in ('LEAD', 'student_status.LEAD') returning id`,
     [singleStudentId]
   );
   if (convertedStudent.rows[0]) {
@@ -562,7 +564,7 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
 
   const hasPromotionIdInput = Object.prototype.hasOwnProperty.call(input, "promotion_id");
   const promotionId = str(input.promotion_id);
-  const promotion = promotionId ? await one(client, `select * from ${table(schemaName, "promotion")} where id = $1 and deleted = false and status = 'ACTIVE'`, [promotionId]) : undefined;
+  const promotion = promotionId ? await one(client, `select * from ${table(schemaName, "promotion")} where id = $1 and deleted = false and status in ('ACTIVE', 'status.ACTIVE')`, [promotionId]) : undefined;
   let promotionAmount = Object.prototype.hasOwnProperty.call(input, "promotion_amount") ? num(input.promotion_amount) : num(contract.promotion_amount);
   if (!Object.prototype.hasOwnProperty.call(input, "promotion_amount") && hasPromotionIdInput) {
     const promotionType = str(promotion?.type);
@@ -594,7 +596,7 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
     const currentCpIds = currentProducts.map((row) => String(row.id));
     // 已撤销（REVERSED）的扣费不再阻塞合同修改：其课时/金额已全额冲回
     const { rows: lockedRows } = await client.query(
-      `select 'charge' as source, id from ${table(schemaName, "account_charge_records")} where contract_product_id = any($1::text[]) and deleted = false and charge_status = 'CONFIRMED'
+      `select 'charge' as source, id from ${table(schemaName, "account_charge_records")} where contract_product_id = any($1::text[]) and deleted = false and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED')
        union all
        select 'refund' as source, id from ${table(schemaName, "refund_record")} where contract_product_id = any($1::text[]) and deleted = false`,
       [currentCpIds]
@@ -604,12 +606,21 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
 
   const payable = Math.max(totalAmount - promotionAmount, 0);
   const paidAmount = num(contract.paid_amount);
+  // 已收款/已扣费的合同不能换签约学员：收款流水与课消都挂在原学员名下，换人会造成三方对账矛盾。
+  // 需要换学员时应先退费/删除收款（合同回到未收款），或走正规的退费+重签流程。
+  const nextStudentId = str(input.student_id, Array.isArray(input.student_ids) && input.student_ids.length ? String(input.student_ids[0]) : str(contract.student_id));
+  if (nextStudentId !== str(contract.student_id)) {
+    if (paidAmount > 0) throw new Error("合同已有收款，不能更换签约学员；请先删除收款或走退费重签流程");
+    const cpIds = currentProducts.map((row) => String(row.id));
+    const charged = cpIds.length ? await one(client, `select id from ${table(schemaName, "account_charge_records")} where contract_product_id = any($1::text[]) and deleted = false and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') limit 1`, [cpIds]) : undefined;
+    if (charged) throw new Error("合同已发生扣费，不能更换签约学员");
+  }
   const paidStatus = paidAmount <= 0 ? "UNPAID" : paidAmount >= payable ? "PAID" : "PART_PAID";
   const updated = await one(client,
     `update ${table(schemaName, "contract")}
      set student_id = $2, contract_type = $3, organization_id = $4, sign_staff_id = $5, sign_time = $6, total_amount = $7, promotion_amount = $8, paid_status = $9, ext_json = coalesce(ext_json,'{}'::jsonb) || $10::jsonb, updated_at = now()
      where id = $1 returning *`,
-    [contractId, str(input.student_id, Array.isArray(input.student_ids) && input.student_ids.length ? String(input.student_ids[0]) : str(contract.student_id)), str(input.contract_type, str(contract.contract_type)), str(input.organization_id, str(contract.organization_id)), str(input.sign_staff_id, str(contract.sign_staff_id)), str(input.sign_time, str(contract.sign_time)), totalAmount || num(contract.total_amount), promotionAmount, paidStatus, JSON.stringify({ ruleCode: "contract_update_rule", promotionId: promotionId || null })]
+    [contractId, nextStudentId, str(input.contract_type, str(contract.contract_type)), str(input.organization_id, str(contract.organization_id)), str(input.sign_staff_id, str(contract.sign_staff_id)), input.sign_time ?? contract.sign_time, totalAmount || num(contract.total_amount), promotionAmount, paidStatus, JSON.stringify({ ruleCode: "contract_update_rule", promotionId: promotionId || null })]
   );
 
   if (reallocationRequired) {
@@ -822,15 +833,28 @@ async function createFunds(client: pg.PoolClient, schemaName: string, params: Re
     ? await one(client, `select student_id, total_amount, promotion_amount, paid_amount, contract_status from ${table(schemaName, "contract")} where id = $1 and deleted = false`, [input.contract_id])
     : undefined;
   if (input.contract_id && !contract) throw new Error("合同不存在或已删除");
-  if (contract && ["REFUNDED", "CLOSED", "CANCELLED"].includes(str(contract.contract_status))) {
+  if (contract && ["REFUNDED", "CLOSED", "CANCELLED"].includes(dictBare(contract.contract_status))) {
     throw new Error("合同已退费/关闭/作废，不可继续收款");
+  }
+  // 合同收款不能超过应收余额（总额-优惠-已收），多收会把 paid_amount 推过应收、报表口径全乱；
+  // 定金/预收应走预存（电子账户），不挂合同
+  if (contract && fundsType === "CONTRACT_PAY") {
+    const payable = Math.max(num(contract.total_amount) - num(contract.promotion_amount), 0);
+    const remaining = roundMoney(payable - num(contract.paid_amount));
+    if (amount > remaining + 0.005) {
+      throw new Error(`收款金额超过合同应收余额（剩余应收 ${remaining.toFixed(2)} 元）；超出部分请改用学员预存`);
+    }
   }
   const studentId = str(input.student_id, str(contract?.student_id));
   if (!studentId) throw new Error("收款必须选择学员");
+  // 合同收款的学员必须与合同签约学员一致，否则流水挂 A 学员、钱分给 B 学员的合同，对账必乱
+  if (contract && str(input.student_id) && str(contract.student_id) !== str(input.student_id)) {
+    throw new Error("所选学员与合同签约学员不一致，请检查合同或学员");
+  }
   const payWay = input.pay_way_config_id
     ? await one(client, `select pay_way_type from ${table(schemaName, "pay_way_config")} where id = $1 and deleted = false`, [input.pay_way_config_id])
     : undefined;
-  const isEleAccountPay = str(payWay?.pay_way_type) === "ELE_ACCOUNT";
+  const isEleAccountPay = dictBare(payWay?.pay_way_type) === "ELE_ACCOUNT";
   const row = await one(client,
     `insert into ${table(schemaName, "funds_change_history")}
       (id, contract_id, student_id, transaction_amount, transaction_time, pay_way_config_id, funds_type, organization_id, ext_json)
@@ -963,7 +987,7 @@ async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Re
       sourceFundsId: fundsId,
       remark: "删除预存收款回滚电子账户"
     });
-  } else if (str(payWay?.pay_way_type) === "ELE_ACCOUNT") {
+  } else if (dictBare(payWay?.pay_way_type) === "ELE_ACCOUNT") {
     await changeStudentEleAccount(client, schemaName, {
       studentId: str(funds.student_id),
       amount,
@@ -991,7 +1015,7 @@ async function deleteContract(client: pg.PoolClient, schemaName: string, params:
   const charge = await one(client,
     `select acr.id from ${table(schemaName, "account_charge_records")} acr
      join ${table(schemaName, "contract_product")} cp on acr.contract_product_id = cp.id
-     where cp.contract_id = $1 and acr.deleted = false and acr.charge_status = 'CONFIRMED' limit 1`,
+     where cp.contract_id = $1 and acr.deleted = false and acr.charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') limit 1`,
     [contractId]
   );
   if (charge) throw new Error("合同已有扣费记录，不可删除");
@@ -1030,6 +1054,28 @@ async function changeStudentEleAccount(
   return nextBalance;
 }
 
+// 退预存余额：电子账户余额的正式退出路径（部分消费后原预存流水无法作废，余额不能困死在账户里）
+async function ele_account_withdraw(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const input = dataOf(params);
+  const studentId = str(input.student_id ?? params.id);
+  if (!studentId) throw new Error("缺少学员 ID");
+  const amount = num(input.amount ?? input.withdraw_amount);
+  if (amount <= 0) throw new Error("退款金额必须大于 0");
+  const reason = str(input.remark ?? input.reason);
+  if (!reason) throw new Error("退预存必须填写退款原因");
+  const account = await one(client, `select * from ${table(schemaName, "student_ele_account")} where student_id = $1 and deleted = false for update`, [studentId]);
+  if (!account) throw new Error("该学员没有电子账户");
+  if (amount > num(account.balance_amount)) throw new Error(`退款金额超过账户余额（当前余额 ${num(account.balance_amount).toFixed(2)} 元）`);
+  const nextBalance = await changeStudentEleAccount(client, schemaName, {
+    studentId,
+    amount: -amount,
+    changeType: "PRESTORE_WITHDRAW",
+    remark: reason,
+    operatorId: str(params.__userId) || undefined,
+  });
+  return { withdrawn: true, studentId, amount, balanceAfter: nextBalance };
+}
+
 function timeToMinutes(value: unknown) {
   const [hour, minute] = str(value).split(":").map(Number);
   return hour * 60 + minute;
@@ -1055,7 +1101,7 @@ async function assertStudentsNoTimeConflict(
     `select gcs.student_id, gc.id as course_id, gc.course_title, gc.course_date, gc.start_time, gc.end_time
      from ${table(schemaName, "generic_course_student")} gcs
      join ${table(schemaName, "generic_course")} gc on gcs.course_id = gc.id
-     where gcs.deleted = false and gc.deleted = false and gc.course_status <> 'CANCELLED'
+     where gcs.deleted = false and gc.deleted = false and gc.course_status not in ('CANCELLED', 'course_status.CANCELLED')
        and gc.course_date = $1 and gc.start_time < $2 and gc.end_time > $3
        and gcs.student_id = any($4::text[])
        and ($5 = '' or gc.id <> $5)
@@ -1096,7 +1142,7 @@ async function cleanupRemovedStudentCourses(
   let reversedCharges = 0;
   for (const row of rows) {
     const { rows: charges } = await client.query(
-      `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false for update`,
+      `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false for update`,
       [row.course_id, input.studentId]
     );
     const isAttended = str(row.attendance_status) === "PRESENT";
@@ -1110,7 +1156,7 @@ async function cleanupRemovedStudentCourses(
     }
     if (input.policy === "delete_uncharged_course_students" || input.policy === "cancel_attendance_and_charges") {
       const { rows: remainingCharges } = await client.query(
-        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false limit 1`,
+        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
         [row.course_id, input.studentId]
       );
       if (remainingCharges.length === 0) {
@@ -1155,7 +1201,7 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
   if (rule.preventTeacherTimeConflict !== false && input.teacher_id) {
     const conflict = await one(client,
       `select id from ${table(schemaName, "generic_course")}
-       where deleted = false and course_status <> 'CANCELLED' and teacher_id = $1 and course_date = $2
+       where deleted = false and course_status not in ('CANCELLED', 'course_status.CANCELLED') and teacher_id = $1 and course_date = $2
          and start_time < $3 and end_time > $4
        limit 1`,
       [input.teacher_id, input.course_date, input.end_time, input.start_time]
@@ -1169,13 +1215,13 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
      returning *`,
     [
       courseId,
-      input.course_type,
+      dictBare(input.course_type) || null,
       input.course_date,
       input.start_time,
       input.end_time,
       input.teacher_id,
       input.study_manager_id,
-      str(input.course_status, "SCHEDULED"),
+      dictBare(input.course_status, "SCHEDULED"),
       input.organization_id,
       input.mini_class_id,
       input.one_on_n_group_id,
@@ -1232,11 +1278,21 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
     return { course, studentCount: groupStudents.length, autoLinked: true, source: "one_on_n_group" };
   }
 
-  const directCourseStudents = studentsWithCp.length ? studentsWithCp : studentIds.map((sid) => ({ student_id: sid }));
+  const rawCourseStudents = studentsWithCp.length ? studentsWithCp : studentIds.map((sid) => ({ student_id: sid }));
+  // 按学员去重（行编辑器/入参可能重复选同一学员），避免同一课次插入重复 generic_course_student
+  const seenStudentIds = new Set<string>();
+  const directCourseStudents = rawCourseStudents.filter((stu) => {
+    const sid = str((stu as Record<string, unknown>).student_id);
+    if (!sid || seenStudentIds.has(sid)) return false;
+    seenStudentIds.add(sid);
+    return true;
+  });
   if (rule.preventStudentTimeConflict !== false) await assertStudentsNoTimeConflict(client, schemaName, input, directCourseStudents.map((row) => str(row.student_id)), courseId);
   for (const stu of directCourseStudents) {
     const sid = str(stu.student_id);
-    const cpId = str((stu as Record<string, unknown>).contract_product_id) || str(input.contract_product_id) || await autoSelectCp(client, schemaName, sid, { productId: input.product_id, grade: input.grade, subject: input.subject }, rule);
+    const explicitCpId = str((stu as Record<string, unknown>).contract_product_id) || str(input.contract_product_id);
+    if (explicitCpId) await assertCpBelongsToStudent(client, schemaName, explicitCpId, sid);
+    const cpId = explicitCpId || await autoSelectCp(client, schemaName, sid, { productId: input.product_id, grade: input.grade, subject: input.subject }, rule);
     await client.query(
       `insert into ${table(schemaName, "generic_course_student")}
         (id, course_id, student_id, attendance_status, contract_product_id)
@@ -1245,6 +1301,18 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
     );
   }
   return { course, studentCount: studentsWithCp.length || studentIds.length };
+}
+
+// 排课/改课显式指定合同产品时校验归属，避免把别人的合同产品绑给学员（原先要到考勤扣费才报错）
+async function assertCpBelongsToStudent(client: pg.PoolClient, schemaName: string, cpId: string, studentId: string) {
+  const owner = await one(client,
+    `select c.student_id from ${table(schemaName, "contract_product")} cp
+      join ${table(schemaName, "contract")} c on cp.contract_id = c.id and c.deleted = false
+     where cp.id = $1 and cp.deleted = false`,
+    [cpId]
+  );
+  if (!owner) throw new Error(`合同产品不存在或已删除: ${cpId}`);
+  if (str(owner.student_id) !== studentId) throw new Error(`合同产品不属于该学员（学员${studentId}），请留空由系统自动匹配`);
 }
 
 async function autoSelectCp(
@@ -1274,8 +1342,8 @@ async function autoSelectCp(
      from ${table(schemaName, "contract_product")} cp
      join ${table(schemaName, "contract")} c on cp.contract_id = c.id
      join ${table(schemaName, "product")} p on cp.product_id = p.id and p.deleted = false
-     left join ${table(schemaName, "account_charge_records")} acr on acr.contract_product_id = cp.id and acr.charge_status = 'CONFIRMED' and acr.deleted = false
-     where c.student_id = $1 and cp.deleted = false and c.deleted = false and c.contract_status = 'ACTIVE'
+     left join ${table(schemaName, "account_charge_records")} acr on acr.contract_product_id = cp.id and acr.charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and acr.deleted = false
+     where c.student_id = $1 and cp.deleted = false and c.deleted = false and c.contract_status in ('ACTIVE', 'contract_status.ACTIVE')
        ${requireRemaining ? "and coalesce(cp.remaining_real_hour,0) > 0" : ""}
        and ($2 = '' or $5 = false or cp.product_id = $2)
        and ($3 = '' or $6 = false or coalesce(p.grade_ids, '[]'::jsonb) ? $3)
@@ -1293,7 +1361,7 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
   if (!courseId) throw new Error("缺少课程 ID");
   const course = await one(client, `select * from ${table(schemaName, "generic_course")} where id = $1 and deleted = false for update`, [courseId]);
   if (!course) throw new Error("课程不存在");
-  if (str(course.course_status) === "CANCELLED") throw new Error("课程已取消，不能修改");
+  if (dictBare(course.course_status) === "CANCELLED") throw new Error("课程已取消，不能修改");
 
   const courseDate = input.course_date !== undefined && str(input.course_date) ? dateOnly(input.course_date) : dateOnly(course.course_date);
   const startTime = str(input.start_time, str(course.start_time));
@@ -1310,7 +1378,7 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
   if ((timeChanged || teacherChanged) && teacherId && rule.preventTeacherTimeConflict !== false) {
     const conflict = await one(client,
       `select id from ${table(schemaName, "generic_course")}
-       where deleted = false and course_status <> 'CANCELLED' and teacher_id = $1 and course_date = $2
+       where deleted = false and course_status not in ('CANCELLED', 'course_status.CANCELLED') and teacher_id = $1 and course_date = $2
          and start_time < $3 and end_time > $4 and id <> $5
        limit 1`,
       [teacherId, courseDate, endTime, startTime, courseId]
@@ -1345,21 +1413,32 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
       str(input.study_manager_id, str(course.study_manager_id)) || null,
       str(input.course_title, str(course.course_title)) || null,
       num(input.course_hour, num(course.course_hour, 1)),
-      str(input.course_type, str(course.course_type)) || null,
+      dictBare(str(input.course_type, str(course.course_type))) || null,
       organizationId || null
     ]
   );
 
   let addedStudents = 0;
   let removedStudents = 0;
-  if (Array.isArray(input.student_ids)) {
-    const nextIds = input.student_ids.map(String).filter(Boolean);
+  let reboundStudents = 0;
+  // 兼容两种入参：students[]（学员-合同产品行编辑器，逐学员可带 cp）与 student_ids[]（仅学员清单）
+  const inputStudentRows = Array.isArray(input.students)
+    ? (input.students as Record<string, unknown>[])
+        .map((row) => ({ student_id: str(row.student_id), contract_product_id: str(row.contract_product_id) }))
+        .filter((row) => row.student_id)
+    : Array.isArray(input.student_ids)
+      ? (input.student_ids as unknown[]).map(String).filter(Boolean).map((sid) => ({ student_id: sid, contract_product_id: "" }))
+      : undefined;
+  if (inputStudentRows) {
+    const nextByStudent = new Map<string, { student_id: string; contract_product_id: string }>();
+    for (const row of inputStudentRows) if (!nextByStudent.has(row.student_id)) nextByStudent.set(row.student_id, row);
+    const nextIds = [...nextByStudent.keys()];
     const existingByStudent = new Map(courseStudents.map((row) => [str(row.student_id), row]));
     const toAdd = nextIds.filter((id) => !existingByStudent.has(id));
     const toRemove = courseStudents.filter((row) => !nextIds.includes(str(row.student_id)));
     for (const row of toRemove) {
       const charge = await one(client,
-        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false limit 1`,
+        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
         [courseId, row.student_id]
       );
       if (charge || ["PRESENT", "ABSENT", "LEAVE"].includes(str(row.attendance_status))) {
@@ -1372,7 +1451,9 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
       await assertStudentsNoTimeConflict(client, schemaName, { course_date: courseDate, start_time: startTime, end_time: endTime }, toAdd, courseId);
     }
     for (const studentId of toAdd) {
-      const cpId = str(input.contract_product_id) || await autoSelectCp(client, schemaName, studentId, { productId: input.product_id, grade: input.grade, subject: input.subject }, rule);
+      const explicitCp = str(nextByStudent.get(studentId)?.contract_product_id) || str(input.contract_product_id);
+      if (explicitCp) await assertCpBelongsToStudent(client, schemaName, explicitCp, studentId);
+      const cpId = explicitCp || await autoSelectCp(client, schemaName, studentId, { productId: input.product_id, grade: input.grade, subject: input.subject }, rule);
       await client.query(
         `insert into ${table(schemaName, "generic_course_student")}
           (id, course_id, student_id, attendance_status, contract_product_id, mini_class_id, one_on_n_group_id)
@@ -1381,8 +1462,25 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
       );
       addedStudents += 1;
     }
+    // 已在课学员行里显式改选了别的合同产品：未扣费可改绑，已扣费拒绝
+    for (const row of courseStudents) {
+      const sid = str(row.student_id);
+      const nextRow = nextByStudent.get(sid);
+      if (!nextRow || !nextRow.contract_product_id || nextRow.contract_product_id === str(row.contract_product_id)) continue;
+      const charge = await one(client,
+        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
+        [courseId, sid]
+      );
+      if (charge) throw new Error(`学员已扣费，不能改绑合同产品: ${sid}`);
+      await assertCpBelongsToStudent(client, schemaName, nextRow.contract_product_id, sid);
+      await client.query(
+        `update ${table(schemaName, "generic_course_student")} set contract_product_id = $1, updated_at = now() where id = $2`,
+        [nextRow.contract_product_id, row.id]
+      );
+      reboundStudents += 1;
+    }
   }
-  return { updated: true, course: updated, addedStudents, removedStudents };
+  return { updated: true, course: updated, addedStudents, removedStudents, reboundStudents };
 }
 
 async function createCharge(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule) {
@@ -1396,9 +1494,29 @@ async function createCharge(client: pg.PoolClient, schemaName: string, params: R
     if (cpOwner && str(cpOwner.student_id) !== str(input.student_id)) throw new Error("合同产品不属于该学员");
   }
   const chargeType = dictBare(input.charge_type, str(rule.defaultChargeType, "NORMAL"));
+  // 未知扣费类型会绕过所有余额校验且不扣减剩余，落下"幽灵扣费"——白名单校验
+  if (!["NORMAL", "PROMOTION", "PROMOTION_HOUR", "MAKE_UP", "REFUND_REVERSE"].includes(chargeType)) {
+    throw new Error(`扣费类型不合法: ${chargeType}`);
+  }
   const chargeHour = num(input.charge_hour);
   let chargeAmount = num(input.charge_amount);
+  if (chargeHour < 0 || chargeAmount < 0) throw new Error("扣课时和扣费金额不能为负数");
+  if (chargeHour <= 0 && chargeAmount <= 0) throw new Error("扣课时或扣费金额至少一项大于 0");
   if (chargeType === "NORMAL") {
+    // 同一课程同一学员已有生效扣费时不允许再次扣费（考勤扣费与手动扣费同口径防重复）
+    if (str(input.course_id)) {
+      const dup = await one(client,
+        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
+        [str(input.course_id), str(input.student_id)]
+      );
+      if (dup) throw new Error("该课程该学员已有生效扣费，请先取消原扣费再重新扣费");
+    }
+    // 未填金额时按合同产品单价折算（剩余金额/剩余课时），避免只扣课时不扣钱
+    if (chargeAmount <= 0 && chargeHour > 0) {
+      const remainingHour = num(cp.remaining_real_hour);
+      const unitPrice = remainingHour > 0 ? num(cp.remaining_real_amount) / remainingHour : 0;
+      chargeAmount = unitPrice > 0 ? roundMoney(chargeHour * unitPrice) : 0;
+    }
     // 仅在真正扣课时且课时被扣完时才把剩余金额清零收尾；0 课时的纯金额扣费不应吞掉全部余额
     if (chargeHour > 0 && chargeHour >= num(cp.remaining_real_hour) && num(cp.remaining_real_amount) > 0) chargeAmount = num(cp.remaining_real_amount);
     if (rule.allowNegativeBalance !== true && (chargeHour > num(cp.remaining_real_hour) || chargeAmount > num(cp.remaining_real_amount))) {
@@ -1514,7 +1632,7 @@ async function createRefund(client: pg.PoolClient, schemaName: string, params: R
   }
   if (refund && refundAmount > 0 && str(input.refund_way_config_id)) {
     const payWay = await one(client, `select pay_way_type from ${table(schemaName, "pay_way_config")} where id = $1 and deleted = false`, [input.refund_way_config_id]);
-    if (str(payWay?.pay_way_type) === "ELE_ACCOUNT") {
+    if (dictBare(payWay?.pay_way_type) === "ELE_ACCOUNT") {
       await changeStudentEleAccount(client, schemaName, {
         studentId: str(refund.student_id),
         amount: refundAmount,
@@ -1596,8 +1714,8 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
   if (!contractId) throw new Error("合同退费必须选择合同");
   const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [contractId]);
   if (!contract) throw new Error("合同不存在");
-  if (str(contract.contract_status) === "REFUNDED") throw new Error("合同已退费");
-  if (str(contract.contract_status) === "CLOSED") throw new Error("合同已关闭，不可退费");
+  if (dictBare(contract.contract_status) === "REFUNDED") throw new Error("合同已退费");
+  if (dictBare(contract.contract_status) === "CLOSED") throw new Error("合同已关闭，不可退费");
 
   const { rows: cpRows } = await client.query(
     `select * from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false for update`,
@@ -1630,7 +1748,7 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
   const refundPayWay = str(input.refund_way_config_id)
     ? await one(client, `select pay_way_type from ${table(schemaName, "pay_way_config")} where id = $1 and deleted = false`, [input.refund_way_config_id])
     : undefined;
-  const refundToEleAccount = str(refundPayWay?.pay_way_type) === "ELE_ACCOUNT";
+  const refundToEleAccount = dictBare(refundPayWay?.pay_way_type) === "ELE_ACCOUNT";
 
   const refundRecords = [];
   let remainRefundAmount = targetRefundAmount;
@@ -1761,7 +1879,7 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
     const nextPaid = num(contract?.paid_amount) + refundAmount;
     const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
     const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
-    const contractStatus = str(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
+    const contractStatus = dictBare(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
     await client.query(
       `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
       [nextPaid, paidStatus, contractStatus, contractId]
@@ -1774,7 +1892,7 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
       const nextPaid = num(contract?.paid_amount) + num(refund.refund_real_amount);
       const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
       const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
-      const contractStatus = str(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
+      const contractStatus = dictBare(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
       await client.query(
         `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
         [nextPaid, paidStatus, contractStatus, cpContractId]
@@ -1783,7 +1901,7 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
   }
 
   const eleAccountRecord = await one(client,
-    `select id from ${table(schemaName, "student_ele_account_record")} where source_refund_id = $1 and change_type = 'REFUND_IN' and deleted = false`,
+    `select id from ${table(schemaName, "student_ele_account_record")} where source_refund_id = $1 and change_type in ('REFUND_IN', 'change_type.REFUND_IN') and deleted = false`,
     [refundId]
   );
   if (eleAccountRecord) {
@@ -1812,10 +1930,15 @@ async function course_delete(client: pg.PoolClient, schemaName: string, params: 
   if (!courseId) throw new Error("缺少课程 ID");
   const course = await one(client, `select * from ${table(schemaName, "generic_course")} where id = $1 and deleted = false for update`, [courseId]);
   if (!course) throw new Error("课程不存在");
-  if (str(course.course_status) === "CANCELLED") return { deleted: true, courseId, note: "already_cancelled" };
+  if (dictBare(course.course_status) === "CANCELLED") {
+    // 已取消的课程扣费/考勤已在取消时回滚，直接软删，否则“删除成功”但列表永远留着这行
+    await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where course_id = $1 and deleted = false`, [courseId]);
+    await client.query(`update ${table(schemaName, "generic_course")} set deleted = true, updated_at = now() where id = $1`, [courseId]);
+    return { deleted: true, courseId, note: "already_cancelled" };
+  }
 
   const { rows: charges } = await client.query(
-    `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and charge_status = 'CONFIRMED' and deleted = false for update`,
+    `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false for update`,
     [courseId]
   );
   if (charges.length && rule.allowDeleteWithCharges === false) throw new Error("该排课已有确认扣费，不允许删除");
@@ -1854,7 +1977,7 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
   if (!courseId) throw new Error("考勤必须选择课程");
   const course = await one(client, `select * from ${table(schemaName, "generic_course")} where id = $1 and deleted = false for update`, [courseId]);
   if (!course) throw new Error("课程不存在");
-  if (str(course.course_status) === "CANCELLED") throw new Error("课程已取消");
+  if (dictBare(course.course_status) === "CANCELLED") throw new Error("课程已取消");
 
   const courseHour = num(course.course_hour, 1);
   const students = Array.isArray(input.students) ? input.students as Record<string, unknown>[] : [];
@@ -1893,7 +2016,7 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     if (!["PRESENT", "ABSENT", "LEAVE"].includes(targetStatus)) { failed.push({ studentId, reason: "不支持的考勤状态" }); continue; }
     // 幂等防护：该学员本课次已有确认扣费（如已按缺勤扣费后改判/重复提交），只更新考勤状态，绝不重复扣费
     const existingCharge = await one(client,
-      `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false limit 1`,
+      `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
       [courseId, studentId]
     );
     if (existingCharge) {
@@ -1959,7 +2082,7 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
 
   const pending = await one(client, `select count(*)::int as cnt from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false and coalesce(attendance_status,'PENDING') = 'PENDING'`, [courseId]);
   await client.query(
-    `update ${table(schemaName, "generic_course")} set course_status = $2, updated_at = now() where id = $1 and course_status <> 'CANCELLED'`,
+    `update ${table(schemaName, "generic_course")} set course_status = $2, updated_at = now() where id = $1 and course_status not in ('CANCELLED', 'course_status.CANCELLED')`,
     [courseId, num(pending?.cnt) === 0 ? "FINISHED" : "SCHEDULED"]
   );
   return { courseId, succeeded, failed };
@@ -1979,7 +2102,7 @@ async function attendance_cancel(client: pg.PoolClient, schemaName: string, para
   if (str(courseStudent.attendance_status) !== "PRESENT") throw new Error("学员未签到，无法取消考勤");
 
   const { rows: charges } = await client.query(
-    `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status = 'CONFIRMED' and deleted = false for update`,
+    `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false for update`,
     [courseId, studentId]
   );
   for (const charge of charges) {
@@ -2012,6 +2135,61 @@ async function createLeaveRecord(client: pg.PoolClient, schemaName: string, para
   return row;
 }
 
+// 删除学员护栏：在读合同/电子账户余额/未取消排课任一存在时拒绝，否则会留下无主的资金与课表数据
+async function student_delete(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const studentId = str(params.id ?? dataOf(params).id);
+  if (!studentId) throw new Error("缺少学员 ID");
+  const student = await one(client, `select id from ${table(schemaName, "student")} where id = $1 and deleted = false for update`, [studentId]);
+  if (!student) throw new Error("学员不存在或已删除");
+  const activeContract = await one(client,
+    `select id from ${table(schemaName, "contract")} where student_id = $1 and deleted = false and contract_status in ('ACTIVE', 'contract_status.ACTIVE') limit 1`,
+    [studentId]
+  );
+  if (activeContract) throw new Error("学员名下存在生效中的合同，请先退费或删除合同后再删除学员");
+  const account = await one(client, `select balance_amount from ${table(schemaName, "student_ele_account")} where student_id = $1`, [studentId]);
+  if (num(account?.balance_amount) > 0) throw new Error("学员电子账户仍有余额，请先作废预存或退还余额后再删除学员");
+  const pendingCourse = await one(client,
+    `select gcs.id from ${table(schemaName, "generic_course_student")} gcs
+      join ${table(schemaName, "generic_course")} gc on gc.id = gcs.course_id and gc.deleted = false and gc.course_status not in ('CANCELLED', 'course_status.CANCELLED')
+     where gcs.student_id = $1 and gcs.deleted = false limit 1`,
+    [studentId]
+  );
+  if (pendingCourse) throw new Error("学员仍有未取消的排课，请先处理相关课程后再删除学员");
+  await client.query(`update ${table(schemaName, "student")} set deleted = true, updated_at = now() where id = $1`, [studentId]);
+  return { deleted: true, studentId };
+}
+
+// 删除请假 = 撤销请假：同步把课程学员的 LEAVE 考勤复位为待考勤，否则课程被"已有考勤"护栏卡死
+async function leave_delete(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
+  const leaveId = str(params.id ?? dataOf(params).id);
+  if (!leaveId) throw new Error("缺少请假记录 ID");
+  const leave = await one(client, `select * from ${table(schemaName, "course_leave_record")} where id = $1 and deleted = false for update`, [leaveId]);
+  if (!leave) throw new Error("请假记录不存在或已删除");
+  const courseId = str(leave.course_id);
+  const studentId = str(leave.student_id);
+  let attendanceReset = 0;
+  if (courseId && studentId) {
+    const courseStudent = await one(client,
+      `select * from ${table(schemaName, "generic_course_student")} where course_id = $1 and student_id = $2 and deleted = false for update`,
+      [courseId, studentId]
+    );
+    if (courseStudent && dictBare(str(courseStudent.attendance_status)) === "LEAVE") {
+      const charge = await one(client,
+        `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
+        [courseId, studentId]
+      );
+      if (charge) throw new Error("该请假已产生扣费，请先在考勤页取消扣费，再删除请假记录");
+      await client.query(
+        `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`,
+        [courseStudent.id]
+      );
+      attendanceReset = 1;
+    }
+  }
+  await client.query(`update ${table(schemaName, "course_leave_record")} set deleted = true, updated_at = now() where id = $1`, [leaveId]);
+  return { deleted: true, leaveId, attendanceReset };
+}
+
 async function createMakeupRecord(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>, rule: BusinessRule = {}) {
   const input = dataOf(params);
   const studentId = str(input.student_id ?? (Array.isArray(input.student_ids) ? input.student_ids[0] : undefined));
@@ -2038,7 +2216,7 @@ async function linkStudentToFutureCourses(
   const byMiniClass = Boolean(scope.miniClassId);
   const { rows: courses } = await client.query(
     `select id from ${table(schemaName, "generic_course")}
-     where deleted = false and course_status <> 'CANCELLED' and course_date >= current_date
+     where deleted = false and course_status not in ('CANCELLED', 'course_status.CANCELLED') and course_date >= current_date
        and ${byMiniClass ? "mini_class_id = $1" : "one_on_n_group_id = $1"}`,
     [byMiniClass ? scope.miniClassId : scope.oneOnNGroupId]
   );
@@ -2199,9 +2377,9 @@ async function cancelCourse(client: pg.PoolClient, schemaName: string, params: R
   if (!courseId) throw new Error("缺少课程 ID");
   const course = await one(client, `select * from ${table(schemaName, "generic_course")} where id = $1 and deleted = false for update`, [courseId]);
   if (!course) throw new Error("课程不存在");
-  if (str(course.course_status) === "CANCELLED") return { cancelled: true, courseId, note: "already_cancelled" };
+  if (dictBare(course.course_status) === "CANCELLED") return { cancelled: true, courseId, note: "already_cancelled" };
   const charge = await one(client,
-    `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and charge_status = 'CONFIRMED' and deleted = false limit 1`,
+    `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
     [courseId]
   );
   if (charge) throw new Error("该排课已有确认扣费，请先取消扣费，或使用删除排课（会同步冲销扣费）");
@@ -2230,7 +2408,7 @@ async function applyHolidayToCourses(client: pg.PoolClient, schemaName: string, 
     "c.course_date between $1::date and $2::date",
     "($3::text = '' or c.organization_id = $3)",
   ];
-  if (!includeFinished) where.push("c.course_status = 'SCHEDULED'");
+  if (!includeFinished) where.push("c.course_status in ('SCHEDULED', 'course_status.SCHEDULED')");
   if (blockAttendedOrCharged) {
     where.push(`not exists (
       select 1 from ${table(schemaName, "generic_course_student")} cs
@@ -2238,7 +2416,7 @@ async function applyHolidayToCourses(client: pg.PoolClient, schemaName: string, 
     )`);
     where.push(`not exists (
       select 1 from ${table(schemaName, "account_charge_records")} acr
-      where acr.course_id = c.id and acr.deleted = false and acr.charge_status = 'CONFIRMED'
+      where acr.course_id = c.id and acr.deleted = false and acr.charge_status in ('CONFIRMED', 'charge_status.CONFIRMED')
     )`);
   }
   const candidateSql = `select c.id from ${table(schemaName, "generic_course")} c where ${where.join(" and ")}`;
@@ -2538,6 +2716,9 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
     "classStudent.transfer": transferClassStudents,
     "class.changeStatus": changeClassStatus,
     "leave.create": createLeaveRecord,
+    "leave.delete": leave_delete,
+    "student.delete": student_delete,
+    "eleAccount.withdraw": ele_account_withdraw,
     "makeup.create": createMakeupRecord,
     "miniClass.addStudent": mini_class_add_student,
     "miniClass.removeStudent": mini_class_remove_student,
@@ -2572,10 +2753,12 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
 
   const simpleFn = simpleCommands[dsl.command];
   if (simpleFn) {
-    if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "holiday.apply", "funds.delete", "contract.delete", "refund.delete", "course.delete", "course.update", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "moneyArrange.save", "promotionArrange.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "contract.transition_status", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
+    if (["approval.submit", "approval.approve", "approval.reject", "approval.cancel", "chargeRecord.reverse", "ledger.denyMutation", "leave.create", "makeup.create", "classStudent.transfer", "class.changeStatus", "holiday.apply", "funds.delete", "contract.delete", "refund.delete", "leave.delete", "student.delete", "eleAccount.withdraw", "course.delete", "course.update", "attendance.cancel", "miniClass.addStudent", "miniClass.removeStudent", "oneOnNGroup.addStudent", "oneOnNGroup.removeStudent", "course.cancel", "course.student.save", "moneyArrange.save", "promotionArrange.save", "performanceArrange.save", "student.assignManager", "product.grant.save", "product.promotion.save", "contract.transition_status", "role.permission.save", "user.create", "user.update", "user.softDelete", "user.resetPassword"].includes(dsl.command)) {
       return withCommandRedisLock(schemaName, dsl.command, params, () => withClient(async (client) => {
         await client.query("begin");
         try {
+          // 声明式校验规则（category=validation）：租户配置/AI 定制的规则在命令前追加校验，只收紧不放宽
+          await runDeclarativeValidations(client, schemaName, dsl.command, params);
           const approval = await maybeSubmitApprovalTask(client, schemaName, dsl, params);
           const result = approval ?? await runCommandInTransaction(client, schemaName, dsl, params, simpleFn);
           await client.query("commit");
@@ -2592,6 +2775,7 @@ export async function executeCommandDsl(schemaName: string, dsl: CommandDsl, par
   return withCommandRedisLock(schemaName, dsl.command, params, () => withClient(async (client) => {
     await client.query("begin");
     try {
+      await runDeclarativeValidations(client, schemaName, dsl.command, params);
       const approval = await maybeSubmitApprovalTask(client, schemaName, dsl, params);
       const result = approval ?? await runCommandInTransaction(client, schemaName, dsl, params);
       await client.query("commit");

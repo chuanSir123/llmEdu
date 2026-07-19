@@ -199,7 +199,7 @@ async function resolveNameHints(schemaName: string, data: Record<string, unknown
     try {
       const schema = `"${schemaName}"`;
       const { rows } = await pool.query(
-        `select id from ${schema}.contract where student_id = $1 and deleted = false and contract_status = 'ACTIVE' order by created_at desc limit 2`,
+        `select id from ${schema}.contract where student_id = $1 and deleted = false and contract_status in ('ACTIVE', 'contract_status.ACTIVE') order by created_at desc limit 2`,
         [data.student_id]
       );
       if (rows.length === 1) data.contract_id = rows[0].id;

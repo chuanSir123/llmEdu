@@ -13,6 +13,7 @@ import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-ev
 import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryConfigValues, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, systemDictionaryLabel, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 import { isCoreBusinessRule } from "../common/dsl-constants.js";
+import { validateDeclarativeRuleJson } from "../common/declarative-rules.js";
 
 export function buildZodSchema(schemaDef: { fields: Array<{ name: string; type: string; required?: boolean }> }) {
   const shape: Record<string, z.ZodTypeAny> = {};
@@ -267,7 +268,7 @@ async function queryApprovalTasks(schemaName: string, params: Record<string, unk
   const where = ["t.deleted = false"];
   if (filters.status) { values.push(filters.status); where.push(`t.status = $${values.length}`); }
   if (filters.business_type) { values.push(filters.business_type); where.push(`t.business_type = $${values.length}`); }
-  if (params.view === "pending" && user?.userId) { values.push(user.userId); where.push(`t.current_approver_user_id = $${values.length}`); where.push("t.status = 'PENDING'"); }
+  if (params.view === "pending" && user?.userId) { values.push(user.userId); where.push(`t.current_approver_user_id = $${values.length}`); where.push("t.status in ('PENDING', 'approval_status.PENDING')"); }
   if (params.view === "submitted" && user?.userId) { values.push(user.userId); where.push(`t.applicant_user_id = $${values.length}`); }
   if (params.view === "done") { where.push("t.status in ('APPROVED','REJECTED','CANCELED')"); }
   const page = Math.max(Number(params.page ?? 1), 1);
@@ -385,7 +386,15 @@ async function saveBusinessRule(schemaName: string, params: Record<string, unkno
   const input = asObject(params.data ?? params);
   const ruleCode = input.rule_code || input.ruleCode ? safeCode(input.rule_code ?? input.ruleCode, "规则编码") : `custom_rule_${Date.now()}`;
   const ruleName = String(input.rule_name ?? input.ruleName ?? ruleCode);
-  const ruleJson = await normalizeDictionaryConfigValues(schemaName, { ...parseJsonObject(input.rule_json), ruleCode, ruleName }) as Record<string, unknown>;
+  const rawRuleJson = parseJsonObject(input.rule_json);
+  const ruleJson = await normalizeDictionaryConfigValues(schemaName, { ...rawRuleJson, ruleCode, ruleName }) as Record<string, unknown>;
+  // validations 是结构 DSL（field/operator 等是结构键不是字典值），跳过字典归一化保留原始形态
+  if (Array.isArray(rawRuleJson.validations)) ruleJson.validations = rawRuleJson.validations;
+  // 声明式校验规则（category=validation）保存前做结构校验，坏结构不入库（与 AI 定制链同一套校验）
+  const declarativeErrors = validateDeclarativeRuleJson(ruleJson);
+  if (declarativeErrors.length) {
+    throw Object.assign(new Error(`规则结构不合法：${declarativeErrors.join("；")}`), { statusCode: 400 });
+  }
   const { rows } = await pool.query(
     `select id, rule_json from admin.business_rule
      where schema_scope = 'tenant' and schema_name = $1 and rule_code = $2 and deleted = false
@@ -477,6 +486,7 @@ async function executeConfigApi(scope: "admin" | "tenant", schemaName: string, a
     "refund.delete": { command: "refund.delete", ruleCode: "refund_create_rule" },
     "contract.refund": { command: "contract.refund", ruleCode: "contract_refund_rule" },
     "holiday.apply": { command: "holiday.apply", ruleCode: "holiday_course_impact_rule" },
+    "eleAccount.withdraw": { command: "eleAccount.withdraw", ruleCode: "funds_create_rule" },
     "approvalTask.approve": { command: "approval.approve", ruleCode: "approval_task_rule" },
     "approvalTask.reject": { command: "approval.reject", ruleCode: "approval_task_rule" },
     "approvalTask.cancel": { command: "approval.cancel", ruleCode: "approval_task_rule" },
