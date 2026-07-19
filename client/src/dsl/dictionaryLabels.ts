@@ -1,22 +1,5 @@
 export function dictionaryOptionEntries(options: Record<string, string>) {
-  const byLabel = new Map<string, [string, string]>();
-  for (const [value, label] of Object.entries(options)) {
-    const normalizedLabel = String(label);
-    const current = byLabel.get(normalizedLabel);
-    const currentIsDictionaryId = current?.[0].includes(".") ?? false;
-    const nextIsDictionaryId = value.includes(".");
-    if (!current || (nextIsDictionaryId && !currentIsDictionaryId)) byLabel.set(normalizedLabel, [value, normalizedLabel]);
-  }
-  return [...byLabel.values()];
-}
-
-export function preferredDictionaryValue(options: Record<string, string>, value: unknown) {
-  const text = String(value ?? "");
-  if (!text) return "";
-  if (options[text] !== undefined && text.includes(".")) return text;
-  const label = options[text];
-  if (!label) return text;
-  return dictionaryOptionEntries(options).find(([, optionLabel]) => optionLabel === label)?.[0] ?? text;
+  return Object.entries(options).map(([value, label]) => [value, String(label)] as [string, string]);
 }
 
 export function firstDictionaryOptionValue(options: Record<string, string>, fallback = "") {
@@ -36,7 +19,5 @@ export function dictionaryDisplayFor(fieldKey: string | undefined, value: unknow
 }
 
 export function dictionaryItemValue(value: unknown) {
-  const text = String(value ?? "");
-  const dot = text.indexOf(".");
-  return dot > 0 ? text.slice(dot + 1) : text;
+  return String(value ?? "");
 }

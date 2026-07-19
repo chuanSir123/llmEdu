@@ -121,8 +121,18 @@ export function SearchSelect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionSource && JSON.stringify(optionSource), open, query]);
 
+  function dedupeOptions(list: SearchSelectOption[]) {
+    const seen = new Set<string>();
+    return list.filter((option) => {
+      const key = `${option.value}::${option.label}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   // 远程未加载完成前用传入的静态 options 兜底（用于回显已选值的 label）
-  const allOptions = optionSource ? remote ?? options ?? [] : options ?? [];
+  const allOptions = dedupeOptions(optionSource ? remote ?? options ?? [] : options ?? []);
   const excluded = useMemo(() => new Set((excludeValues ?? []).filter((item) => item !== value)), [excludeValues, value]);
   const { filtered, truncatedCount } = useMemo(() => {
     const trimmed = query.trim().toLowerCase();

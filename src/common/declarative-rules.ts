@@ -96,15 +96,13 @@ function str(value: unknown, fallback = "") {
   return value === undefined || value === null || value === "" ? fallback : String(value);
 }
 
-/** 字典值双格式兼容：course_status.CANCELLED 与 CANCELLED 等价比较 */
-function dictBare(text: string): string {
-  const match = /^[a-z][a-z0-9_]*\.(.+)$/.exec(text);
-  return match ? match[1] : text;
+function dictValue(text: string): string {
+  return text;
 }
 
 /** 操作符读取：字典归一化可能把 "<=" 存成 "rule_operator.<="，读取时剥离前缀 */
 function opOf(value: unknown, fallback = "="): string {
-  return dictBare(str(value, fallback));
+  return dictValue(str(value, fallback));
 }
 
 function isEmpty(value: unknown) {
@@ -121,11 +119,11 @@ export function resolveRulePath(source: Record<string, unknown>, path: string): 
 }
 
 export function compareRuleValues(left: unknown, operator: string, right: unknown): boolean {
-  const normalized = dictBare(operator);
+  const normalized = dictValue(operator);
   const op = normalized === "==" || normalized === "eq" ? "=" : normalized === "neq" ? "!=" : normalized;
   if (op === "exists" || op === "required") return !isEmpty(left);
-  if (op === "in") return Array.isArray(right) && right.map((item) => dictBare(str(item))).includes(dictBare(str(left)));
-  if (op === "not_in") return Array.isArray(right) && !right.map((item) => dictBare(str(item))).includes(dictBare(str(left)));
+  if (op === "in") return Array.isArray(right) && right.map((item) => dictValue(str(item))).includes(dictValue(str(left)));
+  if (op === "not_in") return Array.isArray(right) && !right.map((item) => dictValue(str(item))).includes(dictValue(str(left)));
   if (op === "regex") {
     const pattern = str(right);
     if (!pattern || pattern.length > MAX_REGEX_LENGTH) return true;
@@ -137,8 +135,8 @@ export function compareRuleValues(left: unknown, operator: string, right: unknow
   const rightNum = Number(right);
   const numeric = !isEmpty(left) && !isEmpty(right) && Number.isFinite(leftNum) && Number.isFinite(rightNum)
     && str(left).trim() !== "" && str(right).trim() !== "";
-  if (op === "=") return numeric ? leftNum === rightNum : dictBare(str(left)) === dictBare(str(right));
-  if (op === "!=") return numeric ? leftNum !== rightNum : dictBare(str(left)) !== dictBare(str(right));
+  if (op === "=") return numeric ? leftNum === rightNum : dictValue(str(left)) === dictValue(str(right));
+  if (op === "!=") return numeric ? leftNum !== rightNum : dictValue(str(left)) !== dictValue(str(right));
   // 大小比较：双数字走数值，否则字符串字典序（对 "09:00" < "10:00" 这类时间正确）
   const l: number | string = numeric ? leftNum : str(left);
   const r: number | string = numeric ? rightNum : str(right);
@@ -245,15 +243,15 @@ export function validateDeclarativeRuleJson(ruleJson: Record<string, unknown> | 
   if (!ruleJson || typeof ruleJson !== "object") return errors;
   // category 可能被字典归一成 business_rule_category.validation 形态，比较前剥离前缀
   const categories = [
-    ...(Array.isArray(ruleJson.categories) ? ruleJson.categories.map((item) => dictBare(str(item))) : []),
-    dictBare(str(ruleJson.category)),
+    ...(Array.isArray(ruleJson.categories) ? ruleJson.categories.map((item) => dictValue(str(item))) : []),
+    dictValue(str(ruleJson.category)),
   ].filter(Boolean);
   if (!categories.includes("validation")) return errors;
   const validations = ruleJson.validations;
   if (validations === undefined) return errors; // 仅旗标类 validation 规则（preventXxx 等）无需 validations
   if (!Array.isArray(validations)) { errors.push("validations 必须是数组"); return errors; }
   if (validations.length > MAX_VALIDATIONS_PER_RULE) errors.push(`validations 最多 ${MAX_VALIDATIONS_PER_RULE} 条`);
-  const businessType = dictBare(str(ruleJson.businessType ?? ruleJson.business_type));
+  const businessType = dictValue(str(ruleJson.businessType ?? ruleJson.business_type));
   if (!businessType) errors.push("validation 规则必须包含 businessType（决定拦截哪个业务命令）");
   else if (!ALL_VALIDATION_BUSINESS_TYPES.has(businessType)) {
     errors.push(`businessType 不受声明式校验支持: ${businessType}（可选: ${[...ALL_VALIDATION_BUSINESS_TYPES].join("/")}）`);

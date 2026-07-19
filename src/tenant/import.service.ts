@@ -323,7 +323,7 @@ function resolveEnumValue(field: ImportField, rawValue: unknown) {
   const input = String(rawValue).trim();
   const matches = options.filter((option) => option.value === input || option.label === input);
   if (matches.length === 0) {
-    return { value: undefined, error: `字段[${fieldHeader(field)}]枚举值不存在：${input}` };
+    return { value: undefined, error: `字段[${fieldHeader(field)}]字典项不存在：${input}` };
   }
   return { value: matches[0].value };
 }
@@ -629,7 +629,7 @@ export async function executeTenantImport(input: {
     }
     await enrichImportContext({ schemaName: input.schemaName, pageCode: input.pageCode, data });
 
-    if (messages.some((message) => message.includes("不能为空") || message.includes("未找到") || message.includes("不唯一") || message.includes("枚举值不存在"))) {
+    if (messages.some((message) => message.includes("不能为空") || message.includes("未找到") || message.includes("不唯一") || message.includes("字典项不存在"))) {
       failed++;
       if (failures.length < 20) failures.push({ row: rowNumber, message: messages.join("；") });
       resultRows.push(importResultRow(sourceRow, rowNumber, messages.join("；")));

@@ -86,10 +86,8 @@ const pageSubtitles: Record<string, string> = {
 function dictionaryToneMap(dictCode: string) {
   return Object.fromEntries(
     Object.entries(SYSTEM_DICTIONARIES[dictCode] ?? {})
-      .flatMap(([itemValue, item]) => {
-        const tone = String(item.metadata?.tone ?? "");
-        return tone ? [[itemValue, tone], [dictionaryItemId(dictCode, itemValue), tone]] : [];
-      })
+      .map(([itemValue, item]) => [dictionaryItemId(dictCode, itemValue), String(item.metadata?.tone ?? "")])
+      .filter(([, tone]) => Boolean(tone))
   );
 }
 
@@ -102,7 +100,7 @@ const statusMap = Object.fromEntries(
 const valueLabels = Object.fromEntries(
   Object.entries(SYSTEM_DICTIONARIES).map(([dictCode, items]) => [
     dictCode,
-    Object.fromEntries(Object.entries(items).flatMap(([itemValue, item]) => [[itemValue, item.label], [dictionaryItemId(dictCode, itemValue), item.label]]))
+    Object.fromEntries(Object.entries(items).map(([itemValue, item]) => [dictionaryItemId(dictCode, itemValue), item.label]))
   ])
 ) as Record<string, Record<string, string>>;
 
@@ -114,7 +112,6 @@ const extraDictionaryFieldKeys = [
   "publish_status", "subscribe_status", "send_status", "reward_status", "action_type", "api_type", "cost_type",
   "pay_type", "receiver_scope", "resource_type", "organization_scope", "target_status", "business_rule_category", "business_type"
 ];
-// extraDictionaryFieldKeys 与 SYSTEM_DICTIONARIES 的 key 高度重叠，保留兼容旧 seed 行为
 const dictionaryFieldKeys = new Set([...Object.keys(valueLabels), ...extraDictionaryFieldKeys]);
 function dictCodeForField(field: { key: string; dictCode?: string }) {
   return field.dictCode ?? DICTIONARY_FIELD_ALIASES[field.key] ?? (dictionaryFieldKeys.has(field.key) ? field.key : undefined);
