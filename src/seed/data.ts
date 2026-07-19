@@ -2238,8 +2238,8 @@ export const actionDslSeeds: Array<{ actionCode: string; actionName: string; act
   { actionCode: "tenant_version_list.rollback_preview", actionName: "回滚预览", actionType: "execute_api", pageCode: "tenant_version_list", module: "system", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.rollback_preview", actionName: "回滚预览", actionType: "execute_api", apiCode: "dsl_version.rollback_preview", afterSuccess: [{ type: "toast", message: "回滚预览已生成" }, { type: "refreshPage" }] } },
   { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "tenant_version_list", module: "system", feature: "tenant_version_list", dsl: { actionCode: "tenant_version_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "tenant_version_list.query" } },
   { actionCode: "contract_list.refund", actionName: "合同退费", actionType: "open_modal", pageCode: "contract_list", module: "finance", feature: "contract_list", dsl: { actionCode: "contract_list.refund", actionName: "合同退费", actionType: "open_modal", modalCode: "contract_refund_modal", afterSuccess: [{ type: "toast", message: "退费成功" }, { type: "refreshPage" }] } },
-  { actionCode: "contract_product_list.refund", actionName: "合同产品退费", actionType: "open_modal", pageCode: "contract_product_list", module: "finance", feature: "contract_product_list", dsl: { actionCode: "contract_product_list.refund", actionName: "合同产品退费", actionType: "open_modal", afterSuccess: [{ type: "toast", message: "退费成功" }, { type: "refreshPage" }] } },
-  { actionCode: "refund_record.delete", actionName: "作废退费记录", actionType: "execute_api", pageCode: "refund_record", module: "finance", feature: "refund_record", dsl: { actionCode: "refund_record.delete", actionName: "作废退费记录", actionType: "execute_api", apiCode: "refund.delete", confirm: "确认作废该退费记录？作废后将恢复合同产品余额", afterSuccess: [{ type: "toast", message: "退费记录已作废，余额已恢复" }, { type: "refreshPage" }] } },
+  { actionCode: "contract_product_list.refund", actionName: "合同产品退费", actionType: "open_modal", pageCode: "contract_product_list", module: "finance", feature: "contract_product_list", dsl: { actionCode: "contract_product_list.refund", actionName: "合同产品退费", actionType: "open_modal", type: "open_modal", apiCode: "refund_record.create", modalTitle: "合同产品退费", fields: refundCreateFields, defaultValues: { refund_time: "$now", refund_type: "CONTRACT_PRODUCT" }, afterSuccess: [{ type: "toast", message: "退费成功" }, { type: "refreshPage" }] } },
+  { actionCode: "refund_record.delete", actionName: "删除退费记录", actionType: "execute_api", pageCode: "refund_record", module: "finance", feature: "refund_record", dsl: { actionCode: "refund_record.delete", actionName: "删除退费记录", actionType: "execute_api", apiCode: "refund.delete", confirm: "确认删除该退费记录？删除后将恢复合同产品余额", afterSuccess: [{ type: "toast", message: "退费记录已删除，余额已恢复" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.attendance", actionName: "考勤签到", actionType: "open_modal", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.attendance", actionName: "考勤签到", actionType: "open_modal", modalCode: "attendance_check_in_modal", afterSuccess: [{ type: "toast", message: "考勤成功" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.cancel", actionName: "取消排课", actionType: "execute_api", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.cancel", actionName: "取消排课", actionType: "execute_api", apiCode: "course.cancel", confirm: "确认取消该排课？已有考勤或扣费的课程不能取消", variant: "danger", afterSuccess: [{ type: "toast", message: "排课已取消" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.leave", actionName: "学员请假", actionType: "open_modal", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.leave", actionName: "学员请假", actionType: "open_modal", apiCode: "leave_record.create", afterSuccess: [{ type: "toast", message: "请假已登记" }, { type: "refreshPage" }] } },
@@ -2887,17 +2887,16 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       {
         actionCode: "contract_product_list.refund",
         label: "申请退费",
-        type: "open_modal",
-        apiCode: "refund_record.create",
-        modalTitle: "申请退费",
-        fields: refundCreateFields,
-        defaultValues: { refund_time: "$now" },
         mapRowToValue: {
           contract_product_id: "id",
           student_id: "student_id",
           contract_id: "contract_id",
           contract_no: "contract_no",
-          product_name: "product_name"
+          product_name: "product_name",
+          available_refund_real_hour: "remaining_real_hour",
+          available_refund_real_amount: "remaining_real_amount",
+          available_refund_promotion_hour: "remaining_promotion_hour",
+          available_refund_promotion_amount: "remaining_promotion_amount"
         },
         visibleWhen: {
           remaining_real_amount: { op: "gt", value: 0 },
@@ -3144,11 +3143,6 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
       {
         actionCode: "contract_product_list.refund",
         label: "退费",
-        type: "open_modal",
-        apiCode: "refund_record.create",
-        modalTitle: "合同产品退费",
-        fields: refundCreateFields,
-        defaultValues: { refund_time: "$now", refund_type: "CONTRACT_PRODUCT" },
         mapRowToValue: {
           contract_product_id: "id",
           student_id: "student_id",
