@@ -2869,11 +2869,9 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
           remaining_real_amount: { op: "gt", value: 0 },
           contract_status: { op: "notIn", value: ["REFUNDED", "CLOSED", "CANCELLED"] }
         }
-      },
-      { actionCode: "contract_product_list.edit", label: "编辑", type: "open_modal" },
-      { actionCode: "contract_product_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
+      }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["contract_product_list.detail", "contract_product_list.refund", "contract_product_list.edit", "contract_product_list.delete"];
+    baseDsl.presentation.table.primaryRowActions = ["contract_product_list.detail", "contract_product_list.refund"];
   }
 
   if (page.page === "contract_list") {
@@ -3103,7 +3101,6 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   if (page.page === "contract_product_list") {
     baseDsl.table.rowActions = [
       { actionCode: "contract_product_list.detail", label: "详情", type: "open_modal" },
-      { actionCode: "contract_product_list.edit", label: "编辑", type: "open_modal" },
       {
         actionCode: "contract_product_list.refund",
         label: "退费",
@@ -3119,11 +3116,14 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
           available_refund_real_amount: "remaining_real_amount",
           available_refund_promotion_hour: "remaining_promotion_hour",
           available_refund_promotion_amount: "remaining_promotion_amount"
+        },
+        visibleWhen: {
+          remaining_real_amount: { op: "gt", value: 0 },
+          contract_status: { op: "notIn", value: ["REFUNDED", "CLOSED", "CANCELLED"] }
         }
-      },
-      { actionCode: "contract_product_list.delete", label: "删除", type: "execute_api", confirm: "确认删除这条记录？" }
+      }
     ];
-    baseDsl.presentation.table.primaryRowActions = ["contract_product_list.detail", "contract_product_list.edit", "contract_product_list.refund", "contract_product_list.delete"];
+    baseDsl.presentation.table.primaryRowActions = ["contract_product_list.detail", "contract_product_list.refund"];
   }
 
   if (page.page === "charge_record") {
@@ -4317,7 +4317,7 @@ export const skillContentMap: Record<string, string> = {
   course_list: "# 排课列表\n\n## 功能描述\n查看课程安排、上课时间和课程状态，支持一对一、小班、一对N等多种课程类型。\n\n## 使用说明\n- 点击「新增排课」创建课程\n- 支持按课程名称和状态筛选\n- 课程状态包括待上课、已完成、已取消\n\n## 注意事项\n- 排课冲突规则会阻止老师时间冲突\n- 已取消课程不可扣费",
   charge_record: "# 扣费记录\n\n## 功能描述\n管理学员上课扣费，支持实收扣费、优惠扣费和赠课扣费。\n\n## 使用说明\n- 点击「新增扣费」选择课程和合同产品\n- 支持取消扣费操作\n- 扣费自动更新合同产品余额\n\n## 注意事项\n- 余额不足时扣费会被拒绝\n- 取消扣费会恢复合同产品余额",
   contract_list: "# 合同列表\n\n## 功能描述\n跟踪合同状态、应收实收和付款进度，支持合同收款操作。\n\n## 使用说明\n- 点击「新增合同」创建合同\n- 行操作支持收款、详情、编辑\n- 合同自动关联优惠分配\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 付款状态根据实收金额自动更新",
-  contract_product_list: "# 合同产品\n\n## 功能描述\n查看合同关联的产品信息，包括剩余课时、剩余金额等。\n\n## 使用说明\n- 按合同维度查看产品列表\n- 显示实时剩余课时和金额\n\n## 注意事项\n- 剩余数据由扣费和退费操作自动维护",
+  contract_product_list: "# 合同产品\n\n## 功能描述\n查看合同关联的产品信息，包括剩余课时、剩余金额等。\n\n## 使用说明\n- 按合同维度查看产品列表\n- 显示实时剩余课时和金额\n- 合同产品为只读信息，不支持在列表中直接编辑或删除\n- 如需变更合同产品，请回到合同报名、合同调整或退费等业务流程处理\n\n## 注意事项\n- 剩余数据由扣费和退费操作自动维护\n- 退费应通过合同产品退费或合同退费流程发起，避免手工修改余额",
   funds_history: "# 收款记录\n\n## 功能描述\n核对收款流水、支付方式和交易时间，支持合同收款和预存两种类型。\n\n## 使用说明\n- 点击「新增收款」录入收款\n- 支持现金、微信、支付宝、电子账户等支付方式\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 预存类型不需要关联合同",
   refund_record: "# 退费记录\n\n## 功能描述\n管理学员退费，支持退课时、退金额、退优惠等操作。\n\n## 使用说明\n- 点击「新增退费」选择学员和合同产品\n- 填写退费金额和退费方式\n\n## 注意事项\n- 退费金额不能超过合同产品余额\n- 退费后自动更新合同产品余额和付款状态",
   product_list: "# 产品列表\n\n## 功能描述\n维护课程产品、课时、单价和启用状态。\n\n## 使用说明\n- 点击「新增产品」创建课程产品\n- 支持一对一、小班、一对N等产品类型\n\n## 注意事项\n- 已关联合同的产品不可删除\n- 产品价格变更不影响已有合同",
