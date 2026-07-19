@@ -494,13 +494,17 @@ export function GenericPageRenderer({
       if (!(await appConfirm({ message: `未勾选学员，将对全部 ${attendanceStudents.length} 名学员执行，是否继续？` }))) return;
     }
     const selectedAttendanceStudents = attendanceStudents.filter((student, idx) => selectedStudentIds.size === 0 || selectedStudentIds.has(String(student.student_id ?? idx)));
+    const submitFields = fields.filter((field) => !(field.computed && !field.editable));
+    const stripComputedFields = (source: Record<string, unknown>) => Object.fromEntries(
+      Object.entries(source).filter(([key]) => !submitFields.length || submitFields.some((field) => field.key === key) || key.startsWith("__"))
+    );
     if (hasAttendanceTable && attendanceMode === "cancel_attendance" && selectedAttendanceStudents.some((student) => Number(student.charged_count ?? 0) > 0)) {
       toast.error("选中学员含有已扣费，请直接取消扣费");
       return;
     }
     setSubmitting(true);
     try {
-      const submitValue = hasAttendanceTable ? {
+      const rawSubmitValue = hasAttendanceTable ? {
         ...modal.value,
         students: selectedAttendanceStudents
           .map((student) => extra.__attendanceMode === "cancel_attendance"
@@ -511,6 +515,7 @@ export function GenericPageRenderer({
                 ? { ...student, attendance_status: "PRESENT" }
                 : student)
       } : modal.value;
+      const submitValue = stripComputedFields(rawSubmitValue);
       const result = await GatewayClient.executeApi({
         scope,
         schemaName,
@@ -614,6 +619,26 @@ export function GenericPageRenderer({
       openTarget(target, action.label ?? "打开页面", targetFilters(target));
       return;
     }
+    if (action.type === "open_modal" || action.actionType === "open_modal") {
+      if (action.requiresSelection && selectedRowIds.length === 0) {
+        toast.error(action.requiresSelectionMessage ?? "请先选择数据");
+        return;
+      }
+      const resolved = await resolveModalAction(action);
+      if (!resolved) return;
+      const selectedRows = rows.filter((row) => selectedRowIds.includes(String(row.id)));
+      // 跨页多选：sourceKey 为 id 时直接用选中 id 集合，避免翻页后丢失非当前页的选中行
+      const selectedValues = resolved.mapSelectedToValue && selectedRowIds.length
+        ? Object.fromEntries(Object.entries(resolved.mapSelectedToValue).map(([targetKey, sourceKey]) => [
+            targetKey,
+            String(sourceKey) === "id"
+              ? [...selectedRowIds]
+              : selectedRows.map((row) => row[String(sourceKey)]).filter((value) => value !== undefined && value !== null && value !== "")
+          ]))
+        : {};
+      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(resolved.defaultValues) ?? {}), ...selectedValues }, action: resolved });
+      return;
+    }
     if (action.actionCode.endsWith(".create") || action.actionCode.endsWith(".batchEnroll")) {
       if (action.requiresSelection && selectedRowIds.length === 0) {
         toast.error(action.requiresSelectionMessage ?? "请先选择数据");
@@ -630,12 +655,6 @@ export function GenericPageRenderer({
           ]))
         : {};
       setModal({ type: "create", value: { ...(resolveDictionaryDefaults(action.defaultValues) ?? {}), ...selectedValues }, action });
-      return;
-    }
-    if (action.type === "open_modal" || action.actionType === "open_modal") {
-      const resolved = await resolveModalAction(action);
-      if (!resolved) return;
-      setModal({ type: "create", value: { ...(resolveDictionaryDefaults(resolved.defaultValues) ?? {}) }, action: resolved });
       return;
     }
     if (isImportToolbarAction(action)) {

@@ -9,6 +9,7 @@ export type FieldDsl = {
   align?: "left" | "center" | "right";
   badge?: boolean;
   hidden?: boolean;
+  readonly?: boolean;
   displayKey?: string;
   span?: 1 | 2 | 3 | "full";
   rows?: number;
@@ -29,6 +30,7 @@ export type FieldDsl = {
   searchable?: boolean;
   editable?: boolean;
   computed?: boolean;
+  readonly?: boolean;
   computeExpr?: string;
   required?: boolean;
   validation?: Record<string, unknown>;
