@@ -3,7 +3,7 @@ import { GatewayClient } from "../api/GatewayClient";
 import type { FieldDsl, PageDsl } from "../dsl/types";
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { token } from "../styles/designTokens";
-import { dictionaryDisplayFor, dictionaryOptionEntries } from "../dsl/dictionaryLabels";
+import { dictionaryDisplayFor, dictionaryItemValue, dictionaryOptionEntries } from "../dsl/dictionaryLabels";
 import { effectiveOptionSource } from "../dsl/dictionarySource";
 import { evaluateWhen } from "../dsl/conditions";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
@@ -483,10 +483,10 @@ export function GenericFormRenderer({
                         <tbody>
                           {rows.map((item, idx) => {
                             const id = String(item.student_id ?? idx);
-                            const savedStatus = String(item.original_attendance_status ?? item.attendance_status ?? "PENDING");
+                            const savedStatus = dictionaryItemValue(item.original_attendance_status ?? item.attendance_status ?? "PENDING");
                             const attended = savedStatus === "PRESENT" || savedStatus === "ABSENT" || savedStatus === "LEAVE";
                             const charged = Number(item.charged_count ?? 0) > 0;
-                            const currentStatus = String(item.attendance_status ?? "PRESENT");
+                            const currentStatus = dictionaryItemValue(item.attendance_status ?? "PRESENT");
                             const statusLabel = charged ? "已扣费" : attended ? "已考勤" : "未考勤";
                             const statusClass = charged ? "bg-[#edf3ff] text-[#2f80ed]" : attended ? "bg-[#e8fff4] text-[#087443]" : "bg-[#f2f4f7] text-[#526075]";
                             const update = (patch: Record<string, unknown>) => {

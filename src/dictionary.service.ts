@@ -136,6 +136,11 @@ export const DICTIONARY_FIELD_ALIASES: Record<string, string> = {
   valueField: "rule_system_value"
 };
 
+export function dictionaryItemValue(itemValue: unknown) {
+  const text = String(itemValue ?? "");
+  return text.includes(".") ? text.split(".").pop() ?? text : text;
+}
+
 export function dictionaryItemId(dictCode: string, itemValue: unknown) {
   return `${dictCode}.${String(itemValue ?? "")}`;
 }
@@ -148,10 +153,10 @@ export function dictionaryCodeForFieldName(fieldName: string) {
   return DICTIONARY_FIELD_ALIASES[fieldName] ?? (SYSTEM_DICTIONARIES[fieldName] ? fieldName : undefined);
 }
 
-export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[]) {
+export async function normalizeDictionaryInputValues(schemaName: string, input: Record<string, unknown>, fields: string[], dictCodeByField: Record<string, string> = {}) {
   const normalized = { ...input };
   const candidates = fields
-    .map((field) => ({ field, dictCode: dictionaryCodeForFieldName(field), value: input[field] }))
+    .map((field) => ({ field, dictCode: dictCodeByField[field] ?? dictionaryCodeForFieldName(field), value: input[field] }))
     .filter((item): item is { field: string; dictCode: string; value: string | string[] } => {
       if (!item.dictCode) return false;
       if (typeof item.value === "string") return item.value.trim() !== "";
@@ -165,11 +170,15 @@ export async function normalizeDictionaryInputValues(schemaName: string, input: 
     `select id, dict_code, item_value, item_label
        from admin.dictionary_item
       where dict_code = any($2::text[]) and deleted = false
-        and (id = any($1::text[]) or item_label = any($1::text[]))
+        and (id = any($1::text[]) or item_value = any($1::text[]) or item_label = any($1::text[]))
         and ((schema_scope = 'admin' and schema_name = '') or (schema_scope = 'tenant' and schema_name = $3))`,
     [values, dictCodes, schemaName]
   );
-  const byInputAndCode = new Map(rows.flatMap((row) => [[`${row.dict_code}:${row.id}`, row.id], [`${row.dict_code}:${row.item_label}`, row.id]]));
+  const byInputAndCode = new Map(rows.flatMap((row) => [
+    [`${row.dict_code}:${row.id}`, row.id],
+    [`${row.dict_code}:${row.item_value}`, row.id],
+    [`${row.dict_code}:${row.item_label}`, row.id]
+  ]));
   for (const item of candidates) {
     if (Array.isArray(item.value)) {
       normalized[item.field] = item.value.map((value) => byInputAndCode.get(`${item.dictCode}:${String(value)}`) ?? value);
@@ -206,6 +215,28 @@ export async function seedSystemDictionaries() {
   for (const [dictCode, items] of Object.entries(SYSTEM_DICTIONARIES)) {
     sort = 10;
     for (const [itemValue, item] of Object.entries(items)) {
+      const itemId = dictionaryItemId(dictCode, itemValue);
+      const suffixCollapsedId = dictionaryItemId(dictCode, dictionaryItemValue(itemValue));
+      if (suffixCollapsedId !== itemId) {
+        await pool.query(
+          `delete from admin.dictionary_item
+            where id = $1 and dict_code = $2 and schema_scope = 'admin' and schema_name = '' and item_value <> $3`,
+          [suffixCollapsedId, dictCode, itemValue]
+        );
+        await pool.query(
+          `update admin.dictionary_item
+              set id = $1, updated_at = now()
+            where id = $2 and dict_code = $3 and schema_scope = 'admin' and schema_name = '' and item_value = $4
+              and not exists (select 1 from admin.dictionary_item where id = $1)`,
+          [itemId, suffixCollapsedId, dictCode, itemValue]
+        );
+      }
+      await pool.query(
+        `delete from admin.dictionary_item
+          where id = $1
+            and not (dict_code = $2 and schema_scope = 'admin' and schema_name = '' and item_value = $3)`,
+        [itemId, dictCode, itemValue]
+      );
       await pool.query(
         `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
          values($1,$2,$3,$4,'admin','',true,true,$5,'ACTIVE',$6,false)
@@ -218,7 +249,7 @@ export async function seedSystemDictionaries() {
                metadata_json = admin.dictionary_item.metadata_json || excluded.metadata_json,
                deleted = false,
                updated_at = now()`,
-        [dictionaryItemId(dictCode, itemValue), dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
+        [itemId, dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
       );
       sort += 10;
     }
