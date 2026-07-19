@@ -8,8 +8,8 @@ export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
   ["recruit", "招生", "business", "意向学员、跟进和转化", 20, "Megaphone"],
   ["student", "学员", "business", "学员档案和回访", 30, "GraduationCap"],
-  ["education", "教务", "business", "排课、上课和扣费", 40, "CalendarDays"],
-  ["finance", "财务", "business", "收款、分配和退费", 50, "Wallet"],
+  ["education", "教务", "business", "排课、上课和课消", 40, "CalendarDays"],
+  ["finance", "财务", "business", "收款、扣费、分配和退费", 50, "Wallet"],
   ["marketing", "营销", "business", "公众号、微商城、活动和微信推送", 55, "ShoppingBag"],
   ["oa", "OA", "business", "通知、审批和任务", 60, "Bell"],
   ["report", "报表", "business", "经营数据分析", 70, "BarChart3"],
@@ -630,7 +630,7 @@ export const standardImportConfigs = [
   {
     importCode: "charge_record.import",
     importName: "扣费导入",
-    module: "education",
+    module: "finance",
     feature: "charge_record",
     dsl: {
       pageCode: "charge_record",
@@ -1688,12 +1688,12 @@ export const pages: PageSeed[] = [
     ]
   },
   {
-    module: "education",
+    module: "finance",
     feature: "charge_record",
     page: "charge_record",
     name: "扣费记录",
     table: "account_charge_records",
-    group: "课消扣费",
+    group: "财务流水",
     fields: [
       { key: "student_id", label: "学员" },
       { key: "charge_type", label: "扣费类型" },
@@ -2181,9 +2181,9 @@ export const actionDslSeeds: Array<{ actionCode: string; actionName: string; act
   { actionCode: "course_list.detail", actionName: "课程详情", actionType: "open_modal", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.detail", actionName: "课程详情", actionType: "open_modal", modalCode: "course_detail_modal" } },
   { actionCode: "course_list.delete", actionName: "删除课程", actionType: "execute_api", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.delete", actionName: "删除课程", actionType: "execute_api", apiCode: "course_list.delete", confirm: true, afterSuccess: [{ type: "toast", message: "课程已删除" }, { type: "refreshPage" }] } },
   { actionCode: "course_list.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "course_list", module: "education", feature: "course_list", dsl: { actionCode: "course_list.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "course_list.query" } },
-  { actionCode: "charge_record.create", actionName: "新增扣费", actionType: "open_modal", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { actionCode: "charge_record.create", actionName: "新增扣费", actionType: "open_modal", modalCode: "charge_confirm_modal", afterSuccess: [{ type: "toast", message: "扣费成功" }, { type: "refreshPage" }] } },
-  { actionCode: "charge_record.detail", actionName: "扣费详情", actionType: "open_modal", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { actionCode: "charge_record.detail", actionName: "扣费详情", actionType: "open_modal", modalCode: "charge_detail_modal" } },
-  { actionCode: "charge_record.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { actionCode: "charge_record.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "charge_record.query" } },
+  { actionCode: "charge_record.create", actionName: "新增扣费", actionType: "open_modal", pageCode: "charge_record", module: "finance", feature: "charge_record", dsl: { actionCode: "charge_record.create", actionName: "新增扣费", actionType: "open_modal", modalCode: "charge_confirm_modal", afterSuccess: [{ type: "toast", message: "扣费成功" }, { type: "refreshPage" }] } },
+  { actionCode: "charge_record.detail", actionName: "扣费详情", actionType: "open_modal", pageCode: "charge_record", module: "finance", feature: "charge_record", dsl: { actionCode: "charge_record.detail", actionName: "扣费详情", actionType: "open_modal", modalCode: "charge_detail_modal" } },
+  { actionCode: "charge_record.refresh", actionName: "刷新", actionType: "execute_api", pageCode: "charge_record", module: "finance", feature: "charge_record", dsl: { actionCode: "charge_record.refresh", actionName: "刷新", actionType: "execute_api", apiCode: "charge_record.query" } },
   { actionCode: "funds_history.create", actionName: "合同收款", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.create", actionName: "合同收款", actionType: "open_modal", modalCode: "funds_add_modal", afterSuccess: [{ type: "toast", message: "收款成功" }, { type: "refreshPage" }] } },
   { actionCode: "funds_history.prestore", actionName: "预存收款", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.prestore", actionName: "预存收款", actionType: "open_modal", modalCode: "funds_add_modal", afterSuccess: [{ type: "toast", message: "预存成功" }, { type: "refreshPage" }] } },
   { actionCode: "funds_history.detail", actionName: "收款详情", actionType: "open_modal", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { actionCode: "funds_history.detail", actionName: "收款详情", actionType: "open_modal", modalCode: "funds_detail_modal" } },
@@ -2313,7 +2313,7 @@ export const modalDslSeeds: Array<{ actionCode: string; actionName: string; page
   ] } },
   { actionCode: "funds_add_modal", actionName: "新增收款弹窗", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { modalCode: "funds_add_modal", modalName: "新增收款", size: "medium", columns: 3, labelAlign: "left", submitApiCode: "funds_history.create", fields: fundsCreateFields } },
   { actionCode: "funds_detail_modal", actionName: "收款详情弹窗", pageCode: "funds_history", module: "finance", feature: "funds_history", dsl: { modalCode: "funds_detail_modal", modalName: "收款详情", size: "medium", columns: 3, labelAlign: "left", readOnly: true, fields: fundsCreateFields.map((field) => ({ ...field, required: false })) } },
-  { actionCode: "charge_detail_modal", actionName: "扣费详情弹窗", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { modalCode: "charge_detail_modal", modalName: "扣费详情", size: "medium", columns: 3, labelAlign: "left", readOnly: true, fields: chargeCreateFields.map((field) => ({ ...field, required: false })) } },
+  { actionCode: "charge_detail_modal", actionName: "扣费详情弹窗", pageCode: "charge_record", module: "finance", feature: "charge_record", dsl: { modalCode: "charge_detail_modal", modalName: "扣费详情", size: "medium", columns: 3, labelAlign: "left", readOnly: true, fields: chargeCreateFields.map((field) => ({ ...field, required: false })) } },
   { actionCode: "refund_add_modal", actionName: "新增退费弹窗", pageCode: "refund_record", module: "finance", feature: "refund_record", dsl: { modalCode: "refund_add_modal", modalName: "新增退费", size: "medium", columns: 3, labelAlign: "left", submitApiCode: "refund_record.create", fields: refundCreateFields } },
   { actionCode: "course_add_modal", actionName: "新增排课弹窗", pageCode: "course_list", module: "education", feature: "course_list", dsl: { modalCode: "course_add_modal", modalName: "新增排课", size: "medium", columns: 3, labelAlign: "left", submitApiCode: "course_list.create", fields: courseCreateFields } },
   { actionCode: "course_detail_modal", actionName: "课程详情弹窗", pageCode: "course_list", module: "education", feature: "course_list", dsl: { modalCode: "course_detail_modal", modalName: "课程详情", size: "large", columns: 3, labelAlign: "left", readOnly: true, fields: [
@@ -2325,7 +2325,7 @@ export const modalDslSeeds: Array<{ actionCode: string; actionName: string; page
     { key: "organization_id", label: "校区", type: "text", optionSource: orgSelect }, { key: "course_hour", label: "课时", type: "number" },
     { key: "course_status", label: "状态", type: "text" }
   ] } },
-  { actionCode: "charge_confirm_modal", actionName: "扣费确认弹窗", pageCode: "charge_record", module: "education", feature: "charge_record", dsl: { modalCode: "charge_confirm_modal", modalName: "扣费确认", size: "medium", columns: 3, labelAlign: "left", submitApiCode: "charge_record.create", fields: chargeCreateFields } },
+  { actionCode: "charge_confirm_modal", actionName: "扣费确认弹窗", pageCode: "charge_record", module: "finance", feature: "charge_record", dsl: { modalCode: "charge_confirm_modal", modalName: "扣费确认", size: "medium", columns: 3, labelAlign: "left", submitApiCode: "charge_record.create", fields: chargeCreateFields } },
   { actionCode: "charge_reverse_modal", actionName: "取消扣费弹窗", pageCode: "charge_record", module: "finance", feature: "charge_record", dsl: { modalCode: "charge_reverse_modal", modalName: "取消扣费", size: "small", columns: 1, labelAlign: "left", submitApiCode: "chargeRecord.reverse", fields: chargeReverseFields } },
   { actionCode: "product_add_modal", actionName: "新增产品弹窗", pageCode: "product_list", module: "finance", feature: "product_list", dsl: { modalCode: "product_add_modal", modalName: "新增产品", size: "medium", columns: 3, labelAlign: "left", submitApiCode: "product_list.create", fields: [
     { key: "name", label: "产品名称", type: "text", required: true }, { key: "product_type", label: "产品类型", type: "text" },
@@ -4287,13 +4287,13 @@ export const approvalFlows = [
   {
     flow_code: "charge_reverse_approval",
     flow_name: "取消扣费审批",
-    module_code: "education",
+    module_code: "finance",
     status: "INACTIVE",
     config_json: {
       resourceType: "approval_flow",
       flowCode: "charge_reverse_approval",
       flowName: "取消扣费审批",
-      moduleCode: "education",
+      moduleCode: "finance",
       businessType: "charge_reverse",
       trigger: { event: "charge_reverse_submit", pageCode: "charge_record" },
       steps: [
@@ -4355,7 +4355,7 @@ export const skillContentMap: Record<string, string> = {
   course_holiday_calendar: "# 停课日历\n\n## 功能描述\n维护校区停课日；开启禁止排课后，排课会按规则拦截停课日期。",
   course_week_schedule: "# 周课表\n\n## 功能描述\n按日期和时间查看一周课程安排，适合前台、教务和老师快速核对课表。",
   course_list: "# 排课列表\n\n## 功能描述\n查看课程安排、上课时间和课程状态，支持一对一、小班、一对N等多种课程类型。\n\n## 使用说明\n- 点击「新增排课」创建课程\n- 支持按课程名称和状态筛选\n- 课程状态包括待上课、已完成、已取消\n\n## 注意事项\n- 排课冲突规则会阻止老师时间冲突\n- 已取消课程不可扣费",
-  charge_record: "# 扣费记录\n\n## 功能描述\n管理学员上课扣费，支持实收扣费、优惠扣费和赠课扣费。\n\n## 使用说明\n- 点击「新增扣费」选择课程和合同产品\n- 支持取消扣费操作\n- 扣费自动更新合同产品余额\n\n## 注意事项\n- 余额不足时扣费会被拒绝\n- 取消扣费会恢复合同产品余额",
+  charge_record: "# 扣费记录\n\n## 功能描述\n扣费记录属于财务流水，管理学员上课扣费，支持实收扣费、优惠扣费和赠课扣费。\n\n## 使用说明\n- 点击「新增扣费」选择课程和合同产品\n- 支持取消扣费操作\n- 扣费自动更新合同产品余额\n\n## 注意事项\n- 余额不足时扣费会被拒绝\n- 取消扣费会恢复合同产品余额",
   contract_list: "# 合同列表\n\n## 功能描述\n跟踪合同状态、应收实收和付款进度，支持合同收款操作。\n\n## 使用说明\n- 点击「新增合同」创建合同\n- 行操作支持收款、详情、编辑\n- 合同自动关联优惠分配\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 付款状态根据实收金额自动更新",
   contract_product_list: "# 合同产品\n\n## 功能描述\n查看合同关联的产品信息，包括剩余课时、剩余金额等。\n\n## 使用说明\n- 按合同维度查看产品列表\n- 显示实时剩余课时和金额\n- 合同产品为只读信息，不支持在列表中直接编辑或删除\n- 如需变更合同产品，请回到合同报名、合同调整或退费等业务流程处理\n\n## 注意事项\n- 剩余数据由扣费和退费操作自动维护\n- 退费应通过合同产品退费或合同退费流程发起，避免手工修改余额",
   funds_history: "# 收款记录\n\n## 功能描述\n核对收款流水、支付方式和交易时间，支持合同收款和预存两种类型。\n\n## 使用说明\n- 点击「新增收款」录入收款\n- 支持现金、微信、支付宝、电子账户等支付方式\n\n## 注意事项\n- 收款后自动触发资金分配规则\n- 预存类型不需要关联合同",
