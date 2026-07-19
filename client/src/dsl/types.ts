@@ -9,6 +9,7 @@ export type FieldDsl = {
   align?: "left" | "center" | "right";
   badge?: boolean;
   hidden?: boolean;
+  readonly?: boolean;
   displayKey?: string;
   span?: 1 | 2 | 3 | "full";
   rows?: number;
