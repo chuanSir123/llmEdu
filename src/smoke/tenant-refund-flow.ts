@@ -117,8 +117,8 @@ async function main() {
     );
     assert(Number(cpAfterProductRefund?.consumed_real_hour) === 0, "产品退费不应改动已消耗课时");
     assert(Number(cpAfterProductRefund?.consumed_real_amount) === 0, "产品退费不应改动已消耗金额");
-    assert(Number(cpAfterProductRefund?.remaining_real_hour) === 9, "产品退费后合同产品剩余课时异常");
-    assert(Number(cpAfterProductRefund?.remaining_real_amount) === 1800, "产品退费后合同产品剩余金额异常");
+    assert(Number(cpAfterProductRefund?.remaining_real_hour) === 4, "产品退费后合同产品剩余课时异常");
+    assert(Number(cpAfterProductRefund?.remaining_real_amount) === 800, "产品退费后合同产品剩余金额异常");
     assert(Number(contractAfterProductRefund?.paid_amount) === 800, "产品退费后合同已收金额异常");
     assert(contractAfterProductRefund?.paid_status === "PART_PAID", "产品退费后合同付款状态异常");
 
@@ -133,8 +133,8 @@ async function main() {
     );
     assert(Number(cpAfterProductRefundDelete?.consumed_real_hour) === 0, "删除产品退费不应改动已消耗课时");
     assert(Number(cpAfterProductRefundDelete?.consumed_real_amount) === 0, "删除产品退费不应改动已消耗金额");
-    assert(Number(cpAfterProductRefundDelete?.remaining_real_hour) === 10, "删除产品退费后剩余课时未恢复");
-    assert(Number(cpAfterProductRefundDelete?.remaining_real_amount) === 2000, "删除产品退费后剩余金额未恢复");
+    assert(Number(cpAfterProductRefundDelete?.remaining_real_hour) === 5, "删除产品退费后剩余课时未恢复");
+    assert(Number(cpAfterProductRefundDelete?.remaining_real_amount) === 1000, "删除产品退费后剩余金额未恢复");
     assert(Number(contractAfterProductRefundDelete?.paid_amount) === 1000, "删除产品退费后合同已收未恢复");
 
     const contractRefundCase = await createPaidContract(schemaName, user, "合同退费");
@@ -162,8 +162,8 @@ async function main() {
     );
     assert(Number(cpAfterContractRefund?.consumed_real_hour) === 0, "合同退费不应改动已消耗课时");
     assert(Number(cpAfterContractRefund?.consumed_real_amount) === 0, "合同退费不应改动已消耗金额");
-    assert(Number(cpAfterContractRefund?.remaining_real_hour) === 8, "合同退费后剩余课时异常");
-    assert(Number(cpAfterContractRefund?.remaining_real_amount) === 1600, "合同退费后剩余金额异常");
+    assert(Number(cpAfterContractRefund?.remaining_real_hour) === 3, "合同退费后剩余课时异常");
+    assert(Number(cpAfterContractRefund?.remaining_real_amount) === 600, "合同退费后剩余金额异常");
     assert(Number(contractAfterContractRefund?.paid_amount) === 600, "合同退费后合同已收金额异常");
     assert(contractAfterContractRefund?.contract_status === "ACTIVE", "部分合同退费不应关闭合同");
 
@@ -178,8 +178,8 @@ async function main() {
     );
     assert(Number(cpAfterContractRefundDelete?.consumed_real_hour) === 0, "删除合同退费不应改动已消耗课时");
     assert(Number(cpAfterContractRefundDelete?.consumed_real_amount) === 0, "删除合同退费不应改动已消耗金额");
-    assert(Number(cpAfterContractRefundDelete?.remaining_real_hour) === 10, "删除合同退费后剩余课时未恢复");
-    assert(Number(cpAfterContractRefundDelete?.remaining_real_amount) === 2000, "删除合同退费后剩余金额未恢复");
+    assert(Number(cpAfterContractRefundDelete?.remaining_real_hour) === 5, "删除合同退费后剩余课时未恢复");
+    assert(Number(cpAfterContractRefundDelete?.remaining_real_amount) === 1000, "删除合同退费后剩余金额未恢复");
     assert(Number(contractAfterContractRefundDelete?.paid_amount) === 1000, "删除合同退费后合同已收未恢复");
     assert(contractAfterContractRefundDelete?.contract_status === "ACTIVE", "删除合同退费后合同状态异常");
 

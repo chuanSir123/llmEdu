@@ -469,7 +469,7 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
       `insert into ${table(schemaName, "contract_product")}
         (id, contract_id, product_id, plan_real_hour, plan_promotion_hour, plan_real_amount, plan_promotion_amount,
          remaining_real_hour, remaining_promotion_hour, remaining_real_amount, remaining_promotion_amount, ext_json)
-       values ($1,$2,$3,$4,$5,$6,$7,$4,$5,$6,$7,$8)
+       values ($1,$2,$3,$4,$5,$6,$7,0,0,0,0,$8)
        returning *`,
       [cpId, contractId, productId, planRealHour, num(item.plan_promotion_hour), planRealAmount, planPromotionAmount, JSON.stringify({ ruleCode: "contract_create_rule" })]
     );
@@ -517,7 +517,8 @@ async function reallocateContractFunds(client: pg.PoolClient, schemaName: string
   await client.query(`update ${table(schemaName, "performance_arrange_log")} set deleted = true, updated_at = now() where funds_change_history_id = any($1::text[]) and deleted = false and coalesce((ext_json->>'reversalOf'),'') = ''`, [fundIds]);
   await client.query(
     `update ${table(schemaName, "contract_product")}
-     set paid_real_amount = 0, paid_real_hour = 0, paid_promotion_amount = 0, paid_promotion_hour = 0, updated_at = now()
+     set paid_real_amount = 0, paid_real_hour = 0, paid_promotion_amount = 0, paid_promotion_hour = 0,
+         remaining_real_amount = 0, remaining_real_hour = 0, remaining_promotion_amount = 0, remaining_promotion_hour = 0, updated_at = now()
      where contract_id = $1 and deleted = false`,
     [contractId]
   );
@@ -649,7 +650,7 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
       await client.query(
         `insert into ${table(schemaName, "contract_product")}
           (id, contract_id, product_id, plan_real_hour, plan_promotion_hour, plan_real_amount, plan_promotion_amount, remaining_real_hour, remaining_promotion_hour, remaining_real_amount, remaining_promotion_amount, ext_json)
-         values ($1,$2,$3,$4,$5,$6,$7,$4,$5,$6,$7,$8)`,
+         values ($1,$2,$3,$4,$5,$6,$7,0,0,0,0,$8)`,
         [cpId, contractId, plan.productId, plan.planRealHour, plan.planPromotionHour, plan.planRealAmount, plan.planPromotionAmount, JSON.stringify({ ruleCode: "contract_update_rule", replacedByContractUpdate: true })]
       );
       if (plan.planPromotionAmount > 0) {
@@ -709,6 +710,8 @@ async function arrangePayment(client: pg.PoolClient, schemaName: string, fundsId
       `update ${table(schemaName, "contract_product")}
        set paid_real_amount = coalesce(paid_real_amount,0) + $1,
            paid_real_hour = coalesce(paid_real_hour,0) + $2,
+           remaining_real_amount = coalesce(remaining_real_amount,0) + $1,
+           remaining_real_hour = coalesce(remaining_real_hour,0) + $2,
            updated_at = now()
        where id = $3`,
       [arrangeAmount, arrangeHour, cp.id]
@@ -759,6 +762,8 @@ async function arrangePromotion(client: pg.PoolClient, schemaName: string, funds
       `update ${table(schemaName, "contract_product")}
        set paid_promotion_hour = coalesce(paid_promotion_hour,0) + $1,
            paid_promotion_amount = coalesce(paid_promotion_amount,0) + $2,
+           remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $1,
+           remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $2,
            updated_at = now()
        where id = $3`,
       [arrangePromotionHour, arrangePromotionAmount, cp.id]
@@ -941,6 +946,8 @@ async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Re
       `update ${table(schemaName, "contract_product")}
        set paid_real_amount = greatest(coalesce(paid_real_amount,0) - $1, 0),
            paid_real_hour = greatest(coalesce(paid_real_hour,0) - $2, 0),
+           remaining_real_amount = greatest(coalesce(remaining_real_amount,0) - $1, 0),
+           remaining_real_hour = greatest(coalesce(remaining_real_hour,0) - $2, 0),
            updated_at = now()
        where id = $3`,
       [num(row.arrange_real_amount), num(row.arrange_real_hour), row.contract_product_id]
@@ -956,6 +963,8 @@ async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Re
       `update ${table(schemaName, "contract_product")}
        set paid_promotion_amount = greatest(coalesce(paid_promotion_amount,0) - $1, 0),
            paid_promotion_hour = greatest(coalesce(paid_promotion_hour,0) - $2, 0),
+           remaining_promotion_amount = greatest(coalesce(remaining_promotion_amount,0) - $1, 0),
+           remaining_promotion_hour = greatest(coalesce(remaining_promotion_hour,0) - $2, 0),
            updated_at = now()
        where id = $3`,
       [num(row.arrange_promotion_amount), num(row.arrange_promotion_hour), row.contract_product_id]
@@ -2481,7 +2490,8 @@ async function saveMoneyArrange(client: pg.PoolClient, schemaName: string, param
     // 手工排款与自动排款同口径：同步累加合同产品已排实收，删除收款回滚时才对得上
     await client.query(
       `update ${table(schemaName, "contract_product")}
-       set paid_real_amount = coalesce(paid_real_amount,0) + $1, paid_real_hour = coalesce(paid_real_hour,0) + $2, updated_at = now()
+       set paid_real_amount = coalesce(paid_real_amount,0) + $1, paid_real_hour = coalesce(paid_real_hour,0) + $2,
+           remaining_real_amount = coalesce(remaining_real_amount,0) + $1, remaining_real_hour = coalesce(remaining_real_hour,0) + $2, updated_at = now()
        where id = $3 and deleted = false`,
       [num(item.arrange_real_amount), num(item.arrange_real_hour), item.contract_product_id]
     );
@@ -2497,7 +2507,8 @@ async function savePromotionArrange(client: pg.PoolClient, schemaName: string, p
     await client.query(`insert into ${table(schemaName, "promotion_arrange_log")} (id, contract_product_id, arrange_promotion_hour, arrange_promotion_amount, funds_change_history_id, organization_id) values ($1,$2,$3,$4,$5,$6)`, [await nextTextId(client, schemaName, "promotion_arrange_log"), item.contract_product_id, num(item.arrange_promotion_hour), num(item.arrange_promotion_amount), item.funds_change_history_id, item.organization_id]);
     await client.query(
       `update ${table(schemaName, "contract_product")}
-       set paid_promotion_amount = coalesce(paid_promotion_amount,0) + $1, paid_promotion_hour = coalesce(paid_promotion_hour,0) + $2, updated_at = now()
+       set paid_promotion_amount = coalesce(paid_promotion_amount,0) + $1, paid_promotion_hour = coalesce(paid_promotion_hour,0) + $2,
+           remaining_promotion_amount = coalesce(remaining_promotion_amount,0) + $1, remaining_promotion_hour = coalesce(remaining_promotion_hour,0) + $2, updated_at = now()
        where id = $3 and deleted = false`,
       [num(item.arrange_promotion_amount), num(item.arrange_promotion_hour), item.contract_product_id]
     );
