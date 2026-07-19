@@ -4,6 +4,7 @@ import { qIdent } from "../db/schema-resolver.js";
 import { withRedisLock } from "../redis-lock.service.js";
 import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 import { runDeclarativeValidations } from "./declarative-rule.service.js";
+import { dictionaryItemId } from "../dictionary.service.js";
 
 type CommandDsl = {
   operation: "command";
@@ -51,6 +52,10 @@ function dictBare(value: unknown, fallback = "") {
   const text = str(value, fallback);
   const dotIndex = text.indexOf(".");
   return dotIndex > 0 ? text.slice(dotIndex + 1) : text;
+}
+
+function dictId(dictCode: string, itemValue: unknown) {
+  return dictionaryItemId(dictCode, dictBare(itemValue));
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -182,7 +187,7 @@ async function submitApprovalTask(client: pg.PoolClient, schemaName: string, par
   const input = dataOf(params);
   const userId = str(input.applicant_user_id ?? params.__userId);
   const flowCode = str(input.flow_code ?? input.flowCode);
-  const businessType = str(input.business_type ?? input.businessType);
+  const businessType = dictBare(input.business_type ?? input.businessType);
   const event = str(input.event);
   const values: unknown[] = [];
   const where = ["deleted = false", "status in ('ACTIVE', 'status.ACTIVE')"];
@@ -213,8 +218,8 @@ async function submitApprovalTask(client: pg.PoolClient, schemaName: string, par
   await client.query(
     `insert into ${table(schemaName, "approval_task")}
        (id, flow_id, business_type, business_id, applicant_user_id, current_approver_user_id, status, current_step_index, form_json, organization_id)
-     values ($1,$2,$3,$4,$5,$6,'PENDING',0,$7,$8)`,
-    [taskId, flow.id, str(input.business_type ?? input.businessType ?? config.businessType), str(input.business_id ?? input.businessId), userId || null, approverId, JSON.stringify(formJson), organizationId || null]
+     values ($1,$2,$3,$4,$5,$6,$7,0,$8,$9)`,
+    [taskId, flow.id, dictBare(input.business_type ?? input.businessType ?? config.businessType), str(input.business_id ?? input.businessId), userId || null, approverId, dictId("approval_status", "PENDING"), JSON.stringify(formJson), organizationId || null]
   );
   await insertApprovalLog(client, schemaName, taskId, "SUBMIT", userId, str(input.comment, "发起审批"), firstStep, { status: "PENDING" });
   return { approvalRequired: true, taskId, status: "PENDING", flowCode: flow.flow_code, currentApproverUserId: approverId };
@@ -224,9 +229,9 @@ async function submitApprovalTask(client: pg.PoolClient, schemaName: string, par
 async function transitionContractStatus(client: pg.PoolClient, schemaName: string, params: Record<string, unknown>) {
   const input = dataOf(params);
   const contractId = str(input.contract_id ?? input.contractId ?? input.id ?? params.id);
-  const targetStatus = str(input.target_status ?? input.targetStatus ?? input.status);
+  const targetStatus = dictId("contract_status", input.target_status ?? input.targetStatus ?? input.status);
   if (!contractId) throw new Error("缺少合同 ID");
-  if (!/^[A-Za-z][A-Za-z0-9_]{0,80}$/.test(targetStatus)) throw Object.assign(new Error(`目标合同状态不合法: ${targetStatus}`), { statusCode: 400 });
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,80}$/.test(dictBare(targetStatus))) throw Object.assign(new Error(`目标合同状态不合法: ${targetStatus}`), { statusCode: 400 });
   const allowedFrom = Array.isArray(input.allowedFrom ?? input.allowed_from) ? (input.allowedFrom ?? input.allowed_from) as unknown[] : [];
   const fromPolicy = str(input.fromPolicy ?? input.from_policy, allowedFrom.length ? "any_of" : "any");
   const values: unknown[] = [targetStatus, JSON.stringify({
@@ -237,7 +242,7 @@ async function transitionContractStatus(client: pg.PoolClient, schemaName: strin
   }), contractId];
   let guard = "";
   if (fromPolicy === "any_of" && allowedFrom.length) {
-    values.push(allowedFrom.map(String));
+    values.push(allowedFrom.map((item) => dictId("contract_status", item)));
     guard = ` and contract_status = any($${values.length}::text[])`;
   }
   const { rows } = await client.query(
@@ -290,7 +295,7 @@ async function maybeSubmitApprovalTask(client: pg.PoolClient, schemaName: string
   const existingTaskId = str(input.approval_task_id ?? input.approvalTaskId);
   if (existingTaskId) {
     const task = await one(client, `select status from ${table(schemaName, "approval_task")} where id = $1 and deleted = false`, [existingTaskId]);
-    if (task?.status === "APPROVED") return undefined;
+    if (dictBare(task?.status) === "APPROVED") return undefined;
     throw new Error("审批未通过，不能执行业务动作");
   }
   const { rows } = await client.query(`select id from ${table(schemaName, "approval_flow")} where flow_code = $1 and status in ('ACTIVE', 'status.ACTIVE') and deleted = false limit 1`, [hint.flowCode]);
@@ -404,31 +409,33 @@ async function createContract(client: pg.PoolClient, schemaName: string, params:
   }
   promotionAmount = Math.min(Math.max(promotionAmount, 0), totalAmount);
   const signTime = str(input.sign_time, new Date().toISOString());
-  const contractType = str(input.contract_type, str(productInputs[0]?.product.product_type, "ONE_ON_ONE_COURSE"));
+  const contractType = dictId("contract_type", input.contract_type || str(productInputs[0]?.product.product_type, "ONE_ON_ONE_COURSE"));
   // 首付金额不直接写死在合同上，产品创建完成后走 createFunds 生成真实收款流水并排款，保证账实一致
   const initialPaidAmount = num(input.paid_amount);
 
   const contract = await one(client,
     `insert into ${table(schemaName, "contract")}
       (id, student_id, paid_status, contract_type, organization_id, sign_staff_id, sign_time, total_amount, paid_amount, promotion_amount, contract_status, ext_json)
-     values ($1,$2,'UNPAID',$3,$4,$5,$6,$7,0,$8,'ACTIVE',$9)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,$10,$11)
      returning *`,
     [
       contractId,
       singleStudentId,
+      dictId("paid_status", "UNPAID"),
       contractType,
       input.organization_id,
       input.sign_staff_id,
       signTime,
       totalAmount,
       promotionAmount,
+      dictId("contract_status", "ACTIVE"),
       JSON.stringify({ ruleCode: "contract_create_rule", rule, promotionId })
     ]
   );
 
   const convertedStudent = await client.query(
-    `update ${table(schemaName, "student")} set student_status = 'FORMAL', updated_at = now() where id = $1 and coalesce(student_status,'') in ('LEAD', 'student_status.LEAD') returning id`,
-    [singleStudentId]
+    `update ${table(schemaName, "student")} set student_status = $2, updated_at = now() where id = $1 and coalesce(student_status,'') = $3 returning id`,
+    [singleStudentId, dictId("student_status", "FORMAL"), dictId("student_status", "LEAD")]
   );
   if (convertedStudent.rows[0]) {
     await markRecruitConversion(client, schemaName, { studentId: singleStudentId, contractId, amount: totalAmount });
@@ -615,12 +622,12 @@ async function updateContract(client: pg.PoolClient, schemaName: string, params:
     const charged = cpIds.length ? await one(client, `select id from ${table(schemaName, "account_charge_records")} where contract_product_id = any($1::text[]) and deleted = false and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') limit 1`, [cpIds]) : undefined;
     if (charged) throw new Error("合同已发生扣费，不能更换签约学员");
   }
-  const paidStatus = paidAmount <= 0 ? "UNPAID" : paidAmount >= payable ? "PAID" : "PART_PAID";
+  const paidStatus = dictId("paid_status", paidAmount <= 0 ? "UNPAID" : paidAmount >= payable ? "PAID" : "PART_PAID");
   const updated = await one(client,
     `update ${table(schemaName, "contract")}
      set student_id = $2, contract_type = $3, organization_id = $4, sign_staff_id = $5, sign_time = $6, total_amount = $7, promotion_amount = $8, paid_status = $9, ext_json = coalesce(ext_json,'{}'::jsonb) || $10::jsonb, updated_at = now()
      where id = $1 returning *`,
-    [contractId, nextStudentId, str(input.contract_type, str(contract.contract_type)), str(input.organization_id, str(contract.organization_id)), str(input.sign_staff_id, str(contract.sign_staff_id)), input.sign_time ?? contract.sign_time, totalAmount || num(contract.total_amount), promotionAmount, paidStatus, JSON.stringify({ ruleCode: "contract_update_rule", promotionId: promotionId || null })]
+    [contractId, nextStudentId, dictId("contract_type", input.contract_type || str(contract.contract_type)), str(input.organization_id, str(contract.organization_id)), str(input.sign_staff_id, str(contract.sign_staff_id)), input.sign_time ?? contract.sign_time, totalAmount || num(contract.total_amount), promotionAmount, paidStatus, JSON.stringify({ ruleCode: "contract_update_rule", promotionId: promotionId || null })]
   );
 
   if (reallocationRequired) {
@@ -777,8 +784,8 @@ async function arrangePerformance(client: pg.PoolClient, schemaName: string, fun
     await client.query(
       `insert into ${table(schemaName, "performance_arrange_log")}
         (id, contract_product_id, funds_change_history_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id)
-       values ($1,$2,$3,'SALES',$4,$5,$6,$7,$8)`,
-      [await nextTextId(client, schemaName, "performance_arrange_log"), cp.id, fundsId, orgId, perfAmount, signStaffId || null, signStaffId ? roundMoney(perfAmount * 0.5) : 0, orgId]
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [await nextTextId(client, schemaName, "performance_arrange_log"), cp.id, fundsId, dictId("performance_type", "SALES"), orgId, perfAmount, signStaffId || null, signStaffId ? roundMoney(perfAmount * 0.5) : 0, orgId]
     );
   }
 }
@@ -794,7 +801,7 @@ async function reversePerformanceForSource(client: pg.PoolClient, schemaName: st
       `insert into ${table(schemaName, "performance_arrange_log")}
         (id, contract_product_id, funds_change_history_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id, source_type, source_id, adjustment_reason, ext_json)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [await nextTextId(client, schemaName, "performance_arrange_log"), row.contract_product_id, sourceType === "funds_void" ? sourceId : row.funds_change_history_id, `${str(row.performance_type, "SALES")}_REVERSE`, row.organization_performance_organization_id, -orgAmount, row.personal_performance_user_id, -personalAmount, row.organization_id, sourceType, sourceId, reason, JSON.stringify({ reversalOf: row.id, sourceType, sourceId })]
+      [await nextTextId(client, schemaName, "performance_arrange_log"), row.contract_product_id, sourceType === "funds_void" ? sourceId : row.funds_change_history_id, dictId("performance_type", `${dictBare(row.performance_type, "SALES")}_REVERSE`), row.organization_performance_organization_id, -orgAmount, row.personal_performance_user_id, -personalAmount, row.organization_id, sourceType, sourceId, reason, JSON.stringify({ reversalOf: row.id, sourceType, sourceId })]
     );
   }
   return rows.length;
@@ -813,8 +820,8 @@ async function arrangeNegativePerformanceForRefund(client: pg.PoolClient, schema
   await client.query(
     `insert into ${table(schemaName, "performance_arrange_log")}
       (id, contract_product_id, performance_type, organization_performance_organization_id, organization_performance_amount, personal_performance_user_id, personal_performance_amount, organization_id, source_type, source_id, adjustment_reason, ext_json)
-     values ($1,$2,'REFUND_REVERSE',$3,$4,$5,$6,$7,'refund',$8,$9,$10)`,
-    [await nextTextId(client, schemaName, "performance_arrange_log"), cpId || null, orgId || null, -amount, userId || null, userId ? -roundMoney(amount * 0.5) : 0, orgId || null, refundId, str(refund.remark, "退费自动冲减业绩"), JSON.stringify({ sourceRefundId: refundId, contractId })]
+     values ($1,$2,$3,$4,$5,$6,$7,$8,'refund',$9,$10,$11)`,
+    [await nextTextId(client, schemaName, "performance_arrange_log"), cpId || null, dictId("performance_type", "SALES_REVERSE"), orgId || null, -amount, userId || null, userId ? -roundMoney(amount * 0.5) : 0, orgId || null, refundId, str(refund.remark, "退费自动冲减业绩"), JSON.stringify({ sourceRefundId: refundId, contractId })]
   );
   return 1;
 }
@@ -900,7 +907,7 @@ async function createFunds(client: pg.PoolClient, schemaName: string, params: Re
     await arrangePerformance(client, schemaName, fundsId, String(input.contract_id), amount);
     const nextPaid = num(contract?.paid_amount) + amount;
     const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
-    const status = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+    const status = dictId("paid_status", nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID");
     await client.query(
       `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, updated_at = now() where id = $3`,
       [nextPaid, status, input.contract_id]
@@ -969,7 +976,7 @@ async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Re
     const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [contractId]);
     const nextPaid = Math.max(num(contract?.paid_amount) - amount, 0);
     const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
-    const status = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+    const status = dictId("paid_status", nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID");
     await client.query(
       `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, updated_at = now() where id = $3`,
       [nextPaid, status, contractId]
@@ -979,7 +986,7 @@ async function deleteFunds(client: pg.PoolClient, schemaName: string, params: Re
   const payWay = funds.pay_way_config_id
     ? await one(client, `select pay_way_type from ${table(schemaName, "pay_way_config")} where id = $1 and deleted = false`, [funds.pay_way_config_id])
     : undefined;
-  if (str(funds.funds_type) === "PRE_STORE") {
+  if (dictBare(funds.funds_type) === "PRE_STORE") {
     await changeStudentEleAccount(client, schemaName, {
       studentId: str(funds.student_id),
       amount: -amount,
@@ -1022,7 +1029,7 @@ async function deleteContract(client: pg.PoolClient, schemaName: string, params:
   const refund = await one(client, `select id from ${table(schemaName, "refund_record")} where contract_id = $1 and deleted = false limit 1`, [contractId]);
   if (refund) throw new Error("合同已有退费记录，不可删除");
   await client.query(`update ${table(schemaName, "contract_product")} set deleted = true, updated_at = now() where contract_id = $1 and deleted = false`, [contractId]);
-  await client.query(`update ${table(schemaName, "contract")} set deleted = true, contract_status = 'CANCELLED', updated_at = now() where id = $1`, [contractId]);
+  await client.query(`update ${table(schemaName, "contract")} set deleted = true, contract_status = $2, updated_at = now() where id = $1`, [contractId, dictId("contract_status", "CANCELLED")]);
   return { deleted: true, contractId };
 }
 
@@ -1035,8 +1042,8 @@ async function changeStudentEleAccount(
   if (!account) {
     account = await one(
       client,
-      `insert into ${table(schemaName, "student_ele_account")} (id, student_id, balance_amount, status) values ($1,$2,0,'ACTIVE') returning *`,
-      [await nextTextId(client, schemaName, "student_ele_account"), input.studentId]
+      `insert into ${table(schemaName, "student_ele_account")} (id, student_id, balance_amount, status) values ($1,$2,0,$3) returning *`,
+      [await nextTextId(client, schemaName, "student_ele_account"), input.studentId, dictId("status", "ACTIVE")]
     );
   }
   const nextBalance = roundMoney(num(account?.balance_amount) + input.amount);
@@ -1145,14 +1152,14 @@ async function cleanupRemovedStudentCourses(
       `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false for update`,
       [row.course_id, input.studentId]
     );
-    const isAttended = str(row.attendance_status) === "PRESENT";
+    const isAttended = dictBare(row.attendance_status) === "PRESENT";
     if ((isAttended || charges.length > 0) && ["block_attended", "delete_uncharged_course_students"].includes(input.policy)) throw new Error("该学员存在已考勤或已扣费课程，不可移除");
     if ((isAttended || charges.length > 0) && input.policy === "cancel_attendance_and_charges") {
       for (const charge of charges) {
         await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: "移除学员同步取消扣费" }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
         reversedCharges += 1;
       }
-      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`, [row.id]);
+      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = $2, attendance_time = null, updated_at = now() where id = $1`, [row.id, dictId("attendance_status", "PENDING")]);
     }
     if (input.policy === "delete_uncharged_course_students" || input.policy === "cancel_attendance_and_charges") {
       const { rows: remainingCharges } = await client.query(
@@ -1215,13 +1222,13 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
      returning *`,
     [
       courseId,
-      dictBare(input.course_type) || null,
+      input.course_type ? dictId("course_type", input.course_type) : null,
       input.course_date,
       input.start_time,
       input.end_time,
       input.teacher_id,
       input.study_manager_id,
-      dictBare(input.course_status, "SCHEDULED"),
+      dictId("course_status", input.course_status || "SCHEDULED"),
       input.organization_id,
       input.mini_class_id,
       input.one_on_n_group_id,
@@ -1250,8 +1257,8 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
       await client.query(
         `insert into ${table(schemaName, "generic_course_student")}
           (id, course_id, student_id, attendance_status, contract_product_id, mini_class_id)
-         values ($1,$2,$3,'PENDING',$4,$5)`,
-        [await nextTextId(client, schemaName, "generic_course_student"), courseId, cs.student_id, cpId, miniClassId]
+         values ($1,$2,$3,$4,$5,$6)`,
+        [await nextTextId(client, schemaName, "generic_course_student"), courseId, cs.student_id, dictId("attendance_status", "PENDING"), cpId, miniClassId]
       );
     }
     return { course, studentCount: classStudents.length, autoLinked: true, source: "mini_class" };
@@ -1271,8 +1278,8 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
       await client.query(
         `insert into ${table(schemaName, "generic_course_student")}
           (id, course_id, student_id, attendance_status, contract_product_id, one_on_n_group_id)
-         values ($1,$2,$3,'PENDING',$4,$5)`,
-        [await nextTextId(client, schemaName, "generic_course_student"), courseId, gs.student_id, cpId, oneOnNGroupId]
+         values ($1,$2,$3,$4,$5,$6)`,
+        [await nextTextId(client, schemaName, "generic_course_student"), courseId, gs.student_id, dictId("attendance_status", "PENDING"), cpId, oneOnNGroupId]
       );
     }
     return { course, studentCount: groupStudents.length, autoLinked: true, source: "one_on_n_group" };
@@ -1296,8 +1303,8 @@ async function createCourse(client: pg.PoolClient, schemaName: string, params: R
     await client.query(
       `insert into ${table(schemaName, "generic_course_student")}
         (id, course_id, student_id, attendance_status, contract_product_id)
-       values ($1,$2,$3,'PENDING',$4)`,
-      [await nextTextId(client, schemaName, "generic_course_student"), courseId, sid, cpId]
+       values ($1,$2,$3,$4,$5)`,
+      [await nextTextId(client, schemaName, "generic_course_student"), courseId, sid, dictId("attendance_status", "PENDING"), cpId]
     );
   }
   return { course, studentCount: studentsWithCp.length || studentIds.length };
@@ -1413,7 +1420,7 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
       str(input.study_manager_id, str(course.study_manager_id)) || null,
       str(input.course_title, str(course.course_title)) || null,
       num(input.course_hour, num(course.course_hour, 1)),
-      dictBare(str(input.course_type, str(course.course_type))) || null,
+      input.course_type ? dictId("course_type", input.course_type) : str(course.course_type) || null,
       organizationId || null
     ]
   );
@@ -1441,7 +1448,7 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
         `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
         [courseId, row.student_id]
       );
-      if (charge || ["PRESENT", "ABSENT", "LEAVE"].includes(str(row.attendance_status))) {
+      if (charge || ["PRESENT", "ABSENT", "LEAVE"].includes(dictBare(row.attendance_status))) {
         throw new Error(`学员已考勤或已扣费，不能移出该课程: ${str(row.student_id)}`);
       }
       await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where id = $1`, [row.id]);
@@ -1457,8 +1464,8 @@ async function updateCourse(client: pg.PoolClient, schemaName: string, params: R
       await client.query(
         `insert into ${table(schemaName, "generic_course_student")}
           (id, course_id, student_id, attendance_status, contract_product_id, mini_class_id, one_on_n_group_id)
-         values ($1,$2,$3,'PENDING',$4,$5,$6)`,
-        [await nextTextId(client, schemaName, "generic_course_student"), courseId, studentId, cpId, course.mini_class_id ?? null, course.one_on_n_group_id ?? null]
+         values ($1,$2,$3,$4,$5,$6,$7)`,
+        [await nextTextId(client, schemaName, "generic_course_student"), courseId, studentId, dictId("attendance_status", "PENDING"), cpId, course.mini_class_id ?? null, course.one_on_n_group_id ?? null]
       );
       addedStudents += 1;
     }
@@ -1494,6 +1501,7 @@ async function createCharge(client: pg.PoolClient, schemaName: string, params: R
     if (cpOwner && str(cpOwner.student_id) !== str(input.student_id)) throw new Error("合同产品不属于该学员");
   }
   const chargeType = dictBare(input.charge_type, str(rule.defaultChargeType, "NORMAL"));
+  const chargeTypeId = dictId("charge_type", chargeType);
   // 未知扣费类型会绕过所有余额校验且不扣减剩余，落下"幽灵扣费"——白名单校验
   if (!["NORMAL", "PROMOTION", "PROMOTION_HOUR", "MAKE_UP", "REFUND_REVERSE"].includes(chargeType)) {
     throw new Error(`扣费类型不合法: ${chargeType}`);
@@ -1526,9 +1534,9 @@ async function createCharge(client: pg.PoolClient, schemaName: string, params: R
   const charge = await one(client,
     `insert into ${table(schemaName, "account_charge_records")}
       (id, course_id, charge_type, charge_hour, charge_amount, contract_product_id, organization_id, student_id, charge_status, ext_json)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,'CONFIRMED',$9)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      returning *`,
-    [str(params.id, await nextTextId(client, schemaName, "account_charge_records")), input.course_id, chargeType, chargeHour, chargeAmount, cpId, input.organization_id, input.student_id, JSON.stringify({ ruleCode: "charge_create_rule", rule })]
+    [str(params.id, await nextTextId(client, schemaName, "account_charge_records")), input.course_id, chargeTypeId, chargeHour, chargeAmount, cpId, input.organization_id, input.student_id, dictId("charge_status", "CONFIRMED"), JSON.stringify({ ruleCode: "charge_create_rule", rule })]
   );
   if (chargeType === "NORMAL") {
     await assertUpdated(await client.query(
@@ -1622,13 +1630,13 @@ async function createRefund(client: pg.PoolClient, schemaName: string, params: R
     const contract = await one(client, `select paid_amount, total_amount, promotion_amount from ${table(schemaName, "contract")} where id = $1`, [contractId]);
     const nextPaid = Math.max(num(contract?.paid_amount) - refundAmount, 0);
     const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
-    const status = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+    const status = dictId("paid_status", nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID");
     await client.query(`update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, updated_at = now() where id = $3`, [nextPaid, status, contractId]);
   }
   if (contractId) {
     const { rows: allCps } = await client.query(`select coalesce(remaining_real_hour,0) as rh, coalesce(remaining_real_amount,0) as ra, coalesce(remaining_promotion_hour,0) as ph, coalesce(remaining_promotion_amount,0) as pa from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false`, [contractId]);
     const allZero = allCps.every((r) => num(r.rh) <= 0 && num(r.ra) <= 0 && num(r.ph) <= 0 && num(r.pa) <= 0);
-    if (allZero) await client.query(`update ${table(schemaName, "contract")} set contract_status = 'REFUNDED', updated_at = now() where id = $1`, [contractId]);
+    if (allZero) await client.query(`update ${table(schemaName, "contract")} set contract_status = $2, updated_at = now() where id = $1`, [contractId, dictId("contract_status", "REFUNDED")]);
   }
   if (refund && refundAmount > 0 && str(input.refund_way_config_id)) {
     const payWay = await one(client, `select pay_way_type from ${table(schemaName, "pay_way_config")} where id = $1 and deleted = false`, [input.refund_way_config_id]);
@@ -1656,21 +1664,21 @@ async function reverseCharge(client: pg.PoolClient, schemaName: string, params: 
   const operatorId = str(params.__userId ?? input.operator_id);
   const charge = await one(client, `select * from ${table(schemaName, "account_charge_records")} where id = $1 and deleted = false for update`, [chargeId]);
   if (!charge) throw new Error("扣费记录不存在");
-  if (str(charge.charge_status) === "REVERSED") throw new Error("该扣费记录已撤销");
+  if (dictBare(charge.charge_status) === "REVERSED") throw new Error("该扣费记录已撤销");
   const cpId = str(charge.contract_product_id);
   const reverseId = await nextTextId(client, schemaName, "account_charge_records");
   const cancelMeta = { reversedFrom: chargeId, cancelReason, operatorId, cancelledAt: new Date().toISOString(), syncAttendance: rule.cancelAttendanceOnChargeReverse !== false };
   await client.query(
     `insert into ${table(schemaName, "account_charge_records")}
       (id, course_id, charge_type, charge_hour, charge_amount, contract_product_id, organization_id, student_id, charge_status, reversed_record_id, cancel_reason, cancel_user_id, cancel_time, ext_json)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,'REVERSED',$9,$10,$11,now(),$12)`,
-    [reverseId, charge.course_id, charge.charge_type, -num(charge.charge_hour), -num(charge.charge_amount), cpId, charge.organization_id, charge.student_id, chargeId, cancelReason || null, operatorId || null, JSON.stringify(cancelMeta)]
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),$13)`,
+    [reverseId, charge.course_id, charge.charge_type, -num(charge.charge_hour), -num(charge.charge_amount), cpId, charge.organization_id, charge.student_id, dictId("charge_status", "REVERSED"), chargeId, cancelReason || null, operatorId || null, JSON.stringify(cancelMeta)]
   );
-  await client.query(`update ${table(schemaName, "account_charge_records")} set charge_status = 'REVERSED', cancel_reason = $2, cancel_user_id = $3, cancel_time = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $4::jsonb, updated_at = now() where id = $1`, [chargeId, cancelReason || null, operatorId || null, JSON.stringify(cancelMeta)]);
+  await client.query(`update ${table(schemaName, "account_charge_records")} set charge_status = $5, cancel_reason = $2, cancel_user_id = $3, cancel_time = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $4::jsonb, updated_at = now() where id = $1`, [chargeId, cancelReason || null, operatorId || null, JSON.stringify(cancelMeta), dictId("charge_status", "REVERSED")]);
   if (cpId) {
     const cp = await one(client, `select lock_version from ${table(schemaName, "contract_product")} where id = $1 and deleted = false for update`, [cpId]);
     if (!cp) throw new Error("合同产品不存在");
-    const chargeType = str(charge.charge_type);
+    const chargeType = dictBare(charge.charge_type);
     const hour = num(charge.charge_hour);
     const amount = num(charge.charge_amount);
     if (chargeType === "NORMAL") {
@@ -1683,7 +1691,7 @@ async function reverseCharge(client: pg.PoolClient, schemaName: string, params: 
   }
   let attendanceReset = false;
   if (str(charge.course_id) && str(charge.student_id) && rule.cancelAttendanceOnChargeReverse !== false) {
-    await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where course_id = $1 and student_id = $2 and deleted = false`, [charge.course_id, charge.student_id]);
+    await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = $3, attendance_time = null, updated_at = now() where course_id = $1 and student_id = $2 and deleted = false`, [charge.course_id, charge.student_id, dictId("attendance_status", "PENDING")]);
     attendanceReset = true;
   }
   return { reversed: true, originalChargeId: chargeId, reverseRecordId: reverseId, cancelReason, operatorId, attendanceReset };
@@ -1698,7 +1706,7 @@ async function previewCharge(client: pg.PoolClient, schemaName: string, params: 
   if (!cp) throw new Error("合同产品不存在");
   return {
     contractProductId: cpId,
-    chargeType: str(input.charge_type, "NORMAL"),
+    chargeType: dictBare(input.charge_type, "NORMAL"),
     availableRealHour: num(cp.remaining_real_hour),
     availableRealAmount: num(cp.remaining_real_amount),
     availablePromotionHour: num(cp.remaining_promotion_hour),
@@ -1783,13 +1791,14 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
     const refund = await one(client,
       `insert into ${table(schemaName, "refund_record")}
         (id, student_id, contract_product_id, contract_id, refund_type, proportion, refund_real_hour, refund_real_amount, refund_promotion_amount, refund_promotion_hour, refund_way_config_id, refund_time, remark, ext_json)
-       values ($1,$2,$3,$4,'CONTRACT',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        returning *`,
       [
         await nextTextId(client, schemaName, "refund_record"),
         contract.student_id,
         cp.id,
         contractId,
+        dictId("refund_type", "CONTRACT"),
         roundMoney(realProportion),
         cpRefundHour,
         cpRefundAmount,
@@ -1830,11 +1839,11 @@ async function contract_refund(client: pg.PoolClient, schemaName: string, params
 
   const nextPaid = Math.max(num(contract.paid_amount) - targetRefundAmount, 0);
   const payable = Math.max(num(contract.total_amount) - num(contract.promotion_amount), 0);
-  const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
+  const paidStatus = dictId("paid_status", nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID");
 
   const { rows: updatedCps } = await client.query(`select coalesce(remaining_real_hour,0) as rh, coalesce(remaining_real_amount,0) as ra, coalesce(remaining_promotion_hour,0) as ph, coalesce(remaining_promotion_amount,0) as pa from ${table(schemaName, "contract_product")} where contract_id = $1 and deleted = false`, [contractId]);
   const allZero = updatedCps.every((r) => num(r.rh) <= 0 && num(r.ra) <= 0 && num(r.ph) <= 0 && num(r.pa) <= 0);
-  const contractStatus = allZero ? "REFUNDED" : str(contract.contract_status);
+  const contractStatus = allZero ? dictId("contract_status", "REFUNDED") : str(contract.contract_status);
 
   await client.query(
     `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
@@ -1878,8 +1887,8 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
     const refundAmount = num(refund.refund_real_amount);
     const nextPaid = num(contract?.paid_amount) + refundAmount;
     const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
-    const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
-    const contractStatus = dictBare(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
+    const paidStatus = dictId("paid_status", nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID");
+    const contractStatus = dictBare(contract?.contract_status) === "REFUNDED" ? dictId("contract_status", "ACTIVE") : str(contract?.contract_status);
     await client.query(
       `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
       [nextPaid, paidStatus, contractStatus, contractId]
@@ -1891,8 +1900,8 @@ async function refund_delete(client: pg.PoolClient, schemaName: string, params: 
       const contract = await one(client, `select * from ${table(schemaName, "contract")} where id = $1 and deleted = false for update`, [cpContractId]);
       const nextPaid = num(contract?.paid_amount) + num(refund.refund_real_amount);
       const payable = Math.max(num(contract?.total_amount) - num(contract?.promotion_amount), 0);
-      const paidStatus = nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID";
-      const contractStatus = dictBare(contract?.contract_status) === "REFUNDED" ? "ACTIVE" : str(contract?.contract_status);
+      const paidStatus = dictId("paid_status", nextPaid <= 0 ? "UNPAID" : nextPaid >= payable ? "PAID" : "PART_PAID");
+      const contractStatus = dictBare(contract?.contract_status) === "REFUNDED" ? dictId("contract_status", "ACTIVE") : str(contract?.contract_status);
       await client.query(
         `update ${table(schemaName, "contract")} set paid_amount = $1, paid_status = $2, contract_status = $3, updated_at = now() where id = $4`,
         [nextPaid, paidStatus, contractStatus, cpContractId]
@@ -1954,19 +1963,19 @@ async function course_delete(client: pg.PoolClient, schemaName: string, params: 
     `select * from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false`,
     [courseId]
   );
-  const attendedStudents = students.filter((student) => str(student.attendance_status) === "PRESENT");
+  const attendedStudents = students.filter((student) => dictBare(student.attendance_status) === "PRESENT");
   if (attendedStudents.length && rule.allowDeleteWithAttendance === false) throw new Error("该排课已有考勤记录，不允许删除");
   if (rule.resetAttendanceOnDelete !== false) {
     for (const student of attendedStudents) {
       await client.query(
-        `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`,
-        [student.id]
+        `update ${table(schemaName, "generic_course_student")} set attendance_status = $2, attendance_time = null, updated_at = now() where id = $1`,
+        [student.id, dictId("attendance_status", "PENDING")]
       );
     }
   }
 
   await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where course_id = $1 and deleted = false`, [courseId]);
-  await client.query(`update ${table(schemaName, "generic_course")} set course_status = 'CANCELLED', deleted = true, updated_at = now() where id = $1`, [courseId]);
+  await client.query(`update ${table(schemaName, "generic_course")} set course_status = $2, deleted = true, updated_at = now() where id = $1`, [courseId, dictId("course_status", "CANCELLED")]);
 
   return { deleted: true, courseId, reversedCharges: rule.reverseChargesOnDelete === false ? 0 : charges.length, resetAttendance: rule.resetAttendanceOnDelete === false ? 0 : attendedStudents.length };
 }
@@ -1997,23 +2006,24 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     );
     if (!courseStudent) { failed.push({ studentId, reason: "学员不在课程中" }); continue; }
     if (stu.reverse_charge === true) {
-      const { rows: charges } = await client.query(`select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and deleted = false and coalesce(charge_status,'CONFIRMED') <> 'REVERSED'`, [courseId, studentId]);
+      const { rows: charges } = await client.query(`select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and deleted = false and coalesce(charge_status, $3) not in ($4, $5)`, [courseId, studentId, dictId("charge_status", "CONFIRMED"), "REVERSED", dictId("charge_status", "REVERSED")]);
       for (const charge of charges) await reverseCharge(client, schemaName, { id: charge.id, cancel_reason: "考勤页取消扣费", __userId: params.__userId }, { requireCancelReason: false, cancelAttendanceOnChargeReverse: false });
-      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`, [courseStudent.id]);
-      if (stu.cancel_attendance !== true && str(stu.attendance_status) !== "PENDING") {
+      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = $2, attendance_time = null, updated_at = now() where id = $1`, [courseStudent.id, dictId("attendance_status", "PENDING")]);
+      if (stu.cancel_attendance !== true && dictBare(stu.attendance_status) !== "PENDING") {
         succeeded.push({ studentId, reversedChargeCount: charges.length, attendanceStatus: "PENDING" });
         continue;
       }
     }
-    if (stu.cancel_attendance === true || str(stu.attendance_status) === "PENDING") {
-      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`, [courseStudent.id]);
+    if (stu.cancel_attendance === true || dictBare(stu.attendance_status) === "PENDING") {
+      await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = $2, attendance_time = null, updated_at = now() where id = $1`, [courseStudent.id, dictId("attendance_status", "PENDING")]);
       succeeded.push({ studentId, attendanceStatus: "PENDING", canceled: true });
       continue;
     }
-    if (str(courseStudent.attendance_status) === "PRESENT" && stu.reverse_charge !== true) { succeeded.push({ studentId, skipped: true, reason: "已签到，如需改判请先取消考勤/扣费" }); continue; }
-    const targetStatus = dictBare(stu.attendance_status ?? stu.status, "PRESENT");
-    const shouldCharge = targetStatus === "PRESENT" || (targetStatus === "ABSENT" && rule.absentCharge !== false) || (targetStatus === "LEAVE" && rule.leaveCharge === true);
-    if (!["PRESENT", "ABSENT", "LEAVE"].includes(targetStatus)) { failed.push({ studentId, reason: "不支持的考勤状态" }); continue; }
+    if (dictBare(courseStudent.attendance_status) === "PRESENT" && stu.reverse_charge !== true) { succeeded.push({ studentId, skipped: true, reason: "已签到，如需改判请先取消考勤/扣费" }); continue; }
+    const targetStatusValue = dictBare(stu.attendance_status ?? stu.status, "PRESENT");
+    const targetStatusId = dictId("attendance_status", targetStatusValue);
+    const shouldCharge = targetStatusValue === "PRESENT" || (targetStatusValue === "ABSENT" && rule.absentCharge !== false) || (targetStatusValue === "LEAVE" && rule.leaveCharge === true);
+    if (!["PRESENT", "ABSENT", "LEAVE"].includes(targetStatusValue)) { failed.push({ studentId, reason: "不支持的考勤状态" }); continue; }
     // 幂等防护：该学员本课次已有确认扣费（如已按缺勤扣费后改判/重复提交），只更新考勤状态，绝不重复扣费
     const existingCharge = await one(client,
       `select id from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false limit 1`,
@@ -2022,25 +2032,25 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
     if (existingCharge) {
       await client.query(
         `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), updated_at = now() where id = $2`,
-        [targetStatus, courseStudent.id]
+        [targetStatusId, courseStudent.id]
       );
-      succeeded.push({ studentId, attendanceStatus: targetStatus, chargeHour: 0, chargeAmount: 0, alreadyCharged: true });
+      succeeded.push({ studentId, attendanceStatus: targetStatusId, chargeHour: 0, chargeAmount: 0, alreadyCharged: true });
       continue;
     }
     if (attendanceMode === "attendance" && rule.deductCourseHourOnAttendance !== true) {
       await client.query(
         `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), updated_at = now() where id = $2`,
-        [targetStatus, courseStudent.id]
+        [targetStatusId, courseStudent.id]
       );
-      succeeded.push({ studentId, attendanceStatus: targetStatus, chargeHour: 0, chargeAmount: 0, attendanceOnly: true });
+      succeeded.push({ studentId, attendanceStatus: targetStatusId, chargeHour: 0, chargeAmount: 0, attendanceOnly: true });
       continue;
     }
     if (!shouldCharge) {
       await client.query(
         `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), updated_at = now() where id = $2`,
-        [targetStatus, courseStudent.id]
+        [targetStatusId, courseStudent.id]
       );
-      succeeded.push({ studentId, attendanceStatus: targetStatus, chargeHour: 0, chargeAmount: 0 });
+      succeeded.push({ studentId, attendanceStatus: targetStatusId, chargeHour: 0, chargeAmount: 0 });
       continue;
     }
     if (!cpId) { failed.push({ studentId, reason: "未选择合同产品" }); continue; }
@@ -2064,12 +2074,12 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
 
     await client.query(
       `update ${table(schemaName, "generic_course_student")} set attendance_status = $1, attendance_time = now(), contract_product_id = $2, updated_at = now() where id = $3`,
-      [targetStatus, cpId, courseStudent.id]
+      [targetStatusId, cpId, courseStudent.id]
     );
 
     await createCharge(client, schemaName, {
       course_id: courseId,
-      charge_type: "NORMAL",
+      charge_type: dictId("charge_type", "NORMAL"),
       charge_hour: rowCourseHour,
       charge_amount: chargeAmount,
       contract_product_id: cpId,
@@ -2077,13 +2087,14 @@ async function attendance_check_in(client: pg.PoolClient, schemaName: string, pa
       organization_id: course.organization_id
     }, rule);
 
-    succeeded.push({ studentId, attendanceStatus: targetStatus, contractProductId: cpId, chargeHour: rowCourseHour, chargeAmount });
+    succeeded.push({ studentId, attendanceStatus: targetStatusId, contractProductId: cpId, chargeHour: rowCourseHour, chargeAmount });
   }
 
-  const pending = await one(client, `select count(*)::int as cnt from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false and coalesce(attendance_status,'PENDING') = 'PENDING'`, [courseId]);
+  const pendingStatus = dictId("attendance_status", "PENDING");
+  const pending = await one(client, `select count(*)::int as cnt from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false and coalesce(attendance_status,$2) in ($2, $3)`, [courseId, pendingStatus, "PENDING"]);
   await client.query(
     `update ${table(schemaName, "generic_course")} set course_status = $2, updated_at = now() where id = $1 and course_status not in ('CANCELLED', 'course_status.CANCELLED')`,
-    [courseId, num(pending?.cnt) === 0 ? "FINISHED" : "SCHEDULED"]
+    [courseId, dictId("course_status", num(pending?.cnt) === 0 ? "FINISHED" : "SCHEDULED")]
   );
   return { courseId, succeeded, failed };
 }
@@ -2099,7 +2110,7 @@ async function attendance_cancel(client: pg.PoolClient, schemaName: string, para
     [courseId, studentId]
   );
   if (!courseStudent) throw new Error("学员不在课程中");
-  if (str(courseStudent.attendance_status) !== "PRESENT") throw new Error("学员未签到，无法取消考勤");
+  if (dictBare(courseStudent.attendance_status) !== "PRESENT") throw new Error("学员未签到，无法取消考勤");
 
   const { rows: charges } = await client.query(
     `select * from ${table(schemaName, "account_charge_records")} where course_id = $1 and student_id = $2 and charge_status in ('CONFIRMED', 'charge_status.CONFIRMED') and deleted = false for update`,
@@ -2110,8 +2121,8 @@ async function attendance_cancel(client: pg.PoolClient, schemaName: string, para
   }
 
   await client.query(
-    `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`,
-    [courseStudent.id]
+    `update ${table(schemaName, "generic_course_student")} set attendance_status = $2, attendance_time = null, updated_at = now() where id = $1`,
+    [courseStudent.id, dictId("attendance_status", "PENDING")]
   );
 
   return { cancelled: true, courseId, studentId, reversedCharges: charges.length };
@@ -2127,10 +2138,10 @@ async function createLeaveRecord(client: pg.PoolClient, schemaName: string, para
     `insert into ${table(schemaName, "course_leave_record")}
       (id, course_id, student_id, leave_type, leave_time, leave_reason, status, organization_id, created_by, ext_json)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
-    [leaveId, courseId || null, studentId, str(input.leave_type, "PERSONAL"), str(input.leave_time, new Date().toISOString()), input.leave_reason, str(input.status, "APPROVED"), input.organization_id, str(params.__userId) || null, JSON.stringify({ ruleCode: "leave_create_rule", rule })]
+    [leaveId, courseId || null, studentId, dictId("leave_type", input.leave_type || "PERSONAL"), str(input.leave_time, new Date().toISOString()), input.leave_reason, dictId("status", input.status || "APPROVED"), input.organization_id, str(params.__userId) || null, JSON.stringify({ ruleCode: "leave_create_rule", rule })]
   );
-  if (courseId && str(row?.status) === "APPROVED" && rule.approvedLeaveUpdatesAttendance !== false) {
-    await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = 'LEAVE', attendance_time = now(), updated_at = now() where course_id = $1 and student_id = $2 and deleted = false`, [courseId, studentId]);
+  if (courseId && dictBare(row?.status) === "APPROVED" && rule.approvedLeaveUpdatesAttendance !== false) {
+    await client.query(`update ${table(schemaName, "generic_course_student")} set attendance_status = $3, attendance_time = now(), updated_at = now() where course_id = $1 and student_id = $2 and deleted = false`, [courseId, studentId, dictId("attendance_status", "LEAVE")]);
   }
   return row;
 }
@@ -2180,8 +2191,8 @@ async function leave_delete(client: pg.PoolClient, schemaName: string, params: R
       );
       if (charge) throw new Error("该请假已产生扣费，请先在考勤页取消扣费，再删除请假记录");
       await client.query(
-        `update ${table(schemaName, "generic_course_student")} set attendance_status = 'PENDING', attendance_time = null, updated_at = now() where id = $1`,
-        [courseStudent.id]
+        `update ${table(schemaName, "generic_course_student")} set attendance_status = $2, attendance_time = null, updated_at = now() where id = $1`,
+        [courseStudent.id, dictId("attendance_status", "PENDING")]
       );
       attendanceReset = 1;
     }
@@ -2228,8 +2239,8 @@ async function linkStudentToFutureCourses(
     await client.query(
       `insert into ${table(schemaName, "generic_course_student")}
         (id, course_id, student_id, attendance_status, contract_product_id, mini_class_id, one_on_n_group_id)
-       values ($1,$2,$3,'PENDING',$4,$5,$6)`,
-      [await nextTextId(client, schemaName, "generic_course_student"), course.id, studentId, cpId, scope.miniClassId ?? null, scope.oneOnNGroupId ?? null]
+       values ($1,$2,$3,$4,$5,$6,$7)`,
+      [await nextTextId(client, schemaName, "generic_course_student"), course.id, studentId, dictId("attendance_status", "PENDING"), cpId, scope.miniClassId ?? null, scope.oneOnNGroupId ?? null]
     );
     linked += 1;
   }
@@ -2250,7 +2261,7 @@ async function transferClassStudents(client: pg.PoolClient, schemaName: string, 
   const targetColumn = isMini ? "mini_class_id" : "one_on_n_group_id";
   const target = await one(client, `select * from ${table(schemaName, isMini ? "mini_class" : "one_on_n_group")} where id = $1 and deleted = false for update`, [toId]);
   if (!target) throw new Error("目标班级/小组不存在");
-  if (["CLOSED", "FULL"].includes(str(target.status))) throw new Error("目标班级/小组已满班或已结班");
+  if (["CLOSED", "FULL"].includes(dictBare(target.status))) throw new Error("目标班级/小组已满班或已结班");
   const count = await one(client, `select count(*)::int as cnt from ${table(schemaName, memberTable)} where ${targetColumn} = $1 and deleted = false`, [toId]);
   if (num(count?.cnt) + studentIds.length > num(target.capacity, 999)) throw new Error("目标班级/小组容量不足");
   let transferred = 0;
@@ -2259,7 +2270,7 @@ async function transferClassStudents(client: pg.PoolClient, schemaName: string, 
     if (!record) continue;
     await cleanupRemovedStudentCourses(client, schemaName, { studentId, miniClassId: isMini ? fromId : undefined, oneOnNGroupId: isMini ? undefined : fromId, policy: str(rule.transferFutureCoursePolicy, "delete_uncharged_course_students") });
     await client.query(`update ${table(schemaName, memberTable)} set deleted = true, updated_at = now() where id = $1`, [record.id]);
-    await client.query(`insert into ${table(schemaName, memberTable)} (id, ${targetColumn}, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`, [await nextTextId(client, schemaName, memberTable), toId, studentId]);
+    await client.query(`insert into ${table(schemaName, memberTable)} (id, ${targetColumn}, student_id, join_date, status) values ($1,$2,$3,current_date,$4)`, [await nextTextId(client, schemaName, memberTable), toId, studentId, dictId("status", "ACTIVE")]);
     const historyType = isMini ? "mini_class" : "one_on_n_group";
     await writeClassStudentHistory(client, schemaName, { targetType: historyType, targetId: fromId, studentId, changeType: "LEAVE", reason: input.reason, ext: { transferTo: toId, linkedBy: "classStudent.transfer" } });
     await writeClassStudentHistory(client, schemaName, { targetType: historyType, targetId: toId, studentId, changeType: "JOIN", reason: input.reason, ext: { transferFrom: fromId, linkedBy: "classStudent.transfer" } });
@@ -2273,7 +2284,7 @@ async function changeClassStatus(client: pg.PoolClient, schemaName: string, para
   const input = dataOf(params);
   const targetType = str(input.target_type, String(params.target_type ?? "mini_class"));
   const id = str(input.id ?? params.id ?? input.target_id);
-  const status = str(input.target_status ?? input.status);
+  const status = dictId("status", input.target_status ?? input.status);
   if (!id || !status) throw new Error("缺少班级/小组 ID 或状态");
   const targetTable = targetType === "one_on_n_group" ? "one_on_n_group" : "mini_class";
   await client.query(`update ${table(schemaName, targetTable)} set status = $1, updated_at = now() where id = $2 and deleted = false`, [status, id]);
@@ -2300,8 +2311,8 @@ async function mini_class_add_student(client: pg.PoolClient, schemaName: string,
   for (const studentId of studentIds) {
     if (existingSet.has(studentId)) continue;
     await client.query(
-      `insert into ${table(schemaName, "mini_class_student")} (id, mini_class_id, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`,
-      [await nextTextId(client, schemaName, "mini_class_student"), miniClassId, studentId]
+      `insert into ${table(schemaName, "mini_class_student")} (id, mini_class_id, student_id, join_date, status) values ($1,$2,$3,current_date,$4)`,
+      [await nextTextId(client, schemaName, "mini_class_student"), miniClassId, studentId, dictId("status", "ACTIVE")]
     );
     await writeClassStudentHistory(client, schemaName, { targetType: "mini_class", targetId: miniClassId, studentId, changeType: "JOIN", reason: input.reason, ext: { linkedBy: "miniClass.addStudent" } });
     linkedCourses += await linkStudentToFutureCourses(client, schemaName, studentId, { miniClassId, productId: miniClass.product_id, grade: miniClass.grade, subject: miniClass.subject }, rule);
@@ -2346,8 +2357,8 @@ async function one_on_n_group_add_student(client: pg.PoolClient, schemaName: str
   for (const studentId of studentIds) {
     if (existingSet.has(studentId)) continue;
     await client.query(
-      `insert into ${table(schemaName, "one_on_n_group_student")} (id, one_on_n_group_id, student_id, join_date, status) values ($1,$2,$3,current_date,'ACTIVE')`,
-      [await nextTextId(client, schemaName, "one_on_n_group_student"), groupId, studentId]
+      `insert into ${table(schemaName, "one_on_n_group_student")} (id, one_on_n_group_id, student_id, join_date, status) values ($1,$2,$3,current_date,$4)`,
+      [await nextTextId(client, schemaName, "one_on_n_group_student"), groupId, studentId, dictId("status", "ACTIVE")]
     );
     await writeClassStudentHistory(client, schemaName, { targetType: "one_on_n_group", targetId: groupId, studentId, changeType: "JOIN", reason: input.reason, ext: { linkedBy: "oneOnNGroup.addStudent" } });
     linkedCourses += await linkStudentToFutureCourses(client, schemaName, studentId, { oneOnNGroupId: groupId, grade: group.grade, subject: group.subject }, rule);
@@ -2383,12 +2394,13 @@ async function cancelCourse(client: pg.PoolClient, schemaName: string, params: R
     [courseId]
   );
   if (charge) throw new Error("该排课已有确认扣费，请先取消扣费，或使用删除排课（会同步冲销扣费）");
+  const attendedValues = ["PRESENT", "ABSENT", "LEAVE"].flatMap((item) => [item, dictId("attendance_status", item)]);
   const attended = await one(client,
-    `select id from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false and attendance_status in ('PRESENT','ABSENT','LEAVE') limit 1`,
-    [courseId]
+    `select id from ${table(schemaName, "generic_course_student")} where course_id = $1 and deleted = false and attendance_status = any($2::text[]) limit 1`,
+    [courseId, attendedValues]
   );
   if (attended) throw new Error("该排课已有考勤记录，请先取消考勤");
-  await client.query(`update ${table(schemaName, "generic_course")} set course_status = 'CANCELLED', updated_at = now() where id = $1 and deleted = false`, [courseId]);
+  await client.query(`update ${table(schemaName, "generic_course")} set course_status = $2, updated_at = now() where id = $1 and deleted = false`, [courseId, dictId("course_status", "CANCELLED")]);
   return { cancelled: true, courseId };
 }
 
@@ -2412,7 +2424,7 @@ async function applyHolidayToCourses(client: pg.PoolClient, schemaName: string, 
   if (blockAttendedOrCharged) {
     where.push(`not exists (
       select 1 from ${table(schemaName, "generic_course_student")} cs
-      where cs.course_id = c.id and cs.deleted = false and cs.attendance_status in ('PRESENT','ABSENT','LEAVE')
+      where cs.course_id = c.id and cs.deleted = false and cs.attendance_status in ('PRESENT','ABSENT','LEAVE','attendance_status.PRESENT','attendance_status.ABSENT','attendance_status.LEAVE')
     )`);
     where.push(`not exists (
       select 1 from ${table(schemaName, "account_charge_records")} acr
@@ -2424,9 +2436,9 @@ async function applyHolidayToCourses(client: pg.PoolClient, schemaName: string, 
   if (mode === "cancel") {
     const { rows } = await client.query(
       `update ${table(schemaName, "generic_course")} c
-       set course_status = 'CANCELLED', updated_at = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $${values.length + 1}::jsonb
+       set course_status = $${values.length + 1}, updated_at = now(), ext_json = coalesce(ext_json,'{}'::jsonb) || $${values.length + 2}::jsonb
        where c.id in (${candidateSql}) returning id`,
-      [...values, JSON.stringify({ holidayId, holidayAction: "cancel" })]
+      [...values, dictId("course_status", "CANCELLED"), JSON.stringify({ holidayId, holidayAction: "cancel" })]
     );
     return { holidayId, mode, matched: candidates.rowCount, affected: rows.length, courseIds: rows.map((row) => row.id) };
   }
@@ -2452,7 +2464,7 @@ async function saveCourseStudents(client: pg.PoolClient, schemaName: string, par
   const toAdd = newStudentIds.filter((id: string) => !existingSet.has(id));
   const toRemove = [...existingSet].filter((id) => !newStudentIds.includes(id));
   for (const studentId of toAdd) {
-    await client.query(`insert into ${table(schemaName, "generic_course_student")} (id, course_id, student_id, attendance_status, contract_product_id) values ($1,$2,$3,'PENDING',$4)`, [await nextTextId(client, schemaName, "generic_course_student"), courseId, studentId, input.contract_product_id]);
+    await client.query(`insert into ${table(schemaName, "generic_course_student")} (id, course_id, student_id, attendance_status, contract_product_id) values ($1,$2,$3,$4,$5)`, [await nextTextId(client, schemaName, "generic_course_student"), courseId, studentId, dictId("attendance_status", "PENDING"), input.contract_product_id]);
   }
   for (const studentId of toRemove) {
     await client.query(`update ${table(schemaName, "generic_course_student")} set deleted = true, updated_at = now() where course_id = $1 and student_id = $2`, [courseId, studentId]);
@@ -2649,7 +2661,7 @@ async function approveApprovalTask(client: pg.PoolClient, schemaName: string, pa
   if (!taskId) throw new Error("缺少审批任务 ID");
   const task = await one(client, `select * from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [taskId]);
   if (!task) throw new Error("审批任务不存在");
-  if (task.status !== "PENDING") throw new Error("审批任务不是待审批状态");
+  if (dictBare(task.status) !== "PENDING") throw new Error("审批任务不是待审批状态");
   if (task.current_approver_user_id && userId && String(task.current_approver_user_id) !== userId) throw new Error("当前用户不是此节点审批人");
   const form = asObject(task.form_json);
   const steps = asArray(form.steps);
@@ -2662,7 +2674,7 @@ async function approveApprovalTask(client: pg.PoolClient, schemaName: string, pa
     await client.query(`update ${table(schemaName, "approval_task")} set current_step_index = $1, current_approver_user_id = $2, updated_at = now() where id = $3`, [stepIndex + 1, nextApprover, taskId]);
     return { taskId, status: "PENDING", currentStepIndex: stepIndex + 1, currentApproverUserId: nextApprover };
   }
-  await client.query(`update ${table(schemaName, "approval_task")} set status = 'APPROVED', current_approver_user_id = null, approved_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId]);
+  await client.query(`update ${table(schemaName, "approval_task")} set status = $2, current_approver_user_id = null, approved_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId, dictId("approval_status", "APPROVED")]);
   let businessResult: unknown;
   const originalCommand = str(form.originalCommand) as CommandDsl["command"];
   if (originalCommand) {
@@ -2682,10 +2694,10 @@ async function rejectApprovalTask(client: pg.PoolClient, schemaName: string, par
   if (!taskId) throw new Error("缺少审批任务 ID");
   const task = await one(client, `select * from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [taskId]);
   if (!task) throw new Error("审批任务不存在");
-  if (task.status !== "PENDING") throw new Error("审批任务不是待审批状态");
+  if (dictBare(task.status) !== "PENDING") throw new Error("审批任务不是待审批状态");
   const form = asObject(task.form_json);
   await insertApprovalLog(client, schemaName, taskId, "REJECT", userId, str(input.comment ?? input.reason, "驳回"), asArray(form.steps)[num(task.current_step_index)], {});
-  await client.query(`update ${table(schemaName, "approval_task")} set status = 'REJECTED', current_approver_user_id = null, rejected_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId]);
+  await client.query(`update ${table(schemaName, "approval_task")} set status = $2, current_approver_user_id = null, rejected_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId, dictId("approval_status", "REJECTED")]);
   return { taskId, status: "REJECTED" };
 }
 
@@ -2696,10 +2708,10 @@ async function cancelApprovalTask(client: pg.PoolClient, schemaName: string, par
   if (!taskId) throw new Error("缺少审批任务 ID");
   const task = await one(client, `select * from ${table(schemaName, "approval_task")} where id = $1 and deleted = false for update`, [taskId]);
   if (!task) throw new Error("审批任务不存在");
-  if (task.status !== "PENDING") throw new Error("只有待审批任务可撤回");
+  if (dictBare(task.status) !== "PENDING") throw new Error("只有待审批任务可撤回");
   if (task.applicant_user_id && userId && String(task.applicant_user_id) !== userId) throw new Error("只有申请人可以撤回审批");
   await insertApprovalLog(client, schemaName, taskId, "CANCEL", userId, str(input.comment ?? input.reason, "撤回"), undefined, {});
-  await client.query(`update ${table(schemaName, "approval_task")} set status = 'CANCELED', current_approver_user_id = null, canceled_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId]);
+  await client.query(`update ${table(schemaName, "approval_task")} set status = $2, current_approver_user_id = null, canceled_at = now(), completed_at = now(), updated_at = now() where id = $1`, [taskId, dictId("approval_status", "CANCELED")]);
   return { taskId, status: "CANCELED" };
 }
 
