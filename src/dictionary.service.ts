@@ -232,6 +232,12 @@ export async function seedSystemDictionaries() {
         );
       }
       await pool.query(
+        `delete from admin.dictionary_item
+          where id = $1
+            and not (dict_code = $2 and schema_scope = 'admin' and schema_name = '' and item_value = $3)`,
+        [itemId, dictCode, itemValue]
+      );
+      await pool.query(
         `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
          values($1,$2,$3,$4,'admin','',true,true,$5,'ACTIVE',$6,false)
          on conflict (dict_code, schema_name, item_value) do update
