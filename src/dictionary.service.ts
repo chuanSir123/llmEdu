@@ -215,6 +215,22 @@ export async function seedSystemDictionaries() {
   for (const [dictCode, items] of Object.entries(SYSTEM_DICTIONARIES)) {
     sort = 10;
     for (const [itemValue, item] of Object.entries(items)) {
+      const itemId = dictionaryItemId(dictCode, itemValue);
+      const suffixCollapsedId = dictionaryItemId(dictCode, dictionaryItemValue(itemValue));
+      if (suffixCollapsedId !== itemId) {
+        await pool.query(
+          `delete from admin.dictionary_item
+            where id = $1 and dict_code = $2 and schema_scope = 'admin' and schema_name = '' and item_value <> $3`,
+          [suffixCollapsedId, dictCode, itemValue]
+        );
+        await pool.query(
+          `update admin.dictionary_item
+              set id = $1, updated_at = now()
+            where id = $2 and dict_code = $3 and schema_scope = 'admin' and schema_name = '' and item_value = $4
+              and not exists (select 1 from admin.dictionary_item where id = $1)`,
+          [itemId, suffixCollapsedId, dictCode, itemValue]
+        );
+      }
       await pool.query(
         `insert into admin.dictionary_item(id, dict_code, item_value, item_label, schema_scope, schema_name, is_system, locked, sort_no, status, metadata_json, deleted)
          values($1,$2,$3,$4,'admin','',true,true,$5,'ACTIVE',$6,false)
@@ -227,7 +243,7 @@ export async function seedSystemDictionaries() {
                metadata_json = admin.dictionary_item.metadata_json || excluded.metadata_json,
                deleted = false,
                updated_at = now()`,
-        [dictionaryItemId(dictCode, itemValue), dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
+        [itemId, dictCode, itemValue, item.label, sort, JSON.stringify(item.metadata ?? {})]
       );
       sort += 10;
     }
