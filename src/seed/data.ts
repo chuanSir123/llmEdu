@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { env } from "../config/env.js";
 import { dictionaryItemId, DICTIONARY_FIELD_ALIASES, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 import { businessRuleEditorSchema } from "../business-rule-editor-schema.js";
+import { inferForeignKeyMeta } from "../common/foreign-key-meta.js";
 
 export const modules = [
   ["frontdesk", "前台", "business", "快速入口、待办和检索", 10, "LayoutDashboard"],
@@ -201,12 +202,29 @@ function businessTimeField(page: Pick<PageSeed, "fields" | "table">) {
 }
 
 
+function shouldDefaultFilter(field: Field) {
+  if (field.filter) return true;
+  if (field.hidden) return false;
+  const dictCode = dictCodeForField(field);
+  if (dictCode && (statusFields.has(field.key) || field.key.endsWith("_type") || field.key.endsWith("_status"))) return true;
+  if (inferForeignKeyMeta(field.key)) return true;
+  return ["name", "title", "contact", "contract_no", "order_no", "coupon_code", "course_title", "task_title", "channel_name", "activity_name", "goods_name", "page_title", "rule_name", "flow_name"].includes(field.key);
+}
+
+function filterLabelFor(page: PageSeed, field: Field) {
+  if (!inferForeignKeyMeta(field.key)) return field.label;
+  const displayKey = inferForeignKeyMeta(field.key)?.displayKey;
+  const displayField = page.fields.find((item) => item.key === displayKey && !item.hidden);
+  if (displayField) return displayField.label;
+  return field.label.replace(/ID$/, "").replace(/id$/i, "").trim() || field.label;
+}
+
 function apiFiltersFor(page: PageSeed) {
   const timeField = businessTimeField(page);
   const filters: Array<string | { key: string; field: string; type?: string; op?: "eq" | "ilike" | "between" | "in" | "gt" | "gte" | "lt" | "lte"; dictCode?: string; optionSource?: Record<string, unknown> }> = [
     { key: timeField, field: timeField, type: "date_range", op: "between" }
   ];
-  for (const field of page.fields.filter((item) => item.filter && item.key !== timeField)) {
+  for (const field of page.fields.filter((item) => shouldDefaultFilter(item) && item.key !== timeField)) {
     const dictCode = dictCodeForField(field);
     // ID 类过滤（跨页跳转/详情区块联动）必须精确匹配，ilike 子串匹配会把 100001 误命中 1000012
     const isIdFilter = field.key === "id" || field.key.endsWith("_id");
@@ -226,11 +244,17 @@ function apiFiltersFor(page: PageSeed) {
   return filters;
 }
 
+function optionSourceForField(field: Field) {
+  const meta = inferForeignKeyMeta(field.key);
+  if (meta) return { pageCode: meta.pageCode, apiCode: meta.apiCode, labelField: meta.labelField };
+  return undefined;
+}
+
 function fieldComponent(field: Field) {
   const base = isLongTextField(field)
     ? { type: "textarea", span: "full" as const, rows: 4 }
     : { type: field.type ?? "text" };
-  const optionSource =
+  const optionSource = optionSourceForField(field) ?? (
     field.key === "student_id"
       ? studentSelect
       : field.key === "organization_id"
@@ -247,7 +271,7 @@ function fieldComponent(field: Field) {
                   ? miniClassSelect
                   : field.key === "one_on_n_group_id"
                     ? oneOnNGroupSelect
-                    : undefined;
+                    : undefined);
   const dictCode = dictCodeForField(field);
   const dictionary = dictCode ? { dictCode, optionSource: dictionaryOption(dictCode) } : {};
   return optionSource ? { ...base, ...dictionary, optionSource } : { ...base, ...dictionary };
@@ -2480,14 +2504,17 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
   );
   const timeField = businessTimeField(page);
   const timeFieldSeed = page.fields.find((field) => field.key === timeField);
-  const fieldFilters = page.fields.filter((field) => field.filter && field.key !== timeField).map((field) => {
+  const fieldFilters = page.fields.filter((field) => shouldDefaultFilter(field) && field.key !== timeField).map((field) => {
     const dictCode = dictCodeForField(field);
+    const fkOptionSource = optionSourceForField(field);
+    const label = filterLabelFor(page, field);
     return {
       key: field.key,
-      label: field.label,
-      type: page.page === "course_week_schedule" && field.key === "course_date" ? "date_range" : dictCode ? "select" : field.type ?? "text",
-      placeholder: `请输入${field.label}`,
-      ...(dictCode ? { dictCode, optionSource: dictionaryOption(dictCode) } : {})
+      label,
+      type: page.page === "course_week_schedule" && field.key === "course_date" ? "date_range" : dictCode || fkOptionSource ? "select" : field.type ?? "text",
+      placeholder: fkOptionSource ? `请选择${label}` : `请输入${label}`,
+      ...(dictCode ? { dictCode, optionSource: dictionaryOption(dictCode) } : {}),
+      ...(fkOptionSource ? { optionSource: fkOptionSource, searchable: true } : {})
     };
   });
   const filters = [
@@ -2568,7 +2595,8 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         width: columnWidth(field),
         align: columnAlign(field),
         badge: field.badge ?? statusFields.has(field.key),
-        ...(dictCodeForField(field) ? { dictCode: dictCodeForField(field) } : {})
+        ...(dictCodeForField(field) ? { dictCode: dictCodeForField(field) } : {}),
+        ...(inferForeignKeyMeta(field.key) ? { displayKey: inferForeignKeyMeta(field.key)?.displayKey } : {})
       })).filter((field) => !field.hidden),
       rowActions: [
         { actionCode: `${page.page}.detail`, label: "详情", type: "open_modal" },
