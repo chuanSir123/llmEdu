@@ -375,7 +375,7 @@ export function GenericFormRenderer({
           labelAlign === "left" && field.type !== "textarea"
             ? "grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 text-sm"
             : "flex flex-col gap-1 text-sm";
-        const isReadonly = field.computed && !field.editable;
+        const isReadonly = (field.computed || field.readonly) && !field.editable;
         return (
           <label key={field.key} className={`${labelClass} ${spanClass(field)}`}>
             <span className="text-sm text-[#5f6b7a]">
