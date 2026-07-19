@@ -294,7 +294,11 @@ const preStoreFields = [
   { key: "remark", label: "备注", type: "textarea", span: "full" as const, rows: 3 }
 ];
 
-const contextPreStoreFields = preStoreFields.filter((field) => !["student_id"].includes(field.key));
+const contextPreStoreFields = [
+  { key: "student_id", label: "学员", type: "text", hidden: true },
+  { key: "student_name", label: "学员", type: "text", readonly: true },
+  ...preStoreFields.filter((field) => !["student_id"].includes(field.key))
+];
 
 const followupCreateFields = [
   { key: "student_id", label: "学员", type: "text", hidden: true },
@@ -2808,10 +2812,10 @@ export function pageDsl(page: (typeof pages)[number] | (typeof adminPages)[numbe
         label: "预存",
         type: "open_modal",
         apiCode: "funds_history.create",
-        modalTitle: "学员预存",
+        modalTitle: "为学员预存",
         fields: contextPreStoreFields,
         defaultValues: { funds_type: "PRE_STORE", transaction_time: "$now" },
-        mapRowToValue: { student_id: "id", organization_id: "organization_id" }
+        mapRowToValue: { student_id: "id", student_name: "name", organization_id: "organization_id" }
       },
       {
         actionCode: "student_list.followup",
