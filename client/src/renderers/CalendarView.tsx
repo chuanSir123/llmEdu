@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ActionDsl, PageDsl } from "../dsl/types";
-import { dictionaryDisplayFor } from "../dsl/dictionaryLabels";
+import { dictionaryDisplayFor, dictionaryItemValue } from "../dsl/dictionaryLabels";
 import { evaluateWhen } from "../dsl/conditions";
 import { isDangerAction } from "../dsl/actionVariant";
 import { ActionRenderer } from "./ActionRenderer";
@@ -98,8 +98,8 @@ export function CalendarView({
   }, [visibleRows, dateField]);
 
   const summary = useMemo(() => {
-    const finished = visibleRows.filter((row) => String(row.course_status ?? "") === "FINISHED").length;
-    const charged = visibleRows.filter((row) => String(row.charge_status ?? "") === "CONFIRMED").length;
+    const finished = visibleRows.filter((row) => dictionaryItemValue(row.course_status) === "FINISHED").length;
+    const charged = visibleRows.filter((row) => dictionaryItemValue(row.charge_status) === "CONFIRMED").length;
     const notStarted = visibleRows.length - finished;
     const totalHour = visibleRows.reduce((sum, row) => sum + Number(row.course_hour ?? 0), 0);
     const totalAmount = visibleRows.reduce((sum, row) => sum + Number(row.charge_amount ?? 0), 0);

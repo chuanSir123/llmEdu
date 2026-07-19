@@ -4,7 +4,7 @@ import type { ActionDsl, ActionResult, AfterSuccessDsl, FieldDsl, ModalDsl as Mo
 import { sortWithOrder } from "../dsl/sortWithOrder";
 import { evaluateWhen } from "../dsl/conditions";
 import { isDangerAction } from "../dsl/actionVariant";
-import { dictionaryLabelFor } from "../dsl/dictionaryLabels";
+import { dictionaryItemValue, dictionaryLabelFor } from "../dsl/dictionaryLabels";
 import { useToast } from "../context/ToastContext";
 import { useConfirm } from "../context/ConfirmContext";
 import { token } from "../styles/designTokens";
@@ -220,9 +220,12 @@ export function GenericPageRenderer({
       const meta: Record<string, Record<string, unknown>> = {};
       for (const row of data.rows ?? []) {
         const optionId = String(row.value ?? "");
+        const itemValue = String(row.itemValue ?? row.item_value ?? "");
         const label = String(row.label ?? row.item_label ?? optionId);
         if (optionId) labels[optionId] = label;
+        if (itemValue) labels[itemValue] = label;
         if (optionId) ids[optionId] = optionId;
+        if (itemValue && optionId) ids[itemValue] = optionId;
         if (optionId) meta[optionId] = row.metadata ?? row.metadata_json ?? {};
       }
       return [dictCode, { labels, ids, meta }] as const;
@@ -570,7 +573,7 @@ export function GenericPageRenderer({
             ? { ...student, attendance_status: "PENDING", cancel_attendance: true }
             : extra.__attendanceMode === "cancel_charge"
               ? { ...student, reverse_charge: true }
-              : (extra.__attendanceMode === "attendance" || extra.__attendanceMode === "charge") && String(student.attendance_status ?? "PRESENT") === "PENDING"
+              : (extra.__attendanceMode === "attendance" || extra.__attendanceMode === "charge") && dictionaryItemValue(student.attendance_status ?? "PRESENT") === "PENDING"
                 ? { ...student, attendance_status: "PRESENT" }
                 : student)
       } : modal.value;

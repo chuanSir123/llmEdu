@@ -10,7 +10,7 @@ import type { SessionUser } from "../types.js";
 import { assignLead, claimLead, createLeadStudent, createStudentFollowup, createTrialLesson, recycleLead } from "../recruit.service.js";
 import { bindWechatOpenid, claimCoupon, closeMallGroupBuy, closeMallOrder, completeMallGroupBuy, completeWechatAuthorization, createMallOrder, createWechatAuthorizeUrl, deleteWechatThirdPlatformApp, handleMallPayCallback, leaveMallGroupBuy, listAvailableCoupons, processMarketingEvent, processMarketingOutbox, publishWechatMenu, queryMallOrderStatus, queryWechatThirdPlatformApps, reconcileMallOrder, refreshWechatToken, refundMallOrder, retryMallOrderFulfillment, retryWechatPushFailures, saveWechatThirdPlatformApp, sendWechatTemplate, setDefaultWechatBinding, submitLandingLead, syncWechatAuthorizationStatus, unbindWechatAccount } from "../marketing.service.js";
 import { BUSINESS_API_EVENT_MAP, processBusinessEventRules } from "./business-event.service.js";
-import { deleteTenantDictionaryItem, listDictionaryOptions, normalizeDictionaryConfigValues, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, systemDictionaryLabel, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
+import { deleteTenantDictionaryItem, dictionaryItemValue, listDictionaryOptions, normalizeDictionaryConfigValues, normalizeDictionaryInputValues, queryDictionaryItems, saveTenantDictionaryItem, systemDictionaryLabel, SYSTEM_DICTIONARIES } from "../dictionary.service.js";
 import { TEMPLATE_SCHEMA } from "../common/template-schema.js";
 import { isCoreBusinessRule } from "../common/dsl-constants.js";
 import { validateDeclarativeRuleJson } from "../common/declarative-rules.js";
@@ -270,7 +270,7 @@ async function queryApprovalTasks(schemaName: string, params: Record<string, unk
   if (filters.business_type) { values.push(filters.business_type); where.push(`t.business_type = $${values.length}`); }
   if (params.view === "pending" && user?.userId) { values.push(user.userId); where.push(`t.current_approver_user_id = $${values.length}`); where.push("t.status in ('PENDING', 'approval_status.PENDING')"); }
   if (params.view === "submitted" && user?.userId) { values.push(user.userId); where.push(`t.applicant_user_id = $${values.length}`); }
-  if (params.view === "done") { where.push("t.status in ('APPROVED','REJECTED','CANCELED')"); }
+  if (params.view === "done") { where.push("t.status in ('APPROVED','REJECTED','CANCELED','approval_status.APPROVED','approval_status.REJECTED','approval_status.CANCELED')"); }
   const page = Math.max(Number(params.page ?? 1), 1);
   const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
   values.push(pageSize, (page - 1) * pageSize);
@@ -436,7 +436,7 @@ async function prepareAttendance(schemaName: string, params: Record<string, unkn
             gcs.contract_product_id, coalesce(p.name, cp.product_id, gcs.contract_product_id) as contract_product_name,
             coalesce(cp.remaining_real_hour, 0) as remaining_real_hour, coalesce(cp.remaining_promotion_hour, 0) as remaining_promotion_hour,
             coalesce(gc.course_hour, 1) as charge_hour,
-            (select count(*)::int from ${qIdent(schemaName)}.account_charge_records acr where acr.course_id = gcs.course_id and acr.student_id = gcs.student_id and coalesce(acr.deleted, false) = false and coalesce(acr.charge_status, 'CONFIRMED') <> 'REVERSED') as charged_count
+            (select count(*)::int from ${qIdent(schemaName)}.account_charge_records acr where acr.course_id = gcs.course_id and acr.student_id = gcs.student_id and coalesce(acr.deleted, false) = false and coalesce(acr.charge_status, 'charge_status.CONFIRMED') not in ('REVERSED', 'charge_status.REVERSED')) as charged_count
        from ${qIdent(schemaName)}.generic_course_student gcs
        join ${qIdent(schemaName)}.generic_course gc on gc.id = gcs.course_id and coalesce(gc.deleted, false) = false
        left join ${qIdent(schemaName)}.student s on s.id = gcs.student_id and coalesce(s.deleted, false) = false
@@ -456,7 +456,7 @@ async function prepareAttendance(schemaName: string, params: Record<string, unkn
     students: rows.map((row) => ({
       ...row,
       original_attendance_status: row.attendance_status,
-      attendance_status: row.attendance_status === "PENDING" ? "PRESENT" : row.attendance_status
+      attendance_status: dictionaryItemValue(row.attendance_status) === "PENDING" ? "PRESENT" : row.attendance_status
     }))
   };
 }

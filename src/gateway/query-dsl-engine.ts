@@ -17,6 +17,10 @@ function flattenExtJson(row: Record<string, unknown>): Record<string, unknown> {
   }
   return flat;
 }
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
 type JoinDsl = { table: string; schema?: string; alias: string; on: { left: string; right: string }; fields?: Array<{ source: string; as: string }> };
 type WhereCondition = {
   field: string;
@@ -33,6 +37,7 @@ type FilterDsl = string | {
   param?: string;
   op?: "eq" | "ilike" | "between" | "in" | "gt" | "gte" | "lt" | "lte";
   type?: string;
+  dictCode?: string;
   ignoreEmpty?: boolean;
 };
 type AggregateMetric = {
@@ -367,6 +372,34 @@ function appendDynamicFilters(where: string[], values: unknown[], filterDsl: Fil
   }
 }
 
+function filterDictionaryCodes(filterDsl: FilterDsl[] | undefined) {
+  const result: Record<string, string> = {};
+  for (const raw of filterDsl ?? []) {
+    if (typeof raw === "string" || !raw.dictCode) continue;
+    const field = String(raw.field ?? raw.key ?? "");
+    if (field) result[field] = raw.dictCode;
+  }
+  return result;
+}
+
+async function normalizeDictionaryFieldValue(schemaName: string, field: string, value: unknown, dictCodeByField: Record<string, string> = {}) {
+  if (value === undefined || value === null) return value;
+  if (Array.isArray(value)) {
+    const normalized = await normalizeDictionaryInputValues(schemaName, { [field]: value }, [field], dictCodeByField);
+    return normalized[field] ?? value;
+  }
+  if (typeof value !== "string" || !value.trim()) return value;
+  const normalized = await normalizeDictionaryInputValues(schemaName, { [field]: value }, [field], dictCodeByField);
+  return normalized[field] ?? value;
+}
+
+async function normalizeWhereConditions(schemaName: string, where: WhereCondition[] | undefined, dictCodeByField: Record<string, string>) {
+  if (!where?.length) return where;
+  return Promise.all(where.map(async (cond) => (
+    cond.source === "param" ? cond : { ...cond, value: await normalizeDictionaryFieldValue(schemaName, cond.field, cond.value, dictCodeByField) }
+  )));
+}
+
 function scopeColumnsFor(tableName: string, tableColumns: Set<string>) {
   return tableName === "organization" ? new Set([...tableColumns, "organization_id"]) : tableColumns;
 }
@@ -566,29 +599,34 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
   const table = tableExpr(effectiveSchema, dsl.table);
   const tableColumns = await getTableColumns(effectiveSchema, dsl.table);
   if (dsl.operation === "query") {
-    const aggregateResult = await executeAggregateQuery(effectiveSchema, dsl, params, user, table, tableColumns, schemaName);
+    const dictCodeByField = filterDictionaryCodes(dsl.filters);
+    const rawFilters = asObject(params.filters);
+    const normalizedFilters = await normalizeDictionaryInputValues(effectiveSchema, rawFilters, Object.keys(rawFilters), dictCodeByField);
+    const queryParams: Record<string, unknown> = { ...params, filters: normalizedFilters };
+    const aggregateResult = await executeAggregateQuery(effectiveSchema, dsl, queryParams, user, table, tableColumns, schemaName);
     if (aggregateResult) return aggregateResult;
 
     const values: unknown[] = [];
     const where = dsl.softDelete === false ? [] : ["t.deleted = false"];
     for (const fixed of dsl.fixedFilters ?? []) {
-      let val = fixed.valueFromParam ? params[fixed.valueFromParam] : fixed.value;
+      let val = fixed.valueFromParam ? queryParams[fixed.valueFromParam] : await normalizeDictionaryFieldValue(effectiveSchema, fixed.field, fixed.value, dictCodeByField);
       if (fixed.valueFromParam === "schemaName" && effectiveSchema !== schemaName) val = schemaName;
       if (val === undefined || val === null) continue;
       const op = fixed.op === "ne" ? "<>" : "=";
       appendEqFilter(where, values, fieldExpr(fixed.field, tableColumns), fixed.field, val, op);
     }
-    appendDynamicFilters(where, values, dsl.filters, params, tableColumns);
-    if (dsl.where && dsl.where.length > 0) {
-      const { fragments } = buildWhereClause(dsl.where, params, values, values.length + 1, tableColumns);
+    appendDynamicFilters(where, values, dsl.filters, queryParams, tableColumns);
+    const normalizedWhere = await normalizeWhereConditions(effectiveSchema, dsl.where, dictCodeByField);
+    if (normalizedWhere && normalizedWhere.length > 0) {
+      const { fragments } = buildWhereClause(normalizedWhere, queryParams, values, values.length + 1, tableColumns);
       where.push(...fragments);
     }
     if (dsl.security?.dataPermission && user) {
       const scope = await getOrganizationScope(user, schemaName, scopeColumnsFor(dsl.table, tableColumns));
       appendDataPermissionScope(where, values, tableColumns, dsl.table, scope);
     }
-    const page = Math.max(Number(params.page ?? 1), 1);
-    const pageSize = Math.min(Math.max(Number(params.pageSize ?? 20), 1), 100);
+    const page = Math.max(Number(queryParams.page ?? 1), 1);
+    const pageSize = Math.min(Math.max(Number(queryParams.pageSize ?? 20), 1), 100);
     values.push(pageSize, (page - 1) * pageSize);
     const whereClause = where.length > 0 ? `where ${where.join(" and ")}` : "";
     const orderClause = queryOrderClause(dsl, tableColumns);
@@ -602,7 +640,11 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
     `;
     const { rows } = await pool.query(sql, values);
     const total = rows[0]?.__total ? Number(rows[0].__total) : 0;
-    return { rows: rows.map(({ __total, ...row }) => flattenExtJson(row)), total, page, pageSize };
+    const normalizedRows = await Promise.all(rows.map(async ({ __total, ...row }) => {
+      const flattened = flattenExtJson(row);
+      return normalizeDictionaryInputValues(effectiveSchema, flattened, Object.keys(flattened), dictCodeByField);
+    }));
+    return { rows: normalizedRows, total, page, pageSize };
   }
 
   if (dsl.operation === "detail") {
@@ -617,7 +659,9 @@ export async function executeApiDsl(schemaName: string, dsl: ApiDsl, params: Rec
       `select ${await selectColumns(effectiveSchema, dsl)} from ${table} t ${joinSql(effectiveSchema, dsl.joins, dsl.softDelete !== false)} where ${where.join(" and ")}`,
       values
     );
-    return rows[0] ? flattenExtJson(rows[0]) : null;
+    if (!rows[0]) return null;
+    const flattened = flattenExtJson(rows[0]);
+    return normalizeDictionaryInputValues(effectiveSchema, flattened, Object.keys(flattened), filterDictionaryCodes(dsl.filters));
   }
 
   const allowed = new Set(dsl.allowedFields ?? []);
