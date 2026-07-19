@@ -4,6 +4,7 @@ export type FieldDsl = {
   title?: string;
   type?: string;
   placeholder?: string;
+  helperText?: string;
   sortable?: boolean;
   width?: number;
   align?: "left" | "center" | "right";
@@ -107,6 +108,8 @@ export type ActionDsl = {
   afterSuccess?: AfterSuccessDsl | AfterSuccessDsl[];
   visibleWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | Record<string, unknown> | Array<Record<string, unknown>> | undefined>;
   enabledWhen?: { always?: boolean; permission?: string } & Record<string, string | string[] | boolean | Record<string, unknown> | Array<Record<string, unknown>> | undefined>;
+  requiresBusinessRule?: { ruleCode: string; path: string; equals?: unknown };
+  disabledMessage?: string;
   renderAs?: string;
   styleToken?: string;
   subActions?: Array<{ actionCode: string; label: string }>;

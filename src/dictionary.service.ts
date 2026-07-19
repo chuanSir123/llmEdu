@@ -142,7 +142,7 @@ export function dictionaryItemValue(itemValue: unknown) {
 }
 
 export function dictionaryItemId(dictCode: string, itemValue: unknown) {
-  return `${dictCode}.${String(itemValue ?? "")}`;
+  return `${dictCode}.${dictionaryItemValue(itemValue)}`;
 }
 
 export function systemDictionaryLabel(dictCode: string, itemValue: unknown) {
